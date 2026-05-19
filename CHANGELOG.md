@@ -1,3 +1,13 @@
+## [1.1.2](https://github.com/sergeyshmakov/runpod-mineru/compare/v1.1.1...v1.1.2) (2026-05-19)
+
+### Bug Fixes
+
+* **hub:** align manifests with official template schema ([bc3903b](https://github.com/sergeyshmakov/runpod-mineru/commit/bc3903b1f239f8f6eccc64b1f6a8c631cfe487f9))
+
+### Documentation
+
+* update docs links ([6a7be0a](https://github.com/sergeyshmakov/runpod-mineru/commit/6a7be0ad998389e9bb263e395cc435316e56ce58))
+
 ## [1.1.0](https://github.com/sergeyshmakov/runpod-mineru/compare/v1.0.0...v1.1.0) (2026-05-19)
 
 ### Features
