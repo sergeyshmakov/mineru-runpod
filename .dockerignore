@@ -1,39 +1,76 @@
 # Keep the build context small. Only the files the Docker image needs.
+
+# Git + repo metadata
 .git
 .gitignore
+.gitattributes
+
+# Environment + secrets
 .env
 .env.example
+.mcp.json
+
+# Test / dev fixtures (handler reads test_input.json when run locally)
 test_input.json
+
+# Python build artefacts
 .venv/
 __pycache__/
 *.pyc
 *.pyo
 *.egg-info/
+.pytest_cache/
 build/
 dist/
 out/
+
+# Source dirs not needed at runtime (deploy.py / destroy.py are operator
+# tools; examples / tests / mineru_client / docs aren't called by handler.py)
 examples/
 mineru_client/
 tests/
 docs/
 deploy.py
 destroy.py
+
+# Documentation at the repo root
 README.md
 CHANGELOG.md
 CONTRIBUTING.md
 SECURITY.md
 LICENSE
+
+# Python packaging (irrelevant inside the container — deps already installed)
 pyproject.toml
+
+# Node tooling (only used for commitlint + semantic-release in CI)
 package.json
 package-lock.json
 node_modules/
-.dockerignore
 .releaserc.json
 commitlint.config.js
+
+# CI + GitHub-only config
 .github/
+.dockerignore
+
+# Local development state (editor configs, agent caches, screenshot scratch)
+.claude/
+.playwright-mcp/
+.idea/
+.vscode/
+tmp-screenshots/
+
+# Log + scratch files
+*.log
+*.tmp
+*.swp
 
 # DO keep .runpod/test-fixture.pdf — it's referenced by the Hub tests.
-# (Everything else in .runpod/ is config that doesn't need to be in the image.)
+# (Everything else in .runpod/ is config / docs that doesn't need to be
+# in the image. icon.png is served from raw.githubusercontent.com, not
+# COPY'd into the worker.)
 .runpod/hub.json
 .runpod/tests.json
 .runpod/README.md
+.runpod/icon.png
