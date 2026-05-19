@@ -57,6 +57,12 @@ export default defineConfig({
 			],
 			head: [
 				{
+					tag: "style",
+					attrs: { "data-rm-critical-bg": "" },
+					content:
+						"html,body{background-color:#090236;}html[data-theme='light'],html[data-theme='light'] body{background-color:#fff;}",
+				},
+				{
 					tag: "meta",
 					attrs: { property: "og:image", content: "/runpod-mineru/og-default.png" },
 				},
