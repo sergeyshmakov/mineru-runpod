@@ -62,9 +62,12 @@ class MineruClient:
                 "exactly one of pdf_url / pdf_b64 / volume_path must be set"
             )
 
+        # Build the payload field-by-field, skipping None values. The handler's
+        # rp_validator declares fields with typed schemas (e.g. end_page must be
+        # int) and rejects JSON null even when the field is "optional". Letting
+        # the handler apply its own defaults is safer than transmitting None.
         payload: dict[str, Any] = {
             "start_page": start_page,
-            "end_page": end_page,
             "lang": lang,
             "backend": backend,
             "formula_enable": formula_enable,
@@ -72,6 +75,8 @@ class MineruClient:
             "return": return_format,
             "basename": basename,
         }
+        if end_page is not None:
+            payload["end_page"] = end_page
         if pdf_url is not None:
             payload["pdf_url"] = pdf_url
         if pdf_b64 is not None:
@@ -87,9 +92,15 @@ class MineruClient:
         if not isinstance(result, dict):
             raise MineruClientError(f"unexpected handler return type: {type(result)}")
         if not result.get("ok", False):
-            raise MineruClientError(
-                f"handler returned ok=false: {result.get('error', '<no error>')}"
+            # Prefer the structured `error` key; if missing (e.g. earlier handler
+            # versions that only set `traceback`), fall back to the traceback's
+            # last line, which is the raised exception's message.
+            err = (
+                result.get("error")
+                or (result.get("traceback") or "").strip().split("\n")[-1]
+                or "<no error>"
             )
+            raise MineruClientError(f"handler returned ok=false: {err}")
         return result
 
     @staticmethod
