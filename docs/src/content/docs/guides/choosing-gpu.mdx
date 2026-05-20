@@ -100,7 +100,7 @@ MinerU 3.1.x exposes five backends; the template accepts all of them as a per-jo
 
 | Backend | What it runs | When to pick it | Per-page VRAM |
 |---|---|---|---|
-| `vlm-auto-engine` *(default)* | The `MinerU2.5-Pro-2604-1.2B` VLM via vLLM | English / Chinese, short-to-medium docs, fast wall time | ~13 GiB |
+| `vlm-auto-engine` *(default)* | The `MinerU2.5-Pro-2604-1.2B` VLM via vLLM | English / Chinese (per model card tags), short-to-medium docs, fast wall time | ~13 GiB |
 | `pipeline` | PaddleOCR + dedicated layout/formula/table models | Non-Latin scripts (use a script-family `lang` code), very long docs, constant-memory workloads | **~6 GiB floor** |
 | `hybrid-auto-engine` | Pipeline + VLM, auto-routed per page | Mixed-content docs where the pipeline+VLM combination outperforms either alone | Highest |
 | `vlm-http-client` | Same VLM via an external vLLM OpenAI-compatible server | Split-tier deploys — keep a 24 GB worker cheap, run vLLM on a separate always-on box | Low (no model on worker) |

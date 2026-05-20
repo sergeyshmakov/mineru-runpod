@@ -93,7 +93,7 @@ See [Choosing a GPU](/runpod-mineru/guides/choosing-gpu/#a-note-on-ada_48_pro-an
 
 **Symptom**: you parsed a Russian / Arabic / Chinese / Japanese document and the output is gibberish — recognizable structure (headings, tables) but text is transliterated to Latin glyphs that don't form real words.
 
-**Cause**: VLM backends (`vlm-auto-engine`, `vlm-http-client`, plus VLM-routed pages in the hybrid backends) were trained mostly on English + Chinese. They **ignore the `lang` parameter** entirely. On non-Latin scripts the model "best-effort" transliterates to its training-distribution Latin alphabet.
+**Cause**: VLM backends (`vlm-auto-engine`, `vlm-http-client`, plus VLM-routed pages in the hybrid backends) **ignore the `lang` parameter** entirely — model selection isn't conditional on it. Empirically the VLM transliterates non-Latin scripts to Latin glyphs rather than producing real characters. MinerU's published "109 languages" claim refers to the pipeline backend's PaddleOCR layer, not the VLM; the VLM model card carries only `English` and `Chinese` HuggingFace language tags.
 
 **Fix**: switch to the **pipeline backend** with a **script-family `lang` code** (not an ISO code):
 

@@ -49,7 +49,7 @@ See the [project README](https://github.com/sergeyshmakov/runpod-mineru#how-does
 
 - **Inputs**: PDF, image (PNG/JPEG/GIF/BMP/TIFF/WebP), DOCX, PPTX, XLSX — auto-detected from bytes. Three transports: URL, base64, or a path on a mounted volume. See [Input formats](/runpod-mineru/guides/input-formats/).
 - **Outputs**: Markdown + `content_list` + `middle.json` + extracted images. Three transport modes: base64 tarball, inline fields, or presigned URL to an S3-compatible bucket. See [Output modes](/runpod-mineru/guides/output-modes/).
-- **Backends**: five MinerU backends covering English/Chinese VLM, multilingual pipeline OCR, hybrid auto-routing, and split-tier deploys. See [Picking a backend](/runpod-mineru/guides/choosing-gpu/#picking-a-backend).
+- **Backends**: five MinerU backends — the VLM (model card tagged English + Chinese; transliterates other scripts), the pipeline OCR (109 languages via PaddleOCR), the hybrid auto-router, and split-tier deploys. See [Picking a backend](/runpod-mineru/guides/choosing-gpu/#picking-a-backend).
 
 ## Next steps
 

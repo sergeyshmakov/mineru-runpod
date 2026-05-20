@@ -25,7 +25,7 @@ The output shape is the same regardless of input format: Markdown + `content_lis
 
 The five MinerU backends (see [Picking a backend](/runpod-mineru/guides/choosing-gpu/#picking-a-backend)) handle the input pool differently:
 
-- **`vlm-auto-engine`** (default): trained primarily on English + Chinese PDFs. Best for **PDF**. For **images of text**, especially non-Latin scripts, prefer `pipeline`.
+- **`vlm-auto-engine`** (default): MinerU's end-to-end VLM. Best for **PDF**. MinerU's README attaches the [109-language claim](https://github.com/opendatalab/MinerU#supported-languages) specifically to the pipeline backend's OCR layer; the VLM's [model card](https://huggingface.co/opendatalab/MinerU2.5-Pro-2604-1.2B) carries only `English` and `Chinese` HuggingFace language tags. Empirically the VLM transliterates non-Latin scripts (Cyrillic, Arabic, Devanagari) to Latin glyphs rather than producing the real characters. For non-Latin content, prefer `pipeline` with a script-family `lang` code.
 - **`pipeline`**: native multi-language OCR (109 languages). Best for **images** and **scanned PDFs without an embedded text layer**. Respects the `lang` parameter (script-family codes — see below).
 - **`hybrid-auto-engine`**: routes per page. Best when you don't know in advance what mix of layouts you have.
 
@@ -37,18 +37,18 @@ For non-English/Chinese content, set `backend: "pipeline"` and use a **script-fa
 
 | Script family | Use for |
 |---|---|
-| `east_slavic` | Russian, Ukrainian, Belarusian |
-| `cyrillic` | Serbian, Bulgarian, Macedonian, Mongolian (non-Slavic Cyrillic) |
-| `latin` | French, German, Spanish, Polish, Vietnamese, Indonesian, etc. |
 | `arabic` | Arabic, Persian, Urdu |
-| `devanagari` | Hindi, Marathi, Nepali |
-| `japan` | Japanese (kanji + kana) |
-| `korean` | Korean (hangul) |
+| `ch`, `ch_lite`, `ch_server`, `en` | Variants of Chinese / English defaults |
 | `chinese_cht` | Traditional Chinese |
+| `cyrillic` | Bulgarian, Macedonian, Mongolian, Serbian (non-Slavic Cyrillic) |
+| `devanagari` | Hindi, Marathi, Nepali |
+| `east_slavic` | Belarusian, Russian, Ukrainian |
 | `el` | Greek |
+| `japan` | Japanese (kanji + kana) |
+| `ka`, `ta`, `te` | Kannada, Tamil, Telugu |
+| `korean` | Korean (hangul) |
+| `latin` | French, German, Indonesian, Polish, Spanish, Vietnamese, etc. |
 | `th` | Thai |
-| `ta`, `te`, `ka` | Tamil, Telugu, Kannada |
-| `ch`, `ch_server`, `ch_lite`, `en` | Variants of Chinese / English defaults |
 
 The VLM backends (`vlm-*`, `hybrid-*` with VLM routing) **ignore the `lang` field**. Passing `lang: "east_slavic"` with `backend: "vlm-auto-engine"` does nothing — you'll get Latin-transliterated nonsense on Cyrillic input. This is one of the most common silent failures; see the [Troubleshooting guide](/runpod-mineru/guides/troubleshooting/#vlm-backend-output-is-latinized-on-non-english-input).
 
