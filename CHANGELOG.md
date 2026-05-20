@@ -1,3 +1,15 @@
+## [1.1.9](https://github.com/sergeyshmakov/runpod-mineru/compare/v1.1.8...v1.1.9) (2026-05-20)
+
+### Bug Fixes
+
+* **hub:** drop ADA_48_PRO from default GPU pools; refresh template metadata ([ac0f5df](https://github.com/sergeyshmakov/runpod-mineru/commit/ac0f5dfa5dfcbf7b8b3e4af8f54ca340ed8865ed))
+* **worker:** align API with MinerU 3.1.x — parse_document, file_* fields, 5 backends, multi-format input, debug observability ([b763659](https://github.com/sergeyshmakov/runpod-mineru/commit/b763659b580206749179afc4013d5d9d5fd4a6ee))
+* **worker:** bump MinerU to 3.1.x and vLLM base to v0.11.2; switch to RunPod Cached Models ([07efb50](https://github.com/sergeyshmakov/runpod-mineru/commit/07efb504987484a697bd97b63bf1aa1dbd6434b3))
+
+### Documentation
+
+* align all documentation with MinerU 3.1.x official recommendations ([bac4137](https://github.com/sergeyshmakov/runpod-mineru/commit/bac413720d1b27eab939a04725942fd512511d0b))
+
 ## [1.1.8](https://github.com/sergeyshmakov/runpod-mineru/compare/v1.1.7...v1.1.8) (2026-05-19)
 
 ### Bug Fixes
