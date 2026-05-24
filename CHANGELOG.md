@@ -1,3 +1,9 @@
+## [1.1.16](https://github.com/sergeyshmakov/mineru-runpod/compare/v1.1.15...v1.1.16) (2026-05-24)
+
+### Bug Fixes
+
+* rename repo to fix hub workflow ([ec98e38](https://github.com/sergeyshmakov/mineru-runpod/commit/ec98e38744cfeec3102b0313567ebbd530bb3857))
+
 ## [1.1.15](https://github.com/sergeyshmakov/mineru-runpod/compare/v1.1.14...v1.1.15) (2026-05-20)
 
 ### Bug Fixes
