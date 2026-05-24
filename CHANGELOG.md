@@ -1,3 +1,9 @@
+## [1.1.18](https://github.com/sergeyshmakov/mineru-runpod/compare/v1.1.17...v1.1.18) (2026-05-24)
+
+### Bug Fixes
+
+* fixing runpod hub flow ([a8116fd](https://github.com/sergeyshmakov/mineru-runpod/commit/a8116fdb9585998cedc408fbe752c382bd6bde7a))
+
 ## [1.1.17](https://github.com/sergeyshmakov/mineru-runpod/compare/v1.1.16...v1.1.17) (2026-05-24)
 
 ### Bug Fixes
