@@ -1,6 +1,6 @@
 {
   "title": "MinerU PDF Parser",
-  "description": "Serverless MinerU 3.1.x with the MinerU2.5-Pro-2604-1.2B VLM. PDF, image, DOCX, PPTX, XLSX → Markdown + JSON. Scales to zero, ~$0.0003/page on 24 GB Ampere serverless.",
+  "description": "Convert PDFs, images, and Office documents into clean Markdown and structured JSON using MinerU's vision-language model.",
   "type": "serverless",
   "category": "language",
   "iconUrl": "https://raw.githubusercontent.com/sergeyshmakov/mineru-runpod/main/.runpod/icon.png",
@@ -16,7 +16,7 @@
         "input": {
           "name": "HuggingFace token",
           "type": "huggingface",
-          "description": "Optional. Only needed if you want to pull gated or private models (e.g. a fine-tune of MinerU on your own corpus). The default model is public.",
+          "description": "Only needed for gated or private models on Hugging Face. The default MinerU model is public, so most users can skip this.",
           "required": false
         }
       },
@@ -25,7 +25,7 @@
         "input": {
           "name": "MinerU model source",
           "type": "string",
-          "description": "Where MinerU pulls weights from. 'huggingface' works everywhere; 'modelscope' is a faster mirror in China; 'local' needs a mineru.json + pre-staged snapshots (offline setups).",
+          "description": "Where MinerU pulls weights from. Use Hugging Face by default, ModelScope for a faster mirror in China, or Local for offline setups.",
           "default": "huggingface",
           "options": [
             { "label": "HuggingFace (default)", "value": "huggingface" },
@@ -40,7 +40,7 @@
         "input": {
           "name": "VLM model override",
           "type": "string",
-          "description": "Override the VLM model name. Used only by the vlm-http-client and hybrid-http-client backends; vlm-auto-engine ignores this and loads MinerU's default.",
+          "description": "Override the VLM model name. Only applies to the http-client backends. The auto-engine backends always load MinerU's default model.",
           "default": "opendatalab/MinerU2.5-Pro-2604-1.2B",
           "advanced": true
         }
@@ -50,7 +50,7 @@
         "input": {
           "name": "S3 endpoint URL (optional)",
           "type": "string",
-          "description": "Endpoint URL for an S3-compatible bucket. Required only if callers request `return: \"s3\"`. Works with AWS S3, Cloudflare R2, Backblaze B2, MinIO, etc.",
+          "description": "Endpoint URL for an S3-compatible bucket. Only needed when callers request large outputs via S3. Works with AWS S3, Cloudflare R2, Backblaze B2, and MinIO.",
           "default": "",
           "advanced": true
         }
@@ -60,7 +60,7 @@
         "input": {
           "name": "S3 bucket name (optional)",
           "type": "string",
-          "description": "Name of the S3-compatible bucket to upload to. Required only if callers will request `return: \"s3\"`.",
+          "description": "Name of the S3-compatible bucket to upload to. Only needed when callers request large outputs via S3.",
           "default": "",
           "advanced": true
         }
@@ -70,7 +70,7 @@
         "input": {
           "name": "S3 access key ID (optional)",
           "type": "string",
-          "description": "Access key ID for the S3-compatible bucket. Required only if callers will request `return: \"s3\"`. Stored as a worker env var; not exposed to job inputs or outputs.",
+          "description": "Access key ID for the S3-compatible bucket. Only needed when callers request large outputs via S3. Stored on the worker, never exposed to jobs.",
           "default": "",
           "advanced": true
         }
@@ -80,7 +80,7 @@
         "input": {
           "name": "S3 secret access key (optional)",
           "type": "string",
-          "description": "Secret access key for the S3-compatible bucket. Required only if callers will request `return: \"s3\"`. Stored as a worker env var; not exposed to job inputs or outputs.",
+          "description": "Secret access key for the S3-compatible bucket. Only needed when callers request large outputs via S3. Stored on the worker, never exposed to jobs.",
           "default": "",
           "advanced": true
         }
