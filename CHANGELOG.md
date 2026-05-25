@@ -1,3 +1,9 @@
+## [1.2.1](https://github.com/sergeyshmakov/mineru-runpod/compare/v1.2.0...v1.2.1) (2026-05-25)
+
+### Bug Fixes
+
+* add higher cuda versions ([4514d55](https://github.com/sergeyshmakov/mineru-runpod/commit/4514d554f1cd02831b3dc3f74fed03d517f9f153))
+
 ## [1.2.0](https://github.com/sergeyshmakov/mineru-runpod/compare/v1.1.27...v1.2.0) (2026-05-25)
 
 ### Features
