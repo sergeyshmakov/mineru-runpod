@@ -1,3 +1,9 @@
+## [1.5.0](https://github.com/sergeyshmakov/mineru-runpod/compare/v1.4.0...v1.5.0) (2026-05-26)
+
+### Features
+
+* bump mineru to 3.2 ([6e70f45](https://github.com/sergeyshmakov/mineru-runpod/commit/6e70f4520f583bfb1bdeb40fe024a1205a8bfa21))
+
 ## [1.4.0](https://github.com/sergeyshmakov/mineru-runpod/compare/v1.3.1...v1.4.0) (2026-05-26)
 
 ### Features
