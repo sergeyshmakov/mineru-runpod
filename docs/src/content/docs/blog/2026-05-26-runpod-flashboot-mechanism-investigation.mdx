@@ -37,7 +37,7 @@ Because they're hitting different parts of the per-host model. Four consecutive 
 | 3 | 122 s | B (different host) | none | Fitness checks + warmup (101.5 s) + parse (5.6 s) |
 | 4 | **7.4 s** | B (same as R3) | yes | Snapshot restore + parse (4.6 s) |
 
-The pattern is clean: **first hit on a fresh host pays ~110 s for the warmup. Every subsequent restore on that same host is ~7-8 s.** A new host, when RunPod's scheduler picks one, starts the cycle over.
+**First hit on a fresh host pays ~110 s for the warmup. Every subsequent restore on that same host is ~7-8 s.** A new host, when RunPod's scheduler picks one, starts the cycle over.
 
 The 456 s on Request 1 included a one-time image pull (the worker image is ~27 GB; this was the first time that physical host had ever seen it). Strip that off and you get ~110 s of actual boot work, which matches Request 3 exactly.
 
