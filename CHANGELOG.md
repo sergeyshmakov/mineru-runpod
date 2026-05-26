@@ -1,3 +1,9 @@
+## [1.3.1](https://github.com/sergeyshmakov/mineru-runpod/compare/v1.3.0...v1.3.1) (2026-05-26)
+
+### Bug Fixes
+
+* switch to 4090 + warmup test on JobScaler ([8599324](https://github.com/sergeyshmakov/mineru-runpod/commit/8599324a72fc40426841047637844dfcd6f935f2))
+
 ## [1.3.0](https://github.com/sergeyshmakov/mineru-runpod/compare/v1.2.6...v1.3.0) (2026-05-26)
 
 ### Features
