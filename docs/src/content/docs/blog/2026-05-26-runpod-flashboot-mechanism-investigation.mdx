@@ -1,0 +1,187 @@
+---
+title: "How RunPod FlashBoot Actually Works (4-Request Test)"
+description: "RunPod's docs don't explain the FlashBoot mechanism. We ran four cold-start tests on a vLLM workload to find out. Result: per-host process snapshots that cut cold starts to ~7s."
+date: 2026-05-26
+authors: sergei
+tags:
+  - RunPod
+  - FlashBoot
+  - Serverless
+  - vLLM
+  - Cold Start
+  - GPU
+---
+
+*Last Updated: 2026-05-26*
+
+If you're shipping vLLM or any heavy ML model on RunPod Serverless, you've probably looked at FlashBoot, ticked the checkbox, and then watched your cold starts still take 60-120 seconds. RunPod's marketing says "1-second cold starts." Their docs describe FlashBoot as "pre-loading container images." Neither of those matches what most ML workloads actually see.
+
+I ran four cold-start tests on a deployed RunPod endpoint serving a vLLM-backed PDF parser. The wall-clock numbers ranged from 7 seconds to 7 minutes. The point of this post is to explain *why* — what FlashBoot actually does at the systems level, when it kicks in, and how to set up your worker so it kicks in more often.
+
+## What does FlashBoot actually do?
+
+FlashBoot is a CRIU-style process snapshot mechanism. When a worker scales to zero, RunPod captures the full process state (Python interpreter, CUDA VRAM, subprocess tree) into a snapshot on the host's local storage. When the worker scales back up *on the same host*, RunPod restores from that snapshot. The restored process resumes mid-stride: model still in VRAM, vLLM engine subprocess still alive, IPC pipes still connected.
+
+The key qualifier that RunPod's docs don't mention: **snapshots are per (host, image SHA), not per endpoint**. If the next scale-from-zero lands on a different host, there's no snapshot to restore from. The worker boots fresh and pays the full warmup cost. Once.
+
+The TL;DR for an ML workload: **set up an eager warmup at worker boot, then let FlashBoot do its thing.** Each new host pays the warmup tax once. Subsequent scale-from-zeroes on that same host get the snapshot restore and finish a typical request in single-digit seconds.
+
+## Why do "cold" starts sometimes take 7 seconds and sometimes 110?
+
+Because they're hitting different parts of the per-host model. Four consecutive requests against the same endpoint, single-page parse on each, with a deliberate scale-to-zero between every one:
+
+| Request | Wall-clock | Host | Snapshot? | What the worker did |
+|---|---:|---|---|---|
+| 1 | 456 s | A (post-rebuild) | none | Image pull + fitness checks + warmup (101 s) + parse (5.6 s) |
+| 2 | **7.6 s** | A (same as R1) | yes | Snapshot restore + parse (4.7 s) |
+| 3 | 122 s | B (different host) | none | Fitness checks + warmup (101.5 s) + parse (5.6 s) |
+| 4 | **7.4 s** | B (same as R3) | yes | Snapshot restore + parse (4.6 s) |
+
+The pattern is clean: **first hit on a fresh host pays ~110 s for the warmup. Every subsequent restore on that same host is ~7-8 s.** A new host, when RunPod's scheduler picks one, starts the cycle over.
+
+The 456 s on Request 1 included a one-time image pull (the worker image is ~27 GB; this was the first time that physical host had ever seen it). Strip that off and you get ~110 s of actual boot work, which matches Request 3 exactly.
+
+## How can you tell if a request hit a snapshot restore?
+
+By what's *missing* from the worker logs. A FlashBoot-restored worker skips its boot sequence entirely — no fitness checks, no Python import logs, no vLLM engine initialization, no model load. The first log line is `Jobs in queue: 1`, immediately followed by your handler's "starting job" entry.
+
+Compare a fresh boot to a snapshot restore for the same request shape:
+
+**Fresh boot (Request 3):**
+```
+04:45:45  Running 7 fitness check(s)...
+04:45:46  All fitness checks passed. (1285.99ms)
+04:45:46  [mineru-warmup] starting (backend=vlm-auto-engine ...)
+04:45:51  Using vllm-async-engine as the inference engine for VLM.
+04:46:23  Initializing a V1 LLM engine (v0.11.2) ...
+04:46:47  Model loading took 2.1601 GiB memory and 18.41 seconds
+04:47:14  torch.compile takes 22.81 s in total
+04:47:17  init engine (profile, create kv cache, warmup model) took 30.66 seconds
+04:47:18  get vllm-async-engine predictor cost: 87.26s
+04:47:28  [mineru-warmup] done in 101.5s
+04:47:28  Jobs in queue: 1
+04:47:28  Started.
+04:47:28  "starting job" {...}
+04:47:34  "done" {...elapsed_seconds: 5.58...}
+```
+
+**Snapshot restore (Request 4):**
+```
+04:51:25  Jobs in queue: 1
+04:51:25  Started.
+04:51:25  "starting job" {...}
+04:51:26  Using vllm-async-engine ...   (instant — engine handle restored from snapshot)
+04:51:30  "done" {...elapsed_seconds: 4.58...}
+```
+
+No boot sequence. Three timestamps. The vLLM engine subprocess PID from the previous boot is reused — same `EngineCore_DP0 pid=NNN` from the snapshot. If you grep your own worker logs for the gap between `Jobs in queue: 1` and the previous activity, you'll see whether RunPod did a fresh boot or a snapshot restore.
+
+## What does the FlashBoot snapshot preserve?
+
+Everything that lived in the worker process at snapshot time, mediated by CRIU semantics:
+
+- **Python interpreter state.** Module imports stay loaded. Globals (job counters, contextvars, signal handlers) keep their values. The `MinerU` engine registry returns the same handles it returned before the snapshot.
+- **GPU VRAM.** Model weights (~2.16 GiB for our VLM), vLLM's KV cache (~8.17 GiB on a 24 GB card), and captured CUDA graphs (~0.3 GiB) all survive. The first request after restore parses with the same allocations it had before.
+- **The subprocess tree.** vLLM runs its engine in a child process for memory isolation. That subprocess gets captured along with the parent and restored with its IPC pipes intact. The engine PID persists.
+- **`torch.compile` cache.** The JIT-compiled Dynamo / Inductor output stays valid across restore. No 22-second recompile.
+
+What doesn't survive: snapshot lifetime is limited. RunPod doesn't publish the eviction policy, but obvious triggers include image rebuild (new SHA invalidates the snapshot), and presumably long enough idle on a busy host that the snapshot storage gets pushed out.
+
+## What broke before this worked? The asyncio gotcha
+
+The "eager warmup at boot" idea is obvious in principle: run one throwaway parse during worker startup so the model is loaded and warm before any user request arrives. The implementation has one trap.
+
+vLLM's `AsyncLLMEngine` binds its IPC primitives (transports, queues) to the asyncio event loop that initialized it. If you call `asyncio.run(warmup())` followed by `runpod.serverless.start()`, your warmup creates loop A, runs the parse, then tears loop A down when `asyncio.run` returns. Then `runpod.serverless.start()` creates loop B for serving. When the first user request tries to talk to the vLLM engine through loop B, the engine handle is bound to the now-dead loop A. Result:
+
+```
+"error_type": "EngineDeadError",
+"error_message": "EngineCore encountered an issue. See stack trace (above) for the root cause."
+```
+
+The engine subprocess itself is still alive. It's only the parent process's IPC reference that's broken.
+
+The fix is to keep the warmup and the serve loop on the same asyncio event loop. RunPod's `runpod.serverless.start()` internally calls `asyncio.run(JobScaler.run())`, but `JobScaler` (in `runpod.serverless.modules.rp_scale`) is constructible directly and its `run()` is an awaitable coroutine. So you can compose:
+
+```python
+import asyncio
+from runpod.serverless.modules import rp_ping, rp_scale
+from runpod.serverless.modules.rp_fitness import run_fitness_checks
+
+config = {"handler": handler, "concurrency_modifier": _concurrency_modifier, "rp_args": {}}
+
+async def _bootstrap():
+    await run_fitness_checks()
+    await warmup_async()          # <- engine binds to THIS loop
+    rp_ping.Heartbeat().start_ping()
+    await rp_scale.JobScaler(config).run()   # <- and stays here
+
+asyncio.run(_bootstrap())
+```
+
+Now both phases share one event loop. The engine handle stays valid across the warmup → serve transition. FlashBoot captures a snapshot of a process where the loop, the engine, and the IPC are all alive together. On restore, they come back together too.
+
+This does reach into runpod-python's internals (the `runpod.serverless.modules.*` submodules aren't part of the documented public API). Cheap to guard against drift: a unit test that asserts `JobScaler` exists with the expected constructor and an awaitable `run()` method. If RunPod refactors, CI catches it before production does.
+
+## When does the warmup pay off and when doesn't it?
+
+Per host, not per endpoint. The math depends on your traffic pattern.
+
+| Scenario | Likely outcome |
+|---|---|
+| `workers_min ≥ 1` (always-on worker) | Worker stays on its host. Every request is on a fully warm worker (~5 s parse). No cold starts at all. |
+| High-frequency endpoint, workers scale up and down fast | Same hosts get re-selected. Most cold starts are happy-path restores (~7 s). |
+| Quiet endpoint, infrequent requests, long idle gaps | RunPod's scheduler may pick a different host. Some cold starts will be on new hosts (~110 s). |
+| First request after a rebuild | Always cold path. Every endpoint's first request after a fresh image pays ~5-7 min (image pull) + ~110 s (warmup). One-time per worker host. |
+| `MINERU_SKIP_WARMUP=1` (warmup off) | Every cold start is ~110-130 s. No per-host amortization. Don't do this in production. |
+
+The case that stings is "quiet endpoint with sporadic traffic" — a few requests an hour, 10-minute idle gaps, RunPod bouncing between hosts. Without warmup, every cold start would be ~110-130 s. With warmup, you get a mix: some 7-second restores, some 110-second fresh boots. The mix tilts toward fast as the endpoint warms up across more hosts and RunPod's scheduler starts re-selecting them.
+
+If your traffic is sustained enough that you can pin a worker (`workers_min=1`), you skip the entire question. You're paying for the GPU 24/7 but never paying a cold start. For workloads with even modest cost sensitivity, the warmup + FlashBoot path is the better trade.
+
+## What this means if you're shipping vLLM on RunPod
+
+Three takeaways from the live measurements:
+
+1. **Always set up an eager warmup at worker boot.** Loading the model on first request is silently worse than it sounds — you don't just pay 110 s once per cold start, you pay it every time a host doesn't have a snapshot, AND you forfeit the per-host amortization that makes the second-hit-on-a-host cheap. Without warmup, FlashBoot has nothing to snapshot.
+2. **Compose warmup and the serving loop under one `asyncio.run()`.** If you `asyncio.run()` the warmup separately, the engine dies at the loop boundary. The fix is straightforward but the failure mode is opaque (`EngineDeadError` 75 ms into the first request) — easy to misdiagnose as a vLLM bug.
+3. **Don't market your cold start as "X seconds" without acknowledging the per-host mix.** A snapshot-restore cold start is genuinely 7-8 seconds. A new-host cold start is ~110 s. Both are big improvements over the no-warmup baseline (~110-130 s per request, every request). But your users will see the mix, and a too-clean claim makes the bad days look broken.
+
+The whole investigation was on a 24 GB A5000 / RTX 4090 class GPU running MinerU's 1.2B VLM via vLLM 0.11.2. The numbers will shift on larger models (more VRAM to snapshot, longer model load on cold path) but the mechanism applies the same way. If your cold start dominates wall-clock latency on a serverless GPU workload, set up boot-time warmup, watch the worker logs for the snapshot pattern, and tune your `workers_min` accordingly.
+
+## FAQ
+
+### Does FlashBoot snapshot the vLLM engine subprocess?
+
+Yes. The vLLM engine runs as a child process for memory isolation, and FlashBoot's CRIU-style mechanism captures the full process tree including subprocesses. The engine's PID persists across snapshot/restore, and its IPC pipes back to the parent stay connected.
+
+### Why does my cold start take 60-120 seconds even with FlashBoot enabled?
+
+Most likely your model is being loaded lazily on first request rather than at worker boot. FlashBoot only snapshots state that already exists in the worker process when it scales to zero. If your model loads on first request, the snapshot captures a worker without the model, and every cold start has to load the model again. Move the model load to worker boot (before `runpod.serverless.start()`) and FlashBoot will start carrying the warm state forward.
+
+### What's the difference between FlashBoot and a network volume?
+
+A network volume is shared file storage attached to your worker (e.g., for model weights you don't want to bake into the Docker image). FlashBoot is process-state preservation — it captures the running Python process, including data already loaded from disk into VRAM. They solve different problems and can be used together: a network volume avoids re-downloading model files on image pull; FlashBoot avoids re-loading them into VRAM on cold start.
+
+### Does FlashBoot work for non-GPU workloads?
+
+The mechanism (process snapshot via CRIU or equivalent) doesn't depend on GPU memory specifically. CPU-bound workloads with significant cold-start cost (heavy library imports, large in-memory indices, JIT compilation) should benefit similarly. The framing in this post happens to use a GPU workload because that's where the cold-start tax is most painful.
+
+### How do I know if my worker is hitting a snapshot restore vs a fresh boot?
+
+Check the worker logs in the RunPod dashboard. A fresh boot shows fitness checks, framework init logs, and any warmup output. A snapshot restore is silent until the first `Jobs in queue: 1` line, then jumps straight to your handler's request-processing logs. The presence or absence of the boot sequence is the cleanest signal.
+
+### Is FlashBoot the same as RunPod's "Active Workers" tier?
+
+No. Active Workers are a billing tier where you pre-commit to a number of workers that are always on, billed at a discount in exchange for the 24/7 commitment. FlashBoot is a free runtime optimization that applies to flex (scale-to-zero) workers. The two can be combined: an Active Worker on the same endpoint can also benefit from FlashBoot when it cycles, though for a worker that never goes idle there's nothing to snapshot.
+
+### Will FlashBoot survive a Docker image rebuild?
+
+No. Each image gets its own SHA, and FlashBoot snapshots are scoped to (host, image SHA). When you push a new image, all existing snapshots are invalid. The first request after a rebuild on any host pays the full cold-start cost (image pull + warmup). Once each host has served the new image once, subsequent restores work normally.
+
+## What's next
+
+The `runpod-mineru` repo wraps all of this into one Docker image: MinerU 3.1.x + the `MinerU2.5-Pro-2604-1.2B` VLM, the JobScaler-bypass composition for warmup, structured logging, and the rest. Open source ([GitHub](https://github.com/sergeyshmakov/mineru-runpod)), MIT-licensed, deploys from the RunPod Hub in two clicks.
+
+If you want the deeper breakdown of which phases of a cold start cost what, the [troubleshooting guide](/mineru-runpod/guides/troubleshooting/#flashboot-mechanism-confirmed) has the per-phase timing table from the same test runs. The [scaling guide](/mineru-runpod/guides/scaling/#flashboot) covers when to pair FlashBoot with `workers_min ≥ 1` for fully predictable latency.
+
+Full disclosure: if you sign up to RunPod through [this referral link](https://runpod.io?ref=31jdfpnq), I get a small credit. The numbers and the recommendation hold either way.
