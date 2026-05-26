@@ -1,3 +1,9 @@
+## [1.2.4](https://github.com/sergeyshmakov/mineru-runpod/compare/v1.2.3...v1.2.4) (2026-05-26)
+
+### Bug Fixes
+
+* import after refactor ([6803381](https://github.com/sergeyshmakov/mineru-runpod/commit/680338185c4e5a77cbf5dc3577f9a99d3b98c2f2))
+
 ## [1.2.3](https://github.com/sergeyshmakov/mineru-runpod/compare/v1.2.2...v1.2.3) (2026-05-25)
 
 ### Bug Fixes
