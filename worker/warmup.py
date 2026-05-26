@@ -1,13 +1,22 @@
 """Eager warmup at worker boot.
 
-Moves the ~100s vLLM + MinerU cold-start tax from first-request latency
-to worker-boot latency. Worker boot is invisible to the caller; the
-first request is not. So callers see a near-warm cold start (~6s
+Moves the ~60-100s vLLM + MinerU cold-start tax from first-request
+latency to worker-boot latency. Worker boot is invisible to the caller;
+the first request is not. So callers see a near-warm cold start (~6s
 parse) instead of ~110s.
 
-Runs **before** ``runpod.serverless.start()`` claims the event loop —
-we use ``asyncio.run()`` to drive the async ``aio_do_parse`` call from
-synchronous boot code.
+**Critical asyncio invariant.** vLLM's `AsyncLLMEngine` creates IPC
+primitives (transports, queues) bound to the asyncio loop that owned
+the warmup call. If that loop is torn down (e.g., via `asyncio.run()`
+returning) and a different loop later tries to talk to the engine, the
+parent's view of the engine subprocess is dead even though the
+subprocess is still running. Symptom: `EngineDeadError` ~75ms into the
+first real request.
+
+To avoid this, production callers MUST use ``warmup_async()`` from
+inside the same asyncio loop that will later serve requests. The
+synchronous ``warmup()`` wrapper exists only for tests / local debug
+where a fresh loop per call is fine because tests mock the engine.
 
 Failure is non-fatal. A worker that can't warm up still serves
 requests (just slowly on the first one, falling back to lazy load).
@@ -43,12 +52,16 @@ def _truthy(value: str) -> bool:
     return value.strip().lower() in ("1", "true", "yes", "on")
 
 
-def warmup() -> None:
+async def warmup_async() -> None:
     """Run one throwaway parse at boot to load model + compile kernels.
 
-    Reads MINERU_SKIP_WARMUP / MINERU_WARMUP_BACKEND / MINERU_WARMUP_LANG
-    from the environment. Never raises — caller proceeds to
-    ``runpod.serverless.start()`` whether this succeeds or not.
+    Reads ``MINERU_SKIP_WARMUP`` / ``MINERU_WARMUP_BACKEND`` /
+    ``MINERU_WARMUP_LANG`` from the environment. Never raises — the
+    caller proceeds to serve requests whether this succeeds or not.
+
+    **Must be called from an already-running asyncio loop** that will
+    also handle subsequent requests. See module docstring for the
+    asyncio-boundary rationale.
     """
     if _truthy(os.environ.get("MINERU_SKIP_WARMUP", "")):
         _log("MINERU_SKIP_WARMUP set, skipping warmup")
@@ -67,7 +80,7 @@ def warmup() -> None:
 
     try:
         fixture_bytes = WARMUP_FIXTURE_PATH.read_bytes()
-        asyncio.run(_warmup_once(fixture_bytes, backend=backend, lang=lang))
+        await _warmup_once(fixture_bytes, backend=backend, lang=lang)
     except Exception as exc:  # noqa: BLE001
         elapsed = time.monotonic() - start
         _log(f"failed after {elapsed:.1f}s: {type(exc).__name__}: {exc}")
@@ -75,6 +88,18 @@ def warmup() -> None:
         return
 
     _log(f"done in {time.monotonic() - start:.1f}s")
+
+
+def warmup() -> None:
+    """Synchronous wrapper around :func:`warmup_async`.
+
+    Provided for tests, local debugging, and any sync caller that knows
+    it doesn't need to share an asyncio loop with downstream consumers
+    of the engine. **Do not use from production worker boot** — the
+    `asyncio.run()` here tears down the loop that would own vLLM's
+    engine handle, causing EngineDeadError on the first real request.
+    """
+    asyncio.run(warmup_async())
 
 
 async def _warmup_once(file_bytes: bytes, *, backend: str, lang: str) -> None:

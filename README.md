@@ -8,7 +8,7 @@
 [![Runpod](https://api.runpod.io/badge/sergeyshmakov/mineru-runpod)](https://console.runpod.io/hub/sergeyshmakov/mineru-runpod)
 [![Conventional Commits](https://img.shields.io/badge/Conventional%20Commits-1.0.0-fa6673.svg)](https://www.conventionalcommits.org/)
 
-Serverless [MinerU](https://github.com/opendatalab/MinerU) PDF parser on [RunPod](https://runpod.io?ref=31jdfpnq). MinerU 3.1.x runtime with the `MinerU2.5-Pro-2604-1.2B` VLM. Scales to zero, ~$0.0003 per page on 24 GB Ampere serverless, ten minutes from sign-up to first parse.
+Serverless [MinerU](https://github.com/opendatalab/MinerU) PDF parser on [RunPod](https://runpod.io?ref=31jdfpnq). MinerU 3.1.x runtime with the `MinerU2.5-Pro-2604-1.2B` VLM. Scales to zero, ~$0.0003 per page on a 24 GB serverless RTX 4090, ten minutes from sign-up to first parse.
 
 **📚 [Docs](https://sergeyshmakov.github.io/mineru-runpod/)**  ·  **🚀 [Deploy on RunPod Hub](https://runpod.io?ref=31jdfpnq)**  ·  **📝 [Blog](https://sergeyshmakov.github.io/mineru-runpod/blog/)**
 
@@ -43,7 +43,7 @@ Accepts PDF, image (PNG/JPEG/GIF/BMP/TIFF/WebP), DOCX, PPTX, XLSX. Three return 
 ## Why this exists
 
 - **MinerU** is SOTA for PDF → structured Markdown/JSON: charts, tables, math, 109 languages. Apache 2.0 with explicit commercial thresholds. See the [paper](https://arxiv.org/abs/2604.04771), [repo](https://github.com/opendatalab/MinerU), and [model card](https://huggingface.co/opendatalab/MinerU2.5-Pro-2604-1.2B).
-- **RunPod Serverless** bills per-second and scales to zero. A 100-page document costs roughly $0.03 on 24 GB Ampere serverless instead of paying for an always-on GPU. See [RunPod pricing](https://www.runpod.io/pricing) for current rates.
+- **RunPod Serverless** bills per-second and scales to zero. A 100-page document costs roughly $0.03 on a 24 GB serverless RTX 4090 instead of paying for an always-on GPU. See [RunPod pricing](https://www.runpod.io/pricing) for current rates.
 - **You don't have to wire any of that together yourself.** Deploy from the [RunPod Hub](https://runpod.io?ref=31jdfpnq) in one click, or fork this repo for full control.
 
 ## Two ways to integrate

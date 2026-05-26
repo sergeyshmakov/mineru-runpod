@@ -58,7 +58,7 @@ When that lands, our migration is:
 
 Either:
 - Switch the affected job to `backend: "pipeline"` (works on Blackwell)
-- Use a non-Blackwell pool (`AMPERE_24`, `ADA_24`, `AMPERE_48` — our defaults)
+- Use a non-Blackwell pool (`ADA_24`, `AMPERE_24`, `AMPERE_48` — our defaults)
 
 Already documented in [docs/src/content/docs/guides/troubleshooting.mdx](../docs/src/content/docs/guides/troubleshooting.mdx) under "VLM backend crashes on Blackwell GPUs".
 

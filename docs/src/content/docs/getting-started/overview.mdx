@@ -26,7 +26,7 @@ description: Architecture, what's in the repo, supported workloads, and how it c
 ## Why MinerU + serverless
 
 - **Accuracy.** The `MinerU2.5-Pro-2604-1.2B` VLM leads the [OmniDocBench](https://github.com/opendatalab/OmniDocBench) leaderboard on text, formula, table, and reading-order metrics — see the [HuggingFace model card](https://huggingface.co/opendatalab/MinerU2.5-Pro-2604-1.2B) and the [technical report](https://arxiv.org/abs/2604.04771).
-- **Economics.** Per-second billing on RunPod with FlashBoot means an idle worker costs nothing. ~$0.0003 per page on 24 GB Ampere serverless at current rates (see [RunPod pricing](https://www.runpod.io/pricing); rates change).
+- **Economics.** Per-second billing on RunPod with FlashBoot means an idle worker costs nothing. ~$0.0003 per page on a 24 GB RTX 4090 (default) at current rates (see [RunPod pricing](https://www.runpod.io/pricing); rates change).
 - **Licensing.** MinerU is Apache 2.0 with explicit commercial thresholds (free below 100M MAU and $20M monthly revenue, with attribution). Among open-source GPU-class PDF parsers, that's the cleanest license for production SaaS use.
 
 ## How it compares

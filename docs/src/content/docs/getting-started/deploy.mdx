@@ -24,7 +24,7 @@ Then in the RunPod dashboard:
 1. **The Hub → Serverless repos → Import Git Repository**, point at your fork. Branch `main`, Dockerfile path `Dockerfile`.
 2. RunPod builds the image (~5–10 min, watchable in the dashboard) and gives you a `template_id`.
 3. Create the endpoint. Pick one:
-   - **(B1) Dashboard, no local Python needed:** **Resources → Serverless → New Endpoint**, select your template, set `idle_timeout=10`, `workers_min=0`, `workers_max=3`, FlashBoot on, GPU pool `AMPERE_24`. Save and grab the endpoint id.
+   - **(B1) Dashboard, no local Python needed:** **Resources → Serverless → New Endpoint**, select your template, set `idle_timeout=10`, `workers_min=0`, `workers_max=3`, FlashBoot on, GPU pool `ADA_24` (RTX 4090). Save and grab the endpoint id.
    - **(B2) As code, reproducible across deployments:**
      ```powershell
      cp .env.example .env       # fill RUNPOD_API_KEY and MINERU_TEMPLATE_ID
@@ -49,14 +49,14 @@ This skips RunPod's auto-build entirely. Use it when you need custom base images
 
 | Setting | Value | Why |
 |---|---|---|
-| `gpu_ids` | `AMPERE_24` | 24 GB A5000 / 3090 class. Fits the [`MinerU2.5-Pro-2604-1.2B` VLM](https://huggingface.co/opendatalab/MinerU2.5-Pro-2604-1.2B) comfortably with KV cache. |
+| `gpu_ids` | `ADA_24` | 24 GB Ada / RTX 4090. Fits the [`MinerU2.5-Pro-2604-1.2B` VLM](https://huggingface.co/opendatalab/MinerU2.5-Pro-2604-1.2B) comfortably with KV cache; faster per page than the cheaper A5000 (`AMPERE_24`). |
 | `idle_timeout` | `10 s` | Scale workers to zero after 10 s of inactivity |
 | `workers_min` | `0` | Pay only when processing |
 | `workers_max` | `3` | Concurrency cap; bump for production |
 | `execution_timeout` | `900 s` | Per-job cap; covers a several-hundred-page parse |
 | `flashboot` | `true` | RunPod's fast cold-start tech |
 
-Override any of these via flags to `deploy.py` (e.g. `--gpu-ids ADA_24 --workers-max 5`).
+Override any of these via flags to `deploy.py` (e.g. `--gpu-ids AMPERE_24 --workers-max 5`).
 
 See [Choosing a GPU](/mineru-runpod/guides/choosing-gpu/) for when to deviate from the default 24 GB pool.
 

@@ -287,36 +287,6 @@ async def _handle_parse(
 
 
 async def handler(job: dict) -> dict:
-    # ---- TEMPORARY DIAGNOSTIC (remove once log visibility is solved) ----
-    # Three different writes to figure out why our JSON logs don't surface
-    # in the RunPod dashboard despite stdout capture working for the SDK's
-    # own `Started.` / `Finished.` lines. Each line is tagged so we can tell
-    # in the dashboard which write paths reach the log viewer.
-    import sys as _sys  # noqa: PLC0415
-    print(
-        f"[mineru-diagnostic-A] print() to sys.stdout, "
-        f"sys.stdout={type(_sys.stdout).__name__} "
-        f"sys.__stdout__={type(_sys.__stdout__).__name__ if _sys.__stdout__ else 'None'}",
-        flush=True,
-    )
-    try:
-        _sys.stdout.write("[mineru-diagnostic-B] direct sys.stdout.write() + flush\n")
-        _sys.stdout.flush()
-    except Exception as _e:  # noqa: BLE001
-        print(f"[mineru-diagnostic-B-failed] {_e!r}", flush=True)
-    try:
-        if _sys.__stdout__ is not None:
-            _sys.__stdout__.write("[mineru-diagnostic-C] write to sys.__stdout__ (original)\n")
-            _sys.__stdout__.flush()
-    except Exception as _e:  # noqa: BLE001
-        print(f"[mineru-diagnostic-C-failed] {_e!r}", flush=True)
-    try:
-        _sys.stderr.write("[mineru-diagnostic-D] write to sys.stderr\n")
-        _sys.stderr.flush()
-    except Exception as _e:  # noqa: BLE001
-        print(f"[mineru-diagnostic-D-failed] {_e!r}", flush=True)
-    # ---- END DIAGNOSTIC ----
-
     started = time.monotonic()
     phase_ms: dict[str, int] = {}
     gpu_info = _debug.collect_gpu_info()
@@ -376,15 +346,91 @@ _find_model_dir = _debug.find_model_dir
 _probe_filesystem = _debug.probe_filesystem
 
 
-if __name__ == "__main__":
-    # Eager warmup before claiming the event loop. Loads the MinerU model
-    # and JIT-compiles vLLM kernels at boot so the first request doesn't
-    # pay the ~100s cold-start tax. Non-fatal on failure — see
-    # worker/warmup.py and guides/troubleshooting.mdx.
-    from worker import warmup as _warmup
-    _warmup.warmup()
+def _bootstrap_main() -> None:
+    """Production worker bootstrap.
 
-    runpod.serverless.start({
+    Replicates ``runpod.serverless.worker.run_worker()`` but folds the
+    eager warmup into the same asyncio loop that JobScaler.run() will
+    use. The standard ``runpod.serverless.start()`` call chain creates
+    a fresh event loop *inside* JobScaler.start() — if our warmup runs
+    before that and creates its own loop via ``asyncio.run()``, vLLM's
+    AsyncLLMEngine handle is bound to the warmup loop. When the
+    JobScaler's loop starts and the first request tries to use the
+    engine, the parent's view of the engine subprocess is dead
+    (EngineDeadError ~75ms in). Composing both phases under one
+    ``asyncio.run()`` keeps the engine handle alive across the
+    warmup → serve transition.
+
+    NOTE: This reaches into ``runpod.serverless.modules.rp_scale`` and
+    ``rp_ping`` — undocumented internals of the runpod-python SDK.
+    pyproject pins ``runpod>=1.7`` (worker SDK version 1.9.x at time
+    of writing). A test in tests/test_runpod_internals.py asserts the
+    internals we depend on still exist and have the expected shape; if
+    the SDK refactors, that test fails fast instead of breaking
+    production silently.
+    """
+    import asyncio  # noqa: PLC0415
+    from runpod.serverless.modules import rp_ping, rp_scale  # noqa: PLC0415
+    from runpod.serverless.modules.rp_fitness import run_fitness_checks  # noqa: PLC0415
+    from worker import warmup as _warmup  # noqa: PLC0415
+
+    config: dict[str, Any] = {
         "handler": handler,
         "concurrency_modifier": _concurrency_modifier,
-    })
+        # JobScaler doesn't read rp_args directly, but some downstream
+        # paths in the SDK may. Empty dict is safe; the SDK's defaults
+        # apply for anything it does access.
+        "rp_args": {},
+    }
+
+    async def _bootstrap() -> None:
+        # 1. Fitness checks (runpod-python runs these synchronously
+        # before serving; we run them async in the same loop).
+        await run_fitness_checks()
+
+        # 2. Eager warmup. Same loop as the serve loop below — see
+        # worker/warmup.py docstring for the asyncio invariant.
+        await _warmup.warmup_async()
+
+        # 3. Heartbeat is a background thread, not async. Start it
+        # after warmup so the control plane doesn't see us "alive"
+        # before we can actually serve.
+        rp_ping.Heartbeat().start_ping()
+
+        # 4. Install combined signal handlers: our breadcrumb + the
+        # scaler's graceful-drain logic. Both must run on SIGTERM /
+        # SIGINT; signal.signal() only allows one handler so we wrap.
+        scaler = rp_scale.JobScaler(config)
+
+        def _combined_shutdown(signum: int, frame: Any) -> None:
+            _on_sigterm(signum, frame)
+            try:
+                scaler.handle_shutdown(signum, frame)
+            except Exception as e:  # noqa: BLE001
+                _logging.warning("scaler.handle_shutdown raised", error=repr(e))
+
+        try:
+            signal.signal(signal.SIGTERM, _combined_shutdown)
+            signal.signal(signal.SIGINT, _combined_shutdown)
+        except (ValueError, OSError) as e:
+            _logging.warning("could not install runtime signal handlers", error=repr(e))
+
+        # 5. Serve requests on this same loop. JobScaler.run() blocks
+        # until shutdown is requested.
+        await scaler.run()
+
+    asyncio.run(_bootstrap())
+
+
+if __name__ == "__main__":
+    # Local-test mode (RUNPOD_WEBHOOK_GET_JOB unset, or --test_input on
+    # the CLI) — fall back to runpod.serverless.start() which routes to
+    # rp_local. Warmup doesn't apply in local mode (no real worker
+    # lifecycle), and rp_local has its own asyncio.run().
+    if os.environ.get("RUNPOD_WEBHOOK_GET_JOB") is None:
+        runpod.serverless.start({
+            "handler": handler,
+            "concurrency_modifier": _concurrency_modifier,
+        })
+    else:
+        _bootstrap_main()

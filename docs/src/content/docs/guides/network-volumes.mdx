@@ -81,7 +81,7 @@ The worker validates the path is a real file and raises `ValueError: volume_path
 
 ## Picking a region
 
-Network volumes are **regional** — a volume in `us-east-1` is invisible to a worker in `eu-central-1`. When you create the volume, pick the region with the most GPU availability for your `gpuIds` list. For the template defaults (`AMPERE_24,ADA_24,AMPERE_48`), any US or EU region works.
+Network volumes are **regional** — a volume in `us-east-1` is invisible to a worker in `eu-central-1`. When you create the volume, pick the region with the most GPU availability for your `gpuIds` list. For the template defaults (`ADA_24,AMPERE_24,AMPERE_48`), any US or EU region works.
 
 If your endpoint has multiple regions enabled and you're running on a network volume, **pin the endpoint to the volume's region** (RunPod dashboard → endpoint → GPU configuration) — otherwise some workers may land in regions without the volume and fail with `volume_path not found`.
 

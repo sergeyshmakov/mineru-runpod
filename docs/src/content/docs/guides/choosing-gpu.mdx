@@ -3,22 +3,22 @@ title: Choosing a GPU
 description: When 24 GB is enough, when you need 48 GB, and when to switch backends. With concrete RunPod GPU pool IDs for each workload shape.
 ---
 
-The repo's default GPU pool is `AMPERE_24` (24 GB Ampere — RTX 3090 / A5000 class). That's the right choice for most users — the `MinerU2.5-Pro-2604-1.2B` VLM (running on the MinerU 3.1.x runtime) was specifically sized to fit comfortably in 24 GB with KV cache headroom. This page is for the cases when it isn't.
+The repo's default GPU pool is `ADA_24` (24 GB Ada — RTX 4090). The `MinerU2.5-Pro-2604-1.2B` VLM (running on the MinerU 3.1.x runtime) was specifically sized to fit comfortably in 24 GB with KV cache headroom; among the 24 GB pools, the 4090 is the right default because it's both faster per page **and** cheaper per page than the cheaper-hourly A5000/3090 (`AMPERE_24`). This page is for the cases when 24 GB isn't enough or when a different trade-off makes sense.
 
 ## TL;DR
 
 | You are… | Use GPU pool | Why |
 |---|---|---|
-| Parsing small-to-medium docs (≤100 pages) one at a time | `AMPERE_24` or `ADA_24` | Default. 24 GB fits the model + sequential page KV cache with headroom. |
+| Parsing small-to-medium docs (≤100 pages) one at a time | `ADA_24` (default) or `AMPERE_24` | 4090 is ~4× faster per warm page than A5000, and supply is better. A5000 has lower $/hr if you can tolerate slower parses. |
 | Doing concurrent batching inside a single worker | `AMPERE_48` | vLLM async engine can grow KV cache beyond 24 GB under batch pressure. |
 | Parsing large books (100–1,000 pages) | `AMPERE_48` | Headroom for dense layout / long reading-order context. |
 | Parsing huge documents (1,000+ pages) | `AMPERE_48` + `--backend pipeline` | Switch off vLLM KV-cache mode; pipeline backend processes page-by-page with a 4 GB minimum (per MinerU upstream). |
 
-If you're unsure, **start with the default `AMPERE_24` and watch for OOM in the worker logs**. Bumping to a 48 GB pool is a one-line change to `deploy.py --gpu-ids` or the `gpuIds` field in your endpoint config.
+If you're unsure, **start with the default `ADA_24` and watch for OOM in the worker logs**. Bumping to a 48 GB pool is a one-line change to `deploy.py --gpu-ids` or the `gpuIds` field in your endpoint config.
 
 ## How much VRAM MinerU actually uses
 
-Measured on an RTX A5000 (24 GB) parsing a single-page test PDF with the default `vlm-auto-engine` backend:
+Originally measured on an RTX A5000 (24 GB) parsing a single-page test PDF with the default `vlm-auto-engine` backend. The 4090 numbers match within a few hundred MiB — same vLLM config, same KV-cache budget; the difference between the two cards is compute speed, not memory footprint.
 
 | Component | VRAM |
 |---|---|
@@ -56,7 +56,7 @@ The published benchmarks ran on dual RTX 4090 (effectively 48 GB combined) to **
 
 This is the default RunPod serverless shape: each incoming job spins a worker, the worker parses the document, the worker scales to zero after `idle_timeout`. No concurrency inside the worker.
 
-- **GPU pool**: `AMPERE_24` or `ADA_24` (24 GB)
+- **GPU pool**: `ADA_24` (default) or `AMPERE_24` (cheaper hourly, slower)
 - **VRAM peak**: ~13 GiB
 - **Backend**: `vlm-auto-engine` (the default; resolves to vLLM async on CUDA)
 
@@ -72,8 +72,8 @@ If you set `concurrencyModifier` > 1 on your endpoint so one worker handles seve
 
 This is what RunPod does when you set `workers_max > 1` and several requests arrive at once. **Each worker is an isolated container with its own model copy** — VRAM is per-worker, not shared.
 
-- **GPU pool**: `AMPERE_24` per worker
-- **VRAM peak**: ~8 GB per worker
+- **GPU pool**: `ADA_24` per worker
+- **VRAM peak**: ~13 GiB per worker
 - **Scaling note**: you pay per worker-second, so cost scales linearly. The default `workers_max: 3` in `hub.json` is a sensible cap for spiky workloads.
 
 ### Multiple workers, batching inside each
@@ -88,9 +88,9 @@ The high-throughput shape: `workers_max > 1` AND `concurrencyModifier > 1`. Each
 
 | Doc size | Pages | Recommended pool | Notes |
 |---|---|---|---|
-| Tiny | 1–3 | `AMPERE_24` | Default ~13 GiB peak (measured on RTX A5000); 16 GB pools won't fit the default vLLM config. |
-| Small | 3–30 | `AMPERE_24` | The "average document" case the defaults are tuned for. |
-| Medium | 30–100 | `ADA_24` (RTX 4090) | Faster than Ampere 24 GB for the same job; KV cache stays well under 16 GB. |
+| Tiny | 1–3 | `ADA_24` | Default 24 GB pool; ~13 GiB peak. 16 GB pools won't fit the default vLLM config. |
+| Small | 3–30 | `ADA_24` | The "average document" case the defaults are tuned for. |
+| Medium | 30–100 | `ADA_24` | Same default; KV cache stays well under 16 GB even on dense pages. |
 | Large | 100–1,000 | `AMPERE_48` | More headroom for dense layouts. Sequential mode still uses ~10 GB, so 48 GB is safety margin. |
 | Huge | 1,000–10,000 | `AMPERE_48` + `--backend pipeline` | See next section. |
 
@@ -108,7 +108,7 @@ MinerU 3.1.x exposes five backends; the template accepts all of them as a per-jo
 
 ### Pipeline: the constant-memory escape hatch
 
-Pipeline trades raw speed for memory predictability: page-by-page streaming with no vLLM KV-cache accumulation, **4 GB minimum** per MinerU's hardware compatibility table. Per-page time is **~3–5 s across GPUs** for pipeline. The VLM backend is much more GPU-sensitive AND content-sensitive: MinerU upstream claims **~0.5 s/page (2.12 fps) on an A100**; we measured **~1 s/page on uniform multi-page reports up to ~10 s/page on dense financial forms** on an A5000 24 GB (≈3.5 s/page as a single-number estimate). So VLM-on-A100 ≈ 7× faster than pipeline; VLM-on-A5000 is roughly even with pipeline on average but can be much faster on light content. The pipeline backend uses PaddleOCR with explicit script-family models (109 languages per MinerU's README) and is the documented-safe choice for non-Latin scripts; empirically the Pro VLM also handles Cyrillic (Russian) correctly even though `lang` is ignored, but coverage of other non-Latin scripts on the VLM is undocumented.
+Pipeline trades raw speed for memory predictability: page-by-page streaming with no vLLM KV-cache accumulation, **4 GB minimum** per MinerU's hardware compatibility table. Per-page time is **~3–5 s across GPUs** for pipeline. The VLM backend is much more GPU-sensitive AND content-sensitive: MinerU upstream claims **~0.5 s/page (2.12 fps) on an A100**; we measured **~1 s/page (uniform reports) to ~6 s/page (dense forms) on RTX 4090**, and **~1–10 s/page on A5000 24 GB** depending on content density. So VLM-on-A100 ≈ 7× faster than pipeline; VLM-on-4090 is meaningfully faster than pipeline; VLM-on-A5000 is roughly even with pipeline on average. The pipeline backend uses PaddleOCR with explicit script-family models (109 languages per MinerU's README) and is the documented-safe choice for non-Latin scripts; empirically the Pro VLM also handles Cyrillic (Russian) correctly even though `lang` is ignored, but coverage of other non-Latin scripts on the VLM is undocumented.
 
 ```json
 {
@@ -180,7 +180,7 @@ Three places, in order of how you'd reach for them:
 python deploy.py --template-id $env:MINERU_TEMPLATE_ID --gpu-ids AMPERE_48
 ```
 
-Accepts a comma-separated list — RunPod picks the first available pool from the list at scale-up time:
+Accepts a comma-separated list — RunPod picks the first available pool from the list at scale-up time. The repo's default already prefers 4090 then falls back to A5000 then to A6000:
 
 ```powershell
 python deploy.py --template-id ... --gpu-ids "ADA_24,AMPERE_24,AMPERE_48"
@@ -197,7 +197,7 @@ For published Hub templates, the `gpuIds` field declares the default pool list u
 ```json
 {
   "config": {
-    "gpuIds": "AMPERE_24,ADA_24,AMPERE_48",
+    "gpuIds": "ADA_24,AMPERE_24,AMPERE_48",
     ...
   }
 }
@@ -211,9 +211,9 @@ The Hub default is intentionally conservative. The full list of RunPod pools tha
 
 | Pool ID | What it contains | Compute | Status with MinerU 2.5 Pro |
 |---|---|---|---|
-| `AMPERE_24` *(default)* | RTX 3090 / RTX A5000, 24 GB | 8.6 | ✅ Tested by us; ~1–10 s/page VLM warm depending on content density |
-| `ADA_24` *(default)* | RTX 4090, 24 GB | 8.9 | ✅ In default list; same vllm/xformers kernels as Ampere; expected to work |
-| `AMPERE_48` *(default)* | RTX A6000, 48 GB | 8.6 | ✅ In default list; same generation as A5000 |
+| `ADA_24` *(default)* | RTX 4090, 24 GB | 8.9 | ✅ Tested by us; ~1–6 s/page VLM warm depending on content density. Best speed-and-cost trade-off for sequential parsing. |
+| `AMPERE_24` *(default)* | RTX 3090 / RTX A5000, 24 GB | 8.6 | ✅ Tested by us; ~1–10 s/page VLM warm. Lower $/hr than ADA_24 but slower per page; usually worse $/page in practice. |
+| `AMPERE_48` *(default)* | RTX A6000, 48 GB | 8.6 | ✅ In default list; same generation as A5000, double the VRAM. Reach for it when 24 GB OOMs under your workload. |
 | `AMPERE_80` | NVIDIA A100 80 GB | 8.0 | ✅ The GPU MinerU benchmarks against (2.12 fps / ~0.5 s/page upstream). Compute 8.0 fully supported by vllm 0.11.2. Untested by us. |
 | `ADA_80_PRO` | RTX 6000 Ada variant | 8.9 | ✅ Should work; same kernels as `AMPERE_48`. Untested by us. |
 | `ADA_48_PRO` | RTX 6000 Ada *or* RTX PRO 6000 Blackwell — RunPod groups them together | 8.9 *or* **12.0** | ⚠️ Avoid: if RunPod schedules you on a Blackwell SKU, VLM backend will crash. Pipeline backend still runs on Blackwell. See [Blackwell note above](#a-note-on-ada_48_pro-and-blackwell). |
@@ -222,7 +222,7 @@ Other pools (`HOPPER_*`, lower-VRAM Ampere SKUs, etc.) may exist in your RunPod 
 
 To opt into a non-default pool, edit your endpoint's **GPU configuration** in the RunPod dashboard and add the pool ID to the comma-separated list. RunPod picks the first available pool from the list at scale-up time, so listing cheaper options first keeps cost lowest while making expensive options available if cheaper ones run out.
 
-**Why we don't put A100/H100 in the Hub default**: the `hub.json` `gpuIds` list is what new deployers see on the deploy form. Including `AMPERE_80` by default would make it look like A100 is the expected GPU for this template — it's not. Per-page cost on A100 is often *higher* than on AMPERE_24 because the hourly rate jump (~4×) outpaces the speed-up (~7×) only for sustained throughput. AMPERE_24 is the right default; opt into bigger only when you've measured a workload that needs it.
+**Why we don't put A100/H100 in the Hub default**: the `hub.json` `gpuIds` list is what new deployers see on the deploy form. Including `AMPERE_80` by default would make it look like A100 is the expected GPU for this template — it's not. Per-page cost on A100 is often *higher* than on ADA_24 because the hourly rate jump outpaces the speed-up except for sustained throughput. ADA_24 is the right default; opt into bigger only when you've measured a workload that needs it.
 
 ## A note on `ADA_48_PRO` and Blackwell
 
@@ -236,16 +236,16 @@ That's why the template's default `gpuIds` list excludes `ADA_48_PRO`. If you ne
 
 ## Cost implications
 
-GPU pricing on RunPod varies by pool, availability, and whether you're on spot vs on-demand. The repo's per-page math (~$0.0003 on a 24 GB Ampere serverless pool at ~$2.48/h Flex) assumes the default pool. For exact, current per-hour numbers, see [RunPod's pricing page](https://www.runpod.io/pricing) — rates change.
+GPU pricing on RunPod varies by pool, availability, and whether you're on spot vs on-demand. Indicative serverless Flex rates we've seen (subject to change — confirm at [RunPod's pricing page](https://www.runpod.io/pricing)):
 
-Rough relative cost, taking `AMPERE_24` as the baseline:
+| Pool | $/hr | Per-page wall time (warm VLM, dense content) | Per-page cost |
+|---|---|---|---|
+| `ADA_24` (RTX 4090, default) | ~$1.10 | ~1–6 s | **lowest** |
+| `AMPERE_24` (A5000 / 3090) | ~$0.69 | ~1–10 s | ~1.5–2× higher than ADA_24 despite cheaper hourly — speed gap dominates |
+| `AMPERE_48` (A6000) | ~$0.79 | similar to A5000 | only worth it when 24 GB OOMs |
+| `AMPERE_80` (A100 80 GB) | ~$1.89 | ~0.5 s upstream | sustained throughput only; otherwise per-page cost is *higher* than ADA_24 |
 
-| Pool | Relative $/hr | When it pays off |
-|---|---|---|
-| `AMPERE_24` | 1.0× | Default; the cost target. |
-| `ADA_24` (RTX 4090) | ~1.5–2× | ~30–50% faster per page; per-page cost roughly breaks even. |
-| `AMPERE_48` (A6000) | ~2.5–3× | Pays off when 24 GB OOMs under your workload. Don't pre-optimize. |
-| `AMPERE_80` (A100 80GB) | ~4× | Concurrent large-doc batching only; unjustified for sequential parsing. |
+Why ADA_24 wins on $/page despite the higher hourly: the 4090's compute speed-up (~2–4× faster per page than A5000) outpaces its ~1.6× hourly premium. The math only flips when a workload sits on a single warm worker for very long stretches and the per-page advantage saturates.
 
 ## When to revisit this
 

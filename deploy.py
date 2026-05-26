@@ -8,11 +8,11 @@ Quick recipes
 -------------
 Fast spiky workload (documents arriving sporadically, latency matters):
     python deploy.py --template-id $TID --idle-timeout 10 --workers-min 0 \\
-                     --flashboot --gpu-ids AMPERE_24
+                     --flashboot --gpu-ids ADA_24
 
 Steady throughput (always-on indexer):
     python deploy.py --template-id $TID --idle-timeout 5 --workers-min 1 \\
-                     --workers-max 10 --gpu-ids AMPERE_24
+                     --workers-max 10 --gpu-ids ADA_24
 
 Long single jobs (full-book parse, OK to wait):
     python deploy.py --template-id $TID --execution-timeout 3600 \\
@@ -37,7 +37,11 @@ import runpod
 
 DEFAULTS = {
     "name": "mineru-2.5-vlm",
-    "gpu_ids": "AMPERE_24",
+    # ADA_24 (RTX 4090) is the default: faster wall-clock per page than
+    # AMPERE_24 (A5000/3090), cheaper per page despite higher $/hr, and
+    # has better RunPod pool availability. See docs/guides/choosing-gpu.mdx
+    # for the math.
+    "gpu_ids": "ADA_24",
     "workers_min": 0,
     "workers_max": 3,
     "idle_timeout": 10,
@@ -128,7 +132,8 @@ def _build_parser() -> argparse.ArgumentParser:
         default=DEFAULTS["gpu_ids"],
         help=(
             f"RunPod GPU pool (default: {DEFAULTS['gpu_ids']}). "
-            f"common options: AMPERE_24, ADA_24, AMPERE_48, AMPERE_80, ADA_80_PRO. "
+            f"common options: ADA_24 (4090, default), AMPERE_24 (A5000/3090, cheaper hourly), "
+            f"AMPERE_48 (A6000, for big docs), AMPERE_80 (A100), ADA_80_PRO (RTX 6000 Ada). "
             f"avoid ADA_48_PRO until xformers ships a Blackwell kernel."
         ),
     )
@@ -153,7 +158,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help=(
             f"per-job hard timeout in seconds (default: {DEFAULTS['execution_timeout']}). "
             f"RunPod terminates the worker if a single job exceeds this. "
-            f"~5 s/page on AMPERE_24 → 900 s covers ~180 pages comfortably."
+            f"~1-3 s/page warm on ADA_24 → 900 s covers ~300-900 pages comfortably."
         ),
     )
 

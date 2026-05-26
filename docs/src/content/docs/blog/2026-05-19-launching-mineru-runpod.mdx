@@ -60,7 +60,7 @@ The fastest path (no local Python needed) is right in the dashboard:
 
 - **Serverless → Endpoints → New**
 - Pick the template you just created
-- GPU pool: `AMPERE_24` (24 GB Ampere, 3090/A5000 class)
+- GPU pool: `ADA_24` (RTX 4090, 24 GB) — the template's current default. ([Originally launched with `AMPERE_24` / A5000; switched after measuring per-page cost — see Choosing a GPU.](/mineru-runpod/guides/choosing-gpu/))
 - Workers min: `0`, max: `3`
 - Idle timeout: `10` seconds
 - FlashBoot: on
@@ -97,7 +97,7 @@ client.save_tarball(result, "./out/doc")
 # → ./out/doc/images/*.png
 ```
 
-That's it. First job takes ~30–60 s because the worker is cold and downloads the MinerU 2.5 model (~2.5 GB). Subsequent jobs in the same warm window run at MinerU-claimed ~2 pages/sec on an A100 (~0.5 s/page) — we measured ~0.3 pages/sec (~3.5 s/page) on the cheaper A5000 24 GB which is the template's default GPU. Pipeline backend runs ~3–5 s/page across all GPUs. After 10 s of idle, the worker scales to zero and you stop paying.
+That's it. First job takes ~30–60 s because the worker is cold and downloads the MinerU 2.5 model (~2.5 GB). Subsequent jobs in the same warm window run at MinerU-claimed ~2 pages/sec on an A100 (~0.5 s/page) — we measured ~0.3 pages/sec (~3.5 s/page) on an A5000 24 GB, the original template default at launch. (The default has since switched to RTX 4090, which runs warm parses at ~1–6 s/page depending on content density; see [Choosing a GPU](/mineru-runpod/guides/choosing-gpu/) for the per-page-cost reasoning.) Pipeline backend runs ~3–5 s/page across all GPUs. After 10 s of idle, the worker scales to zero and you stop paying.
 
 ## What's in the JSON
 
