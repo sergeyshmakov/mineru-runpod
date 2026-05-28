@@ -1,19 +1,26 @@
 ---
 title: Output modes
-description: Pick between tarball_b64, inline, and S3 presigned URLs. Hard size limits, when each mode fits, and a copy-paste S3 setup recipe.
+description: Pick between tarball_b64, inline, and S3 presigned URLs with the transport field, and use formats to filter which artifacts the inline payload carries.
 ---
 
-The worker has three ways to hand back the parsed output. Pick based on **how big the output is going to be** and **what you want to do with it**.
+The worker hands back parsed output through two orthogonal knobs:
+
+- **`transport`** — how the output is shipped (`tarball_b64` / `inline` / `s3`).
+- **`formats`** — for inline transport, which subset of `markdown` / `content_list` / `middle` / `images` rides along in the response.
+
+Pick `transport` based on **how big the output is** and **what you want to do with it**. Use `formats` to skip artifacts you don't need.
 
 ## At a glance
 
-| `return` | Output shape | Size limit | When to pick it |
+| `transport` | Output shape | Size limit | When to pick it |
 |---|---|---|---|
-| `"tarball_b64"` *(default)* | `tarball_b64`: base64-encoded `.tar.gz` of the output directory | ~20 MB total response (RunPod gateway cap) | Small to medium docs; you want one blob you can decode and stash anywhere |
-| `"inline"` | `markdown` + `content_list` + `middle` + `images` (each base64) | Same ~20 MB cap | You want structured fields back, easy to consume in JSON-only callers; small docs |
-| `"s3"` | `tarball_url`: presigned URL to the same `.tar.gz` on an S3-compatible bucket | No practical limit (bucket-side) | Large docs (long books, image-heavy reports); response stays tiny |
+| `"tarball_b64"` *(default)* | entry has `tarball_b64`: base64-encoded `.tar.gz` of the output directory | ~20 MB total response (RunPod gateway cap) | Small to medium docs; you want one blob you can decode and stash anywhere |
+| `"inline"` | entry has `markdown` + `content_list` + `middle` + `images` (each base64, filterable via `formats`) | Same ~20 MB cap | You want structured fields back, easy to consume in JSON-only callers; small docs |
+| `"s3"` | entry has `tarball_url`: presigned URL to the same `.tar.gz` on an S3-compatible bucket | No practical limit (bucket-side) | Large docs (long books, image-heavy reports); response stays tiny |
 
 All three modes produce the **same** underlying output — Markdown, content list, middle JSON, extracted images. The choice is purely about transport.
+
+Every success response wraps each parsed file in a `results: [...]` entry. For a single-file submission the list has one element; reach into it with `result["results"][0]` (or `MineruClient.first(result)` for the Python client).
 
 ## tarball_b64 (default)
 
@@ -21,21 +28,28 @@ All three modes produce the **same** underlying output — Markdown, content lis
 {
   "input": {
     "file_url": "https://example.com/report.pdf",
-    "return": "tarball_b64"
+    "transport": "tarball_b64"
   }
 }
 ```
 
-Response contains:
+Response (truncated):
 
 ```json
 {
   "ok": true,
-  "tarball_b64": "<base64-encoded .tar.gz, ~1-15 MB typically>"
+  "results": [
+    {
+      "basename": "doc",
+      "source": "url:https://example.com/report.pdf",
+      "pages_requested": -1,
+      "tarball_b64": "<base64-encoded .tar.gz, ~1-15 MB typically>"
+    }
+  ]
 }
 ```
 
-Unpack with `MineruClient.save_tarball()` or any base64 + gzip + tar tooling. **Default** because it round-trips cleanly through any JSON layer and the output dir on disk matches what MinerU produces locally.
+Unpack with `MineruClient.save_tarball(result, "./out")` or any base64 + gzip + tar tooling. **Default** because it round-trips cleanly through any JSON layer and the output dir on disk matches what MinerU produces locally.
 
 Hits the 20 MB gateway cap on documents with hundreds of pages of images or layout-dense PDFs. When that happens, switch to `s3`.
 
@@ -45,24 +59,68 @@ Hits the 20 MB gateway cap on documents with hundreds of pages of images or layo
 {
   "input": {
     "file_url": "https://example.com/report.pdf",
-    "return": "inline"
+    "transport": "inline"
   }
 }
 ```
 
-Response contains the structured fields directly:
+Response (truncated):
 
 ```json
 {
   "ok": true,
-  "markdown": "# Heading\n\nBody text...",
-  "content_list": [{"type": "text", "page_idx": 0, "text": "..."}, ...],
-  "middle": {...},
-  "images": {"img-1.png": "<base64>", "img-2.png": "<base64>"}
+  "results": [
+    {
+      "basename": "doc",
+      "source": "url:https://example.com/report.pdf",
+      "pages_requested": -1,
+      "markdown": "# Heading\n\nBody text...",
+      "content_list": [{"type": "text", "page_idx": 0, "text": "..."}],
+      "middle": {"...": "..."},
+      "images": {"img-1.png": "<base64>", "img-2.png": "<base64>"}
+    }
+  ]
 }
 ```
 
 Same 20 MB cap as `tarball_b64`. Worth it when the caller can't trivially untar — TypeScript / Go services, dashboards, anything that wants to render the markdown directly without an extraction step.
+
+## Filtering with `formats`
+
+For inline transport, `formats` whitelists which of the four artifacts ride back in the entry. Omitted keys are absent from the response — not present-as-empty. Useful when only the markdown matters and the images would otherwise add megabytes of base64 to the payload.
+
+**Just the markdown:**
+
+```json
+{
+  "input": {
+    "file_url": "https://example.com/report.pdf",
+    "transport": "inline",
+    "formats": ["markdown"]
+  }
+}
+```
+
+Response entry contains only `markdown` (plus the usual `basename` / `source` / `pages_requested`). `content_list`, `middle`, and `images` are not present.
+
+**Markdown + content list, skip the images:**
+
+```json
+{
+  "input": {
+    "transport": "inline",
+    "formats": ["markdown", "content_list"]
+  }
+}
+```
+
+Useful for RAG ingestion where the image blobs aren't needed and removing them speeds up the response.
+
+**Rules**:
+
+- Order doesn't matter. Duplicates collapse silently.
+- Empty list is rejected (`formats: []` → validation error). Omit the field to get all four.
+- `formats` is a **no-op** for `tarball_b64` and `s3` transports. Those always ship the full tarball — filtering the contents of an archive would just confuse callers who later download it and find a missing file. If you want a partial set with those transports, extract the tarball and ignore the files you don't need.
 
 ## s3 (presigned URL)
 
@@ -70,7 +128,7 @@ Same 20 MB cap as `tarball_b64`. Worth it when the caller can't trivially untar 
 {
   "input": {
     "file_url": "https://example.com/large-book.pdf",
-    "return": "s3"
+    "transport": "s3"
   }
 }
 ```
@@ -80,10 +138,17 @@ Response is small (~500 bytes):
 ```json
 {
   "ok": true,
-  "tarball_url": "https://<bucket>.<endpoint>/<key>?<signature>",
-  "tarball_url_expires_in": 3600,
-  "bucket_key": "doc-<uuid>.tar.gz",
-  "bucket_bytes": 87421344
+  "results": [
+    {
+      "basename": "doc",
+      "source": "url:https://example.com/large-book.pdf",
+      "pages_requested": -1,
+      "tarball_url": "https://<bucket>.<endpoint>/<key>?<signature>",
+      "tarball_url_expires_in": 3600,
+      "bucket_key": "doc-<uuid>.tar.gz",
+      "bucket_bytes": 87421344
+    }
+  ]
 }
 ```
 
@@ -109,10 +174,10 @@ Optional:
 | `BUCKET_REGION` | unset | Some providers (AWS) require this; R2 / B2 / MinIO don't |
 | `BUCKET_PREFIX` | `""` | Key prefix inside the bucket (e.g. `parses/2026/`); trailing `/` added if missing |
 
-If a caller requests `return: "s3"` without those env vars set, the worker raises:
+If a caller requests `transport: "s3"` without those env vars set, the worker raises:
 
 ```
-ValueError: return='s3' requires worker env vars: BUCKET_ENDPOINT_URL, BUCKET_NAME, BUCKET_ACCESS_KEY_ID, BUCKET_SECRET_ACCESS_KEY. Set these in the RunPod endpoint env config and redeploy.
+ValueError: transport='s3' requires worker env vars: BUCKET_ENDPOINT_URL, BUCKET_NAME, BUCKET_ACCESS_KEY_ID, BUCKET_SECRET_ACCESS_KEY. Set these in the RunPod endpoint env config and redeploy.
 ```
 
 The job is marked FAILED on the dashboard, so you'll notice immediately.
@@ -125,7 +190,7 @@ Each upload uses key `{BUCKET_PREFIX}{basename}-{uuid}.tar.gz` — the UUID prev
 
 Default is **3600 seconds (1 hour)**. Long enough for any human or service to fetch the tarball but short enough that a leaked URL stops working before it's interesting.
 
-If you need a longer lifetime, fork the worker and bump `_S3_PRESIGN_TTL_SECONDS` in [`handler.py`](https://github.com/sergeyshmakov/mineru-runpod/blob/main/handler.py). I haven't exposed this as a per-job knob because the default is rarely too short — a job that needs >1 h to fetch its output usually has a different bug.
+If you need a longer lifetime, fork the worker and bump `S3_PRESIGN_TTL_SECONDS` in [`worker/package.py`](https://github.com/sergeyshmakov/mineru-runpod/blob/main/worker/package.py). I haven't exposed this as a per-job knob because the default is rarely too short — a job that needs >1 h to fetch its output usually has a different bug.
 
 ### Costs
 
@@ -178,5 +243,6 @@ Rough heuristic in numbers:
 
 - **Under 100 pages, text-heavy** → `tarball_b64` is fine
 - **Over 100 pages, image-heavy** → `s3` to avoid the gateway cap
-- **Need structured fields back into a non-Python caller** → `inline`
+- **Need structured fields back into a non-Python caller** → `inline` (filter with `formats` to skip the parts you don't use)
+- **RAG ingestion that only needs the markdown** → `inline` + `formats: ["markdown"]`
 - **Production pipeline with bursty 1000+ page docs** → `s3` always; build a janitor that cleans the bucket on a TTL

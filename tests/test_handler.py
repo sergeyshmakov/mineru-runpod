@@ -150,9 +150,9 @@ def test_handler_rejects_bad_basename():
     assert "input validation" in result["error"].lower() or "basename" in result["error"].lower()
 
 
-def test_validate_input_rejects_invalid_return_value():
+def test_validate_input_rejects_invalid_transport_value():
     with pytest.raises(ValueError, match="input validation"):
-        handler._validate_input({"file_b64": "AA==", "return": "tarball-xml"})
+        handler._validate_input({"file_b64": "AA==", "transport": "tarball-xml"})
 
 
 def test_validate_input_defaults_applied():
@@ -161,13 +161,14 @@ def test_validate_input_defaults_applied():
     assert cleaned["end_page"] == -1
     assert cleaned["lang"] == "en"
     assert cleaned["backend"] == "vlm-auto-engine"
-    assert cleaned["return"] == "tarball_b64"
+    assert cleaned["transport"] == "tarball_b64"
+    assert cleaned["formats"] == ["markdown", "content_list", "middle", "images"]
     assert cleaned["basename"] == "doc"
 
 
-def test_validate_input_accepts_s3_return():
-    cleaned = handler._validate_input({"file_b64": "AA==", "return": "s3"})
-    assert cleaned["return"] == "s3"
+def test_validate_input_accepts_s3_transport():
+    cleaned = handler._validate_input({"file_b64": "AA==", "transport": "s3"})
+    assert cleaned["transport"] == "s3"
 
 
 def test_validate_input_rejects_unknown_backend():

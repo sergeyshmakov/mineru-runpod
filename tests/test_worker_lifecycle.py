@@ -159,43 +159,49 @@ def test_on_sigterm_sets_event():
 # -----------------------------------------------------------------------------
 
 def test_measure_output_bytes_tarball():
-    """Tarball: the base64 string IS the payload; len() is exact."""
-    response = {"tarball_b64": "QUFB" * 100}  # 400-char b64 string
+    """Tarball: the base64 string IS the payload; len() is exact.
+    The helper reads through `response["results"][0]` per the unified shape.
+    """
+    response = {"results": [{"tarball_b64": "QUFB" * 100}]}  # 400-char b64 string
     assert handler._measure_output_bytes(response, "tarball_b64") == 400
 
 
 def test_measure_output_bytes_inline_sums_markdown_and_images():
     """Inline: dominate fields are markdown text + b64 image strings."""
-    response = {
+    response = {"results": [{
         "markdown": "# hello\n",  # 8 utf-8 bytes
         "images": {"page1.png": "A" * 200, "page2.png": "B" * 300},
         # content_list / middle are ignored — JSON overhead is negligible
         # compared to the image and markdown payload on real documents.
         "content_list": [{"foo": "bar"}],
-    }
+    }]}
     assert handler._measure_output_bytes(response, "inline") == 8 + 500
 
 
 def test_measure_output_bytes_s3_uses_bucket_bytes():
     """S3: package_s3 records the uploaded tarball size in bucket_bytes."""
-    response = {
+    response = {"results": [{
         "tarball_url": "https://example.com/x.tar.gz",
         "bucket_bytes": 1024 * 1024,
-    }
+    }]}
     assert handler._measure_output_bytes(response, "s3") == 1024 * 1024
 
 
 def test_measure_output_bytes_empty_response_returns_zero():
     """A response missing the expected fields shouldn't produce a misleading
-    zero histogram sample — the caller skips the record on out_bytes <= 0."""
+    zero histogram sample — the caller skips the record on out_bytes <= 0.
+    Failure responses also have no `results` key and must return 0.
+    """
     assert handler._measure_output_bytes({}, "tarball_b64") == 0
     assert handler._measure_output_bytes({}, "inline") == 0
     assert handler._measure_output_bytes({}, "s3") == 0
+    assert handler._measure_output_bytes({"results": []}, "tarball_b64") == 0
+    assert handler._measure_output_bytes({"results": [{}]}, "tarball_b64") == 0
     assert handler._measure_output_bytes({"random": "shape"}, "unknown") == 0
 
 
 def test_measure_output_bytes_inline_handles_unicode():
     """Multi-byte chars count as utf-8 bytes, not codepoints."""
-    response = {"markdown": "héllo", "images": {}}
+    response = {"results": [{"markdown": "héllo", "images": {}}]}
     # 'h' + 'é' (2 bytes) + 'l' + 'l' + 'o' = 6 utf-8 bytes
     assert handler._measure_output_bytes(response, "inline") == 6

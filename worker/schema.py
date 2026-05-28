@@ -7,7 +7,11 @@ from typing import Any
 from runpod.serverless.utils.rp_validator import validate
 
 
-VALID_RETURNS = {"tarball_b64", "inline", "s3"}
+VALID_TRANSPORTS = {"tarball_b64", "inline", "s3"}
+
+# Order is the canonical output order — used as the default when `formats`
+# is omitted, and as the iteration order for deduplication.
+VALID_FORMATS: tuple[str, ...] = ("markdown", "content_list", "middle", "images")
 
 # MinerU 3.2.x backends. Validated at the handler boundary so callers get a
 # friendly error instead of a deep MinerU stack trace.
@@ -39,13 +43,43 @@ INPUT_SCHEMA: dict[str, dict[str, Any]] = {
     "server_url":     {"type": str,  "required": False, "default": None},
     "formula_enable": {"type": bool, "required": False, "default": True},
     "table_enable":   {"type": bool, "required": False, "default": True},
-    "return":         {"type": str,  "required": False, "default": "tarball_b64"},
+    "transport":      {"type": str,  "required": False, "default": "tarball_b64"},
+    "formats":        {"type": list, "required": False, "default": list(VALID_FORMATS)},
     "basename":       {"type": str,  "required": False, "default": "doc"},
 }
 
 
 def _fail(msg: str) -> None:
     raise ValueError(f"input validation failed: {msg}")
+
+
+def _normalize_formats(raw: Any) -> list[str]:
+    """Validate + dedupe a `formats` list. Returns a list with first-seen order.
+
+    rp_validator catches outer-type mismatches (e.g. ``formats: "markdown"``)
+    before this function runs; the per-element and emptiness checks below
+    are what we actually rely on. Duplicates collapse. Empty list is rejected —
+    callers asking for nothing would get no useful response.
+    """
+    if raw is None:
+        return list(VALID_FORMATS)
+    if not isinstance(raw, list):
+        # Defensive: rp_validator already rejects non-list values, but keep
+        # this in case the SDK behavior changes.
+        _fail(f"formats must be a list of strings; got {type(raw).__name__}")
+    if not raw:
+        _fail("formats must not be empty; omit the field to get all formats")
+    seen: list[str] = []
+    for item in raw:
+        if not isinstance(item, str):
+            _fail(f"formats entries must be strings; got {type(item).__name__}")
+        if item not in VALID_FORMATS:
+            _fail(
+                f"formats entry {item!r} not one of {list(VALID_FORMATS)}"
+            )
+        if item not in seen:
+            seen.append(item)
+    return seen
 
 
 def validate_input(job_input: dict) -> dict:
@@ -64,13 +98,20 @@ def validate_input(job_input: dict) -> dict:
     if not basename or not all(c.isalnum() or c in "-_" for c in basename):
         _fail(f"basename must be alphanumeric (with - or _); got {basename!r}")
 
-    ret = cleaned.get("return") or "tarball_b64"
-    if ret not in VALID_RETURNS:
-        _fail(f"return must be one of {sorted(VALID_RETURNS)}; got {ret!r}")
+    # Write `transport` and `backend` back so downstream code can read them
+    # with `cleaned[...]` (rather than `.get(...) or default`) regardless of
+    # whether rp_validator's `default` mechanism populated the key.
+    transport = cleaned.get("transport") or "tarball_b64"
+    if transport not in VALID_TRANSPORTS:
+        _fail(f"transport must be one of {sorted(VALID_TRANSPORTS)}; got {transport!r}")
+    cleaned["transport"] = transport
+
+    cleaned["formats"] = _normalize_formats(cleaned.get("formats"))
 
     backend = cleaned.get("backend") or "vlm-auto-engine"
     if backend not in VALID_BACKENDS:
         _fail(f"backend must be one of {sorted(VALID_BACKENDS)}; got {backend!r}")
+    cleaned["backend"] = backend
 
     start_page = cleaned.get("start_page", 0) or 0
     if start_page < 0:

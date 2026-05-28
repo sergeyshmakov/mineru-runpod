@@ -6,7 +6,8 @@ Usage:
 
     client = MineruClient(endpoint_id="...", api_key="...")
     result = client.parse_document(file_url="https://...", start_page=0, end_page=99)
-    client.save_tarball(result, dest_dir="./out")
+    entry = MineruClient.first(result)            # one-element results list
+    client.save_tarball(result, dest_dir="./out") # also accepts an entry
 
 Accepts PDF, image (PNG/JPEG/GIF/BMP/TIFF/WebP), DOCX, PPTX, XLSX.
 """

@@ -3,7 +3,7 @@
     "volume_path": ".runpod/test-fixture.pdf",
     "start_page": 0,
     "end_page": 0,
-    "return": "tarball_b64",
+    "transport": "tarball_b64",
     "basename": "smoke"
   }
 }

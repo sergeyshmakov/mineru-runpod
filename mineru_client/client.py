@@ -11,7 +11,7 @@ import json
 import os
 import tarfile
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Iterable, Literal
 
 import runpod
 
@@ -52,11 +52,16 @@ class MineruClient:
         server_url: str | None = None,
         formula_enable: bool = True,
         table_enable: bool = True,
-        return_format: Literal["tarball_b64", "inline", "s3"] = "tarball_b64",
+        transport: Literal["tarball_b64", "inline", "s3"] = "tarball_b64",
+        formats: Iterable[str] | str | None = None,
         basename: str = "doc",
         timeout: int = 900,
     ) -> dict[str, Any]:
         """Submit a synchronous parse job. Returns the handler's response dict.
+
+        The response shape is ``{"ok": True, "results": [{...}], "debug": {...}}``;
+        a single-file job has a one-element ``results`` list. Use
+        ``MineruClient.first(result)`` to grab the entry without indexing.
 
         Input formats (auto-detected by the worker):
             PDF, image (PNG/JPEG/GIF/BMP/TIFF/WebP), DOCX, PPTX, XLSX.
@@ -74,15 +79,21 @@ class MineruClient:
         `"east_slavic"` (Russian/Ukrainian/Belarusian), `"cyrillic"`,
         `"latin"`, `"arabic"`, `"devanagari"`. NOT ISO codes.
 
-        Return formats:
-            "tarball_b64"  (default) base64-encoded .tar.gz in the response
-            "inline"       markdown + content_list + middle + images embedded
-                           in the response dict
+        Transport:
+            "tarball_b64"  (default) base64-encoded .tar.gz inside the entry
+            "inline"       per-format keys (markdown / content_list / middle /
+                           images) inside the entry, filtered by ``formats``
             "s3"           uploads the .tar.gz to an S3-compatible bucket
                            configured on the worker via BUCKET_* env vars
                            and returns a presigned URL valid for ~1 hour.
                            Use this when outputs would exceed RunPod's
                            gateway response cap (~20 MB).
+
+        Formats (inline transport only):
+            Subset of ["markdown", "content_list", "middle", "images"].
+            Omit to get all four. A bare string is wrapped to a one-list
+            for ergonomics. For tarball_b64 and s3 the archive carries all
+            four artifacts regardless.
         """
         provided = sum(1 for x in (file_url, file_b64, volume_path) if x)
         if provided != 1:
@@ -95,6 +106,16 @@ class MineruClient:
                 f"external vLLM OpenAI-compatible server"
             )
 
+        # Client-side sugar: accept a bare string for a single format. The
+        # wire contract always sends a list — the worker rejects a string at
+        # the schema boundary.
+        if isinstance(formats, str):
+            formats_list: list[str] | None = [formats]
+        elif formats is None:
+            formats_list = None
+        else:
+            formats_list = list(formats)
+
         # Build the payload field-by-field, skipping None values. The handler's
         # rp_validator declares fields with typed schemas (e.g. end_page must be
         # int) and rejects JSON null even when the field is "optional". Letting
@@ -105,7 +126,7 @@ class MineruClient:
             "backend": backend,
             "formula_enable": formula_enable,
             "table_enable": table_enable,
-            "return": return_format,
+            "transport": transport,
             "basename": basename,
         }
         if end_page is not None:
@@ -118,6 +139,8 @@ class MineruClient:
             payload["file_b64"] = file_b64
         if volume_path is not None:
             payload["volume_path"] = volume_path
+        if formats_list is not None:
+            payload["formats"] = formats_list
 
         try:
             result = self._endpoint.run_sync(payload, timeout=timeout)
@@ -155,35 +178,75 @@ class MineruClient:
     # -- Result handling ----------------------------------------------------
 
     @staticmethod
-    def save_tarball(result: dict[str, Any], dest_dir: str | Path) -> Path:
-        """Extract the tarball_b64 from `result` into dest_dir. Returns the dir."""
-        if "tarball_b64" not in result:
+    def first(result: dict[str, Any]) -> dict[str, Any]:
+        """Return the first entry from a job result's ``results`` list.
+
+        Single-file jobs always have a one-element ``results`` list, so this
+        is the ergonomic accessor that skips the ``[0]`` indexing. Raises
+        ``MineruClientError`` if the response has no ``results`` array or
+        it's empty.
+        """
+        entries = result.get("results")
+        if not isinstance(entries, list) or not entries:
             raise MineruClientError(
-                "result has no tarball_b64; was return_format='tarball_b64'?"
+                "result has no `results` entries; "
+                "was the job successful? Check `result['ok']` and `result.get('error')`."
+            )
+        return entries[0]
+
+    @staticmethod
+    def _unwrap(arg: dict[str, Any]) -> dict[str, Any]:
+        """Internal: accept either a wrapper dict or a single result entry.
+
+        Edge case: an ill-formed wrapper (``{"results": []}`` or
+        ``{"results": [non_dict]}``) falls through and returns ``arg`` itself —
+        the downstream "no tarball_b64 / no markdown / no tarball_url" error
+        then surfaces. The handler never emits empty results on success, so
+        this only matters for hand-crafted test fixtures.
+        """
+        if "results" in arg:
+            entries = arg.get("results") or []
+            if entries and isinstance(entries[0], dict):
+                return entries[0]
+        return arg
+
+    @staticmethod
+    def save_tarball(result: dict[str, Any], dest_dir: str | Path) -> Path:
+        """Extract the tarball_b64 from `result` into dest_dir. Returns the dir.
+
+        Accepts either the full response wrapper or a single result entry.
+        """
+        entry = MineruClient._unwrap(result)
+        if "tarball_b64" not in entry:
+            raise MineruClientError(
+                "result has no tarball_b64; was transport='tarball_b64'?"
             )
         dest = Path(dest_dir)
         dest.mkdir(parents=True, exist_ok=True)
-        raw = base64.b64decode(result["tarball_b64"])
+        raw = base64.b64decode(entry["tarball_b64"])
         with tarfile.open(fileobj=io.BytesIO(raw), mode="r:gz") as tar:
             tar.extractall(dest)
         return dest
 
     @staticmethod
     def save_s3_tarball(result: dict[str, Any], dest_dir: str | Path) -> Path:
-        """Download the presigned `tarball_url` from a `return: "s3"` response
+        """Download the presigned `tarball_url` from a `transport: "s3"` response
         and extract it into dest_dir. Returns the dir.
+
+        Accepts either the full response wrapper or a single result entry.
 
         The presigned URL expires after ~1 hour; call this promptly after the
         job returns.
         """
-        if "tarball_url" not in result:
+        entry = MineruClient._unwrap(result)
+        if "tarball_url" not in entry:
             raise MineruClientError(
-                "result has no tarball_url; was return_format='s3'?"
+                "result has no tarball_url; was transport='s3'?"
             )
         # Lazy import so the client stays dependency-light for callers that
         # only use the tarball_b64 / inline paths.
         import urllib.request  # noqa: PLC0415
-        with urllib.request.urlopen(result["tarball_url"]) as resp:
+        with urllib.request.urlopen(entry["tarball_url"]) as resp:
             data = resp.read()
         dest = Path(dest_dir)
         dest.mkdir(parents=True, exist_ok=True)
@@ -192,23 +255,45 @@ class MineruClient:
         return dest
 
     @staticmethod
-    def save_inline(result: dict[str, Any], dest_dir: str | Path, basename: str = "doc") -> Path:
-        """Write markdown + content_list + middle + images from an inline response."""
-        if "markdown" not in result:
+    def save_inline(
+        result: dict[str, Any],
+        dest_dir: str | Path,
+        basename: str | None = None,
+    ) -> Path:
+        """Write the inline format keys (markdown / content_list / middle /
+        images) onto disk.
+
+        Accepts either the full response wrapper or a single result entry.
+        Any format absent from the entry (because the caller filtered with
+        ``formats=``) is silently skipped — only the requested artifacts
+        get written.
+
+        When ``basename`` is None (the default), the entry's own ``basename``
+        is used; explicit values override.
+        """
+        entry = MineruClient._unwrap(result)
+        if "markdown" not in entry:
             raise MineruClientError(
-                "result has no markdown; was return_format='inline'?"
+                "result has no markdown; was transport='inline'?"
             )
+        if basename is None:
+            basename = entry.get("basename") or "doc"
         dest = Path(dest_dir)
-        (dest / "images").mkdir(parents=True, exist_ok=True)
-        (dest / f"{basename}.md").write_text(result["markdown"], encoding="utf-8")
-        (dest / f"{basename}_content_list.json").write_text(
-            json.dumps(result.get("content_list", []), indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
-        (dest / f"{basename}_middle.json").write_text(
-            json.dumps(result.get("middle", {}), indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
-        for name, b64 in (result.get("images") or {}).items():
-            (dest / "images" / name).write_bytes(base64.b64decode(b64))
+        dest.mkdir(parents=True, exist_ok=True)
+        (dest / f"{basename}.md").write_text(entry["markdown"], encoding="utf-8")
+        if "content_list" in entry:
+            (dest / f"{basename}_content_list.json").write_text(
+                json.dumps(entry.get("content_list") or [], indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        if "middle" in entry:
+            (dest / f"{basename}_middle.json").write_text(
+                json.dumps(entry.get("middle") or {}, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        images = entry.get("images") or {}
+        if images:
+            (dest / "images").mkdir(parents=True, exist_ok=True)
+            for name, b64 in images.items():
+                (dest / "images" / name).write_bytes(base64.b64decode(b64))
         return dest

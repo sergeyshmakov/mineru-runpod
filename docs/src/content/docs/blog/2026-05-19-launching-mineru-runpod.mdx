@@ -13,6 +13,10 @@ tags:
 
 *Last Updated: 2026-05-26*
 
+:::note[API note]
+The job-input field `return` was renamed to `transport` (with an orthogonal `formats` filter for inline outputs), and success responses now wrap each parsed file in a `results: [...]` list — see the current [API reference](/mineru-runpod/reference/api/). Snippets below predate that change and use the older `return` field; they're left intact as the post's original record.
+:::
+
 If you're building a RAG pipeline, a document indexer, or any product that ingests PDFs at scale, you've probably hit the same wall I did. Hosted OCR APIs charge pennies per page that compound into thousands per million. CPU parsers are too slow for production volume. A permanent GPU pod is wasteful when traffic comes in bursts.
 
 [MinerU 2.5](https://github.com/opendatalab/MinerU) is genuinely state-of-the-art for PDF → Markdown / structured JSON. Apache 2.0 license. The [`MinerU2.5-Pro-2604-1.2B` model](https://huggingface.co/opendatalab/MinerU2.5-Pro-2604-1.2B) fits comfortably on a 24 GB GPU. RunPod Serverless scales to zero when nothing is calling. Wiring those two together is the obvious move.

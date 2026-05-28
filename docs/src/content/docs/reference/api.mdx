@@ -19,7 +19,8 @@ Send a POST to `/v2/{endpoint_id}/runsync` (or `/run` for async) with an `input`
     "backend":        "vlm-auto-engine",
     "formula_enable": true,
     "table_enable":   true,
-    "return":         "tarball_b64",
+    "transport":      "tarball_b64",
+    "formats":        ["markdown", "content_list", "middle", "images"],
     "basename":       "my-doc"
   }
 }
@@ -46,18 +47,20 @@ The worker accepts any of these formats — PDF, image (PNG/JPEG/GIF/BMP/TIFF/We
 | `server_url` | string | `null` | Required for `*-http-client` backends. URL of an external vLLM OpenAI-compatible server (e.g. `https://your-host/v1`) |
 | `formula_enable` | bool | `true` | Extract LaTeX equations |
 | `table_enable` | bool | `true` | Extract structured HTML tables |
-| `return` | string | `"tarball_b64"` | `"tarball_b64"` (default, base64-encoded .tar.gz), `"inline"` (markdown + content_list + middle + images embedded in the response), or `"s3"` (upload to a configured S3-compatible bucket and return a presigned URL — requires `BUCKET_*` env vars). See [Output modes](/mineru-runpod/guides/output-modes/) for the trade-offs. |
+| `transport` | string | `"tarball_b64"` | How the worker ships output. `"tarball_b64"` (default, base64-encoded .tar.gz inside the entry), `"inline"` (per-format keys inside the entry, filterable via `formats`), or `"s3"` (presigned URL — requires `BUCKET_*` env vars on the endpoint). See [Output modes](/mineru-runpod/guides/output-modes/). |
+| `formats` | array of string | all four | Subset of `["markdown", "content_list", "middle", "images"]`. Selects which artifacts the inline payload contains. Omit (or pass all four) to get everything. **No-op for `tarball_b64` and `s3`** — those transports always ship a self-contained archive with all four artifacts. Empty list is rejected. |
 | `basename` | string | `"doc"` | Filename stem for output files. Must be alphanumeric with `-` or `_` |
 
 ## I just want the Markdown — how do I get it?
 
-Set `"return": "inline"` in the job input. The response then contains a top-level `"markdown"` field with the full document rendered as Markdown:
+Set `"transport": "inline"` and (optionally) filter to just markdown:
 
 ```json
 {
   "input": {
     "file_url": "https://example.com/report.pdf",
-    "return": "inline"
+    "transport": "inline",
+    "formats": ["markdown"]
   }
 }
 ```
@@ -67,12 +70,21 @@ Response (truncated):
 ```json
 {
   "ok": true,
-  "markdown": "# Document title\n\nFirst paragraph...\n\n## Section\n\nA table:\n\n<table>...</table>\n",
-  "content_list": [...],
-  "middle": {...},
-  "images": {"img-0.png": "<base64>"}
+  "elapsed_seconds": 4.2,
+  "mineru_version": "3.2.x",
+  "results": [
+    {
+      "basename": "doc",
+      "source": "url:https://example.com/report.pdf",
+      "pages_requested": -1,
+      "markdown": "# Document title\n\nFirst paragraph...\n\n## Section\n\nA table:\n\n<table>...</table>\n"
+    }
+  ],
+  "debug": {"...": "..."}
 }
 ```
+
+For single-file jobs the markdown lives at `result.results[0].markdown`. Higher-level helpers: the Python `MineruClient` exposes `MineruClient.first(result)` to skip the indexing.
 
 `tarball_b64` (the default) also includes a `.md` file inside the gzipped tarball at `{basename}.md` — extract the tarball and the markdown is there too. Use `inline` when you want to read the markdown directly without unpacking; use `tarball_b64` (or `s3`) when you also want the structured JSON / image files together.
 
@@ -82,27 +94,48 @@ Response (truncated):
 {
   "ok": true,
   "elapsed_seconds": 18.4,
-  "pages_processed": 100,
   "mineru_version": "3.2.x",
-  "source": "url:https://example.com/report.pdf",
-  "tarball_b64": "<base64-encoded gzipped tarball>"
+  "results": [
+    {
+      "basename": "doc",
+      "source": "url:https://example.com/report.pdf",
+      "pages_requested": 100,
+      "tarball_b64": "<base64-encoded gzipped tarball>"
+    }
+  ],
+  "debug": {"...": "..."}
 }
 ```
+
+### Top-level keys (job-scoped)
 
 | Field | Type | Notes |
 |---|---|---|
 | `ok` | bool | Always `true` on success |
 | `elapsed_seconds` | float | Wall time inside the handler. Does not include cold-start time or transport |
-| `pages_processed` | int | Number of pages parsed. `-1` if `end_page` was open-ended |
-| `mineru_version` | string | The MinerU version that produced the parse (e.g. `3.1.15`) |
-| `source` | string | Echo of the input transport: `url:...`, `b64`, or `volume:/path/...` |
-| `tarball_b64` | string | Present when `return: "tarball_b64"` (default). Base64-encoded `.tar.gz` of the output directory |
-| `markdown`, `content_list`, `middle`, `images` | various | Present when `return: "inline"`. See below |
+| `mineru_version` | string | The MinerU version that produced the parse (e.g. `3.2.0`) |
+| `results` | array | One entry per parsed file. Single-file jobs have a one-element list. See below for the entry shape. |
 | `debug` | object | Observability data: `backend` used, `model_dir` (which snapshot loaded), `gpu` info, `phase_ms` timings. See below |
+| `refresh_worker` | bool | Present only when a `REFRESH_WORKER_AFTER_*` threshold has tripped. Tells RunPod to recycle the worker after returning. |
 
-### When `return: "inline"`
+### Per-entry keys (file-scoped, inside `results[]`)
 
-Instead of `tarball_b64`, the success response contains four inline fields:
+| Field | Type | Notes |
+|---|---|---|
+| `basename` | string | Echo of the input `basename`, useful when batches arrive |
+| `source` | string | Echo of the input transport: `url:...`, `b64`, or `volume:/path/...` |
+| `pages_requested` | int | The slice the caller asked for. `-1` if `end_page` was open-ended |
+| `tarball_b64` | string | Present when `transport: "tarball_b64"`. Base64-encoded `.tar.gz` of the output directory |
+| `markdown`, `content_list`, `middle`, `images` | various | Present when `transport: "inline"`. The set of keys reflects the `formats` filter — see below |
+| `tarball_url`, `tarball_url_expires_in`, `bucket_key`, `bucket_bytes` | various | Present when `transport: "s3"`. See [Output modes → s3](/mineru-runpod/guides/output-modes/) |
+
+:::note[Reserved for batch input]
+A future batch-input phase will add per-entry `ok` and `error` fields so a single-job multi-file submission can report partial success. Today's single-file responses do not include them.
+:::
+
+### When `transport: "inline"`
+
+Each entry contains the requested format keys directly. With the default `formats=["markdown", "content_list", "middle", "images"]`:
 
 | Field | Type | Notes |
 |---|---|---|
@@ -111,9 +144,27 @@ Instead of `tarball_b64`, the success response contains four inline fields:
 | `middle` | object | MinerU's intermediate representation with layout, bounding boxes, reading order |
 | `images` | object | `{filename: base64-encoded-png-bytes}` for every extracted image |
 
+### Filtering with `formats`
+
+The `formats` field whitelists which artifacts the inline payload contains. Omitted keys are absent from the entry — not present-as-empty. Useful when only the markdown matters and the per-page images would otherwise bloat the response.
+
+```json
+{
+  "input": {
+    "file_url": "https://example.com/report.pdf",
+    "transport": "inline",
+    "formats": ["markdown", "content_list"]
+  }
+}
+```
+
+The resulting entry has `markdown` and `content_list` only; `middle` and `images` are not present in the response. Empty list is rejected (`formats: []` is a validation error).
+
+For `transport: "tarball_b64"` and `transport: "s3"`, `formats` is a no-op: the tarball always carries the full set of four artifacts (filtering inside an archive would be confusing for downstream callers).
+
 ### Debug observability
 
-Every response includes a `debug` block with information that lets you correlate a parse to its environment without having to read worker logs:
+Every response includes a top-level `debug` block with information that lets you correlate a parse to its environment without having to read worker logs:
 
 ```json
 {
@@ -127,7 +178,7 @@ Every response includes a `debug` block with information that lets you correlate
       "total_memory_gb": 23.99
     },
     "phase_ms": {
-      "fetch_pdf": 12,
+      "fetch_input": 12,
       "mineru_parse": 18420,
       "package": 95
     }
@@ -140,13 +191,13 @@ Every response includes a `debug` block with information that lets you correlate
 | `backend` | The backend that ran. Echoes the input or the default |
 | `model_dir` | Filesystem path of the model snapshot that loaded. Both VLM and pipeline models are baked into the image at `/root/.cache/huggingface/`; the path you see here proves which snapshot the worker resolved (`null` if HF cache is empty, which should not happen on the published image) |
 | `gpu` | Card name, `compute_capability` (8.6 = Ampere, 8.9 = Ada, 9.0 = Hopper, 12.0 = Blackwell), VRAM. Helps debug "why did my job land on a different card than my pool config?" |
-| `phase_ms` | Per-phase timings: `fetch_pdf` (download/decode), `mineru_parse` (MinerU's `aio_do_parse`), `package` (tarball or inline assembly) |
+| `phase_ms` | Per-phase timings: `fetch_input` (download/decode), `mineru_parse` (MinerU's `aio_do_parse`), `package` (tarball or inline assembly) |
 
 On failure, `debug` still contains `gpu`, `model_dir`, and whatever `phase_ms` was collected before the error.
 
 ## Failure response
 
-When the handler raises or returns an error, the response sets `ok: false` and includes a top-level `error` key. RunPod marks the job FAILED in the dashboard based on the presence of that key.
+When the handler raises or returns an error, the response sets `ok: false` and includes a top-level `error` key. RunPod marks the job FAILED in the dashboard based on the presence of that key. **There is no `results` list on a failure response.**
 
 ```json
 {
@@ -171,8 +222,8 @@ When the handler raises or returns an error, the response sets `ok: false` and i
 The handler emits `runpod.serverless.progress_update` events during a parse. Phases:
 
 ```json
-{"phase": "fetching_pdf"}
-{"phase": "parsing", "pdf_bytes": 1234567, "start_page": 0, "end_page": 99}
+{"phase": "fetching_input"}
+{"phase": "parsing", "input_bytes": 1234567, "input_format": "pdf", "start_page": 0, "end_page": 99}
 {"phase": "packaging"}
 ```
 
@@ -182,14 +233,15 @@ Consume them via the RunPod SDK's `endpoint.stream(job_id)` or the HTTP `GET /v2
 
 The handler validates input before doing any work:
 
-1. **Field types and bounds** via `runpod.serverless.utils.rp_validator`. Wrong type, missing required field, or out-of-range value raises `ValueError`.
+1. **Field types and bounds** via `runpod.serverless.utils.rp_validator`. Wrong type, missing required field, out-of-range value, or unknown field name raises `ValueError`.
 2. **XOR transport rule.** Exactly one of `file_url`, `file_b64`, `volume_path` must be set. Zero or two raises `ValueError`.
 3. **Basename safety.** `basename` must match `[a-zA-Z0-9_-]+`; otherwise `ValueError`.
 4. **Inline file size.** `file_b64` decoded length must be ≤ 20 MB (matching RunPod's `/runsync` gateway cap).
 5. **Format detection.** The first few bytes must match a known signature (PDF / image / OOXML); otherwise `ValueError`.
+6. **`formats` membership.** Each entry must be one of `["markdown", "content_list", "middle", "images"]`; empty list is rejected; duplicates are silently collapsed.
 
 All validation errors produce a failure response with `error: "ValueError: ..."` and the job is marked FAILED.
 
 ## Source of truth
 
-This page is regenerated by hand when the contract changes. The authoritative source is the docstring at the top of [`handler.py`](https://github.com/sergeyshmakov/mineru-runpod/blob/main/handler.py) plus the `INPUT_SCHEMA` dict and `_validate_input` function in that file. If you see a discrepancy, the code wins; please open an issue so the docs page can be updated.
+This page is regenerated by hand when the contract changes. The authoritative source is the docstring at the top of [`handler.py`](https://github.com/sergeyshmakov/mineru-runpod/blob/main/handler.py) plus the `INPUT_SCHEMA` dict and `validate_input` function in [`worker/schema.py`](https://github.com/sergeyshmakov/mineru-runpod/blob/main/worker/schema.py). If you see a discrepancy, the code wins; please open an issue so the docs page can be updated.

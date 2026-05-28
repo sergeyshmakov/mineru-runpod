@@ -239,16 +239,16 @@ See [Choosing a GPU](/mineru-runpod/guides/choosing-gpu/) for the VRAM math.
 
 Triggers (measured on a real 82-page PDF):
 
-- `return: "inline"` — markdown + content_list + middle.json + base64 images add up fast; ~80 pages with embedded images was enough to exceed the cap.
-- `return: "tarball_b64"` — gzip compresses the JSON, but the images inside the tarball are already raster bytes, so it often doesn't fit either. Confirmed same failure on the same doc.
+- `transport: "inline"` — markdown + content_list + middle.json + base64 images add up fast; ~80 pages with embedded images was enough to exceed the cap. If you only need the markdown, narrow with `formats: ["markdown"]` first.
+- `transport: "tarball_b64"` — gzip compresses the JSON, but the images inside the tarball are already raster bytes, so it often doesn't fit either. Confirmed same failure on the same doc.
 
-**Fix**: use `return: "s3"` for large outputs. The worker uploads the .tar.gz to an S3-compatible bucket and returns only a small presigned URL (~1 h TTL) — no gateway cap in the path.
+**Fix**: use `transport: "s3"` for large outputs. The worker uploads the .tar.gz to an S3-compatible bucket and returns only a small presigned URL (~1 h TTL) — no gateway cap in the path.
 
 ```json
 {
   "input": {
     "file_url": "https://example.com/big.pdf",
-    "return": "s3"
+    "transport": "s3"
   }
 }
 ```
@@ -263,7 +263,7 @@ Configure the bucket via these env vars on the **endpoint** (not the template):
 | `BUCKET_SECRET_ACCESS_KEY` | R2 API token secret |
 | `BUCKET_REGION` *(optional)* | `auto` for R2 |
 
-The Python client handles the rest via `client.save_s3_tarball(result, dest_dir)` — it follows `result["tarball_url"]`, downloads the .tar.gz, and extracts. From curl, the response includes `tarball_url`, `tarball_url_expires_in`, and `bucket_key`; download within the TTL.
+The Python client handles the rest via `client.save_s3_tarball(result, dest_dir)` — it follows `result["results"][0]["tarball_url"]`, downloads the .tar.gz, and extracts. From curl, the entry inside `results[]` includes `tarball_url`, `tarball_url_expires_in`, and `bucket_key`; download within the TTL.
 
 If you can't wire S3, the fallback is **page chunking**: split with `start_page` / `end_page` into segments small enough that each tarball fits under the cap, then concatenate the `.md` files client-side. Slower (two cold starts if workers go cold between calls) but no infra changes.
 

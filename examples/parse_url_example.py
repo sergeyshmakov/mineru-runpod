@@ -29,13 +29,15 @@ def main() -> int:
         file_url=url,
         start_page=0,
         end_page=4,            # first 5 pages, for a quick smoke test
-        return_format="tarball_b64",
+        transport="tarball_b64",
         basename="example",
     )
+    entry = MineruClient.first(result)
     print(
         f"ok={result['ok']}  "
         f"elapsed={result['elapsed_seconds']}s  "
-        f"version={result['mineru_version']}"
+        f"version={result['mineru_version']}  "
+        f"pages={entry['pages_requested']}"
     )
     dest = Path("./out/parse_url_example")
     client.save_tarball(result, dest)

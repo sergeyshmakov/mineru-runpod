@@ -33,12 +33,12 @@ client.save_tarball(result, "./out/doc")
 curl -X POST "https://api.runpod.ai/v2/<endpoint-id>/runsync" \
   -H "Authorization: Bearer $RUNPOD_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"input":{"file_url":"https://example.com/report.pdf","end_page":4,"return":"inline"}}'
+  -d '{"input":{"file_url":"https://example.com/report.pdf","end_page":4,"transport":"inline"}}'
 ```
 
-The response includes a top-level `markdown` field with the full Markdown rendering of the document. Pipe it straight to a file: `curl ... | jq -r '.output.markdown' > report.md`.
+The response wraps each parsed file as an entry inside `results: [...]`. For a single document, the markdown sits at `output.results[0].markdown` — pipe it straight to a file: `curl ... | jq -r '.output.results[0].markdown' > report.md`.
 
-Accepts PDF, image (PNG/JPEG/GIF/BMP/TIFF/WebP), DOCX, PPTX, XLSX. Three return modes: `tarball_b64` (default — base64 tarball containing `{basename}.md` + structured JSON + images), `inline` (markdown + content_list + middle + images returned as separate response fields), or `s3` (presigned URL for outputs that would exceed RunPod's ~20 MB response cap — requires `BUCKET_*` env vars on the endpoint).
+Accepts PDF, image (PNG/JPEG/GIF/BMP/TIFF/WebP), DOCX, PPTX, XLSX. Two orthogonal knobs: **transport** (`tarball_b64` default — base64 tarball; `inline` — fields embedded in the entry; `s3` — presigned URL when outputs would exceed RunPod's ~20 MB response cap, requires `BUCKET_*` env vars) and **formats** (subset of `markdown` / `content_list` / `middle` / `images`; default all four; filters the inline payload).
 
 ## Why this exists
 
@@ -88,16 +88,17 @@ Full reference: [docs site](https://sergeyshmakov.github.io/mineru-runpod/refere
 | `backend` | no | `"vlm-auto-engine"` | `pipeline` / `vlm-auto-engine` / `vlm-http-client` / `hybrid-auto-engine` / `hybrid-http-client` |
 | `server_url` | iff `*-http-client` | — | URL of an external vLLM OpenAI-compatible server |
 | `formula_enable` / `table_enable` | no | `true` | Extract LaTeX / structured HTML tables |
-| `return` | no | `"tarball_b64"` | `"tarball_b64"` / `"inline"` / `"s3"` |
+| `transport` | no | `"tarball_b64"` | `"tarball_b64"` / `"inline"` / `"s3"` — how the worker ships output |
+| `formats` | no | `["markdown","content_list","middle","images"]` | Subset of those four; filters the inline payload (no-op for tarball/s3) |
 | `basename` | no | `"doc"` | Filename stem; alphanumeric + `-_` |
 
-Success response always includes `ok=true`, `elapsed_seconds`, `pages_processed`, `mineru_version`, `source`, and a `debug` block (`backend`, `input_format`, `model_dir`, `gpu`, `phase_ms`). Output payload depends on `return`:
+Success response always includes `ok=true`, `elapsed_seconds`, `mineru_version`, a `results: [...]` list (one entry per parsed file — single-file jobs have a one-element list), and a top-level `debug` block (`backend`, `input_format`, `model_dir`, `gpu`, `phase_ms`). Each entry carries `basename`, `source`, `pages_requested`, plus the transport-specific payload:
 
-- `"tarball_b64"` → `tarball_b64` (base64 .tar.gz)
-- `"inline"` → `markdown` + `content_list` + `middle` + `images` (each value base64)
-- `"s3"` → `tarball_url` (presigned, ~1 h) + `tarball_url_expires_in` + `bucket_key`
+- `"tarball_b64"` → `tarball_b64` (base64 .tar.gz) inside the entry
+- `"inline"` → `markdown` + `content_list` + `middle` + `images` keys inside the entry, filtered by `formats`
+- `"s3"` → `tarball_url` (presigned, ~1 h) + `tarball_url_expires_in` + `bucket_key` + `bucket_bytes` inside the entry
 
-Errors: top-level `error` + `ok=false` + `traceback` + the same `debug` block.
+Errors: top-level `error` + `ok=false` + `traceback` + the same top-level `debug` block (no `results` key).
 
 ## How does it compare?
 

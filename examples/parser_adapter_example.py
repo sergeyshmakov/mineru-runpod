@@ -125,7 +125,11 @@ class MineruParserAdapter(ParserAdapter):
             file_b64=artifact.inline_bytes_b64,
             volume_path=artifact.volume_path,
             lang=artifact.lang,
-            return_format="inline",   # we want structured data, not a tarball
+            transport="inline",
+            # Filter the response down to just content_list — this adapter
+            # builds chunks from those entries and ignores markdown / middle /
+            # images, so there's no reason to ship them back over the wire.
+            formats=["content_list"],
             basename=artifact.artifact_id,
         )
         return _to_parsed_document(result, artifact)
@@ -136,7 +140,8 @@ class MineruParserAdapter(ParserAdapter):
 # -----------------------------------------------------------------------------
 
 def _to_parsed_document(result: dict[str, Any], artifact: Artifact) -> ParsedDocument:
-    content_list: list[dict] = result.get("content_list") or []
+    entry = MineruClient.first(result)
+    content_list: list[dict] = entry.get("content_list") or []
 
     chunks: list[Chunk] = []
     sections: list[Section] = []

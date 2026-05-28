@@ -169,6 +169,10 @@ def _build_debug(phase_ms: dict[str, int], gpu_info: dict[str, Any], **extra: An
 def _measure_output_bytes(response: dict[str, Any], transport: str) -> int:
     """Approximate bytes shipped to the caller, for the egress metrics.
 
+    Reads from ``response["results"][0]`` — the per-file entry — because the
+    payload-carrying keys (``tarball_b64``, ``markdown``, ``images``,
+    ``bucket_bytes``) live there in the unified response shape.
+
     Per-transport sizing:
       * tarball_b64 — the b64 string IS the payload; len() is exact.
       * inline      — markdown text + image bytes dominate the JSON-encoded
@@ -178,17 +182,21 @@ def _measure_output_bytes(response: dict[str, Any], transport: str) -> int:
       * s3          — package_s3 records the uploaded tarball size in
                       `bucket_bytes`; the worker shipped exactly that.
     Returns 0 when the response shape doesn't include the expected fields
-    (e.g. an empty parse) so the histogram doesn't get a misleading zero
-    sample for "no output produced."
+    (e.g. an empty parse or a failure response with no `results`) so the
+    histogram doesn't get a misleading zero sample for "no output produced."
     """
+    results = response.get("results") or []
+    if not results:
+        return 0
+    entry = results[0] if isinstance(results[0], dict) else {}
     if transport == "tarball_b64":
-        tb = response.get("tarball_b64")
+        tb = entry.get("tarball_b64")
         return len(tb) if isinstance(tb, str) else 0
     if transport == "s3":
-        return int(response.get("bucket_bytes") or 0)
+        return int(entry.get("bucket_bytes") or 0)
     if transport == "inline":
-        md = response.get("markdown") or ""
-        images = response.get("images") or {}
+        md = entry.get("markdown") or ""
+        images = entry.get("images") or {}
         md_bytes = len(md.encode("utf-8")) if isinstance(md, str) else 0
         image_bytes = sum(
             len(v) for v in images.values() if isinstance(v, str)
@@ -305,26 +313,27 @@ async def _handle_parse(
         pages_requested = (
             (end_page - cleaned["start_page"] + 1) if end_page is not None else -1
         )
-        response: dict[str, Any] = {
-            "ok": True,
-            "elapsed_seconds": round(time.monotonic() - started, 2),
-            "pages_requested": pages_requested,
-            "pages_processed": pages_requested,  # back-compat alias
-            "mineru_version": _parse.MINERU_VERSION,
-            "source": source,
-        }
-        transport = cleaned["return"]
+        transport = cleaned["transport"]
+        formats = cleaned["formats"]
         with _telemetry.span(
             "mineru.package",
             phase="package",
             **{"mineru.transport": transport},
         ):
-            if transport == "inline":
-                response.update(_package.package_inline(output_dir, cleaned["basename"]))
-            elif transport == "s3":
-                response.update(_package.package_s3(output_dir, cleaned["basename"]))
-            else:
-                response["tarball_b64"] = _package.package_tarball(output_dir)
+            entry = _package.package_results_entry(
+                transport=transport,
+                formats=formats,
+                output_dir=output_dir,
+                basename=cleaned["basename"],
+                source=source,
+                pages_requested=pages_requested,
+            )
+        response: dict[str, Any] = {
+            "ok": True,
+            "elapsed_seconds": round(time.monotonic() - started, 2),
+            "mineru_version": _parse.MINERU_VERSION,
+            "results": [entry],
+        }
         package_seconds = time.monotonic() - t
         phase_ms["package"] = int(package_seconds * 1000)
         _telemetry.histogram_record("phase_duration", package_seconds, phase="package")

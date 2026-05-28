@@ -36,14 +36,15 @@ def main() -> int:
     result = MineruClient.parse_document_from_file(
         client,
         file_path,
-        return_format="inline",   # small enough to keep everything in-memory
+        transport="inline",   # small enough to keep everything in-memory
         basename=file_path.stem,
     )
+    entry = MineruClient.first(result)
     print(
         f"ok={result['ok']}  "
         f"elapsed={result['elapsed_seconds']}s  "
         f"version={result['mineru_version']}  "
-        f"images={len(result.get('images') or {})}"
+        f"images={len(entry.get('images') or {})}"
     )
     dest = Path(f"./out/{file_path.stem}")
     client.save_inline(result, dest, basename=file_path.stem)

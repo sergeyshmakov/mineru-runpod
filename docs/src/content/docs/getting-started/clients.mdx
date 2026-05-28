@@ -18,10 +18,13 @@ from mineru_client import MineruClient
 
 client = MineruClient(endpoint_id="<your-endpoint-id>")
 result = client.parse_document(file_url="https://example.com/report.pdf", end_page=4)
-client.save_tarball(result, "./out/doc")
+entry = MineruClient.first(result)            # single-file results list
+client.save_tarball(result, "./out/doc")      # save_* helpers accept the full result
 ```
 
 That's it. The wrapper builds the JSON payload, calls `/runsync` via the RunPod SDK, raises `MineruClientError` on failure, and extracts the tarball into a local directory.
+
+The response wraps each parsed file in a `results: [...]` list — for a single-file submission you get a one-element list. Use `MineruClient.first(result)` to grab that entry without indexing.
 
 ### What `MineruClient` gives you
 
@@ -55,9 +58,10 @@ result = endpoint.run_sync({
         "file_url": "https://example.com/report.pdf",
         "start_page": 0,
         "end_page": 99,
-        "return": "tarball_b64",
+        "transport": "tarball_b64",
     }
 })
+# result["output"]["results"][0]["tarball_b64"] is the base64 .tar.gz
 ```
 
 Four lines. The RunPod SDK supports async (`run`), streaming (`stream`), batching, and connection pooling. See the [RunPod Python SDK docs](https://docs.runpod.io/sdks/python/endpoints) for the full surface.
@@ -101,30 +105,47 @@ Rough rule: prototype with A, switch to B when you outgrow it. Outgrowing happen
 
 ## What the response looks like
 
-Either path returns the same handler response. Success:
+Either path returns the same handler response. Job-scoped metadata sits at the top level; the parsed file rides inside `results: [...]` (one entry per file — single-file jobs have a one-element list). Success with the default `transport: "tarball_b64"`:
 
 ```json
 {
   "ok": true,
   "elapsed_seconds": 18.4,
-  "pages_processed": 100,
   "mineru_version": "3.2.x",
-  "source": "url:https://...",
-  "tarball_b64": "..."
+  "results": [
+    {
+      "basename": "doc",
+      "source": "url:https://...",
+      "pages_requested": 100,
+      "tarball_b64": "..."
+    }
+  ],
+  "debug": {"...": "..."}
 }
 ```
 
-Or with `return: "inline"`:
+Or with `transport: "inline"`:
 
 ```json
 {
   "ok": true,
   "elapsed_seconds": 18.4,
-  "markdown": "# Heading\n\nBody text...",
-  "content_list": [{"type": "text", "page_idx": 0, "text": "..."}, ...],
-  "middle": {...},
-  "images": {"img-1.png": "<base64>"}
+  "mineru_version": "3.2.x",
+  "results": [
+    {
+      "basename": "doc",
+      "source": "url:https://...",
+      "pages_requested": 100,
+      "markdown": "# Heading\n\nBody text...",
+      "content_list": [{"type": "text", "page_idx": 0, "text": "..."}],
+      "middle": {"...": "..."},
+      "images": {"img-1.png": "<base64>"}
+    }
+  ],
+  "debug": {"...": "..."}
 }
 ```
 
-Failure responses set `ok: false` and include a top-level `error` key; RunPod marks the job FAILED in the dashboard. See [API reference](/mineru-runpod/reference/api/) for the full schema.
+Add `formats: ["markdown"]` to the input if you only want the markdown back — the other three keys are then absent from the entry. See [Output modes](/mineru-runpod/guides/output-modes/) for the full transport × formats matrix.
+
+Failure responses set `ok: false`, include a top-level `error` key, and have NO `results` field; RunPod marks the job FAILED in the dashboard. See [API reference](/mineru-runpod/reference/api/) for the full schema.

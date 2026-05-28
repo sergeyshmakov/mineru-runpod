@@ -13,6 +13,10 @@ tags:
 
 *Last Updated: 2026-05-26*
 
+:::note[API note]
+The job-input field `return` shown below was renamed to `transport`, and success responses now wrap each parsed file in a `results: [...]` list — so today the presigned URL lives at `result["results"][0]["tarball_url"]` instead of `result["tarball_url"]`. The behavior described in this post (large outputs → S3 → small response) is unchanged. See the current [API reference](/mineru-runpod/reference/api/) for the new field names; the snippets below are kept in their original form as a historical record.
+:::
+
 If your RunPod serverless worker logs say `done` but your client raises `unexpected handler return type: <class 'NoneType'>`, you've hit RunPod's bidirectional 20 MB payload cap on `/runsync`. The handler succeeded. The gateway dropped the response on the way back because the payload was too large.
 
 The fix is two steps. Set `return: "s3"` on the job, and configure four env vars on the endpoint pointing at a Cloudflare R2 bucket. The worker uploads the result to R2 and returns a small presigned URL. Your client downloads from R2 directly. No gateway cap in the path.

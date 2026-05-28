@@ -3,6 +3,10 @@
 - tarball_b64: base64-encoded gzip-tar embedded in the response
 - inline:      markdown + content_list + middle + images embedded directly
 - s3:          tarball uploaded to an S3-compatible bucket, presigned URL returned
+
+`formats` filters the inline payload — callers asking for `["markdown"]` only
+get the markdown key back. For tarball_b64 and s3 the archive is always
+self-contained (all four artifacts), so `formats` is a no-op on those.
 """
 
 from __future__ import annotations
@@ -13,7 +17,7 @@ import json
 import os
 import tarfile
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 
 def _build_tarball_bytes(output_dir: Path) -> bytes:
@@ -30,29 +34,51 @@ def package_tarball(output_dir: Path) -> str:
     return base64.b64encode(_build_tarball_bytes(output_dir)).decode("ascii")
 
 
-def package_inline(output_dir: Path, basename: str) -> dict[str, Any]:
-    md_path = output_dir / f"{basename}.md"
-    cl_path = output_dir / f"{basename}_content_list.json"
-    if not cl_path.is_file():
-        cl_path = output_dir / f"{basename}_content_list_v2.json"
-    mid_path = output_dir / f"{basename}_middle.json"
+def package_inline(
+    output_dir: Path,
+    basename: str,
+    formats: Iterable[str] | None = None,
+) -> dict[str, Any]:
+    """Assemble the requested artifacts from MinerU's output dir.
 
-    images: dict[str, str] = {}
-    images_dir = output_dir / "images"
-    if images_dir.is_dir():
-        for img in sorted(images_dir.iterdir()):
-            if img.is_file():
-                images[img.name] = base64.b64encode(img.read_bytes()).decode("ascii")
+    ``formats`` is a subset of ``{"markdown", "content_list", "middle", "images"}``.
+    None means "all four". Only the requested keys appear in the returned dict —
+    a filtered format is omitted, not present-as-empty.
+    """
+    wanted = set(formats) if formats is not None else {"markdown", "content_list", "middle", "images"}
+    out: dict[str, Any] = {}
 
-    return {
-        "markdown": md_path.read_text(encoding="utf-8") if md_path.is_file() else "",
-        "content_list": json.loads(cl_path.read_text(encoding="utf-8")) if cl_path.is_file() else [],
-        "middle": json.loads(mid_path.read_text(encoding="utf-8")) if mid_path.is_file() else {},
-        "images": images,
-    }
+    if "markdown" in wanted:
+        md_path = output_dir / f"{basename}.md"
+        out["markdown"] = md_path.read_text(encoding="utf-8") if md_path.is_file() else ""
+
+    if "content_list" in wanted:
+        cl_path = output_dir / f"{basename}_content_list.json"
+        if not cl_path.is_file():
+            cl_path = output_dir / f"{basename}_content_list_v2.json"
+        out["content_list"] = (
+            json.loads(cl_path.read_text(encoding="utf-8")) if cl_path.is_file() else []
+        )
+
+    if "middle" in wanted:
+        mid_path = output_dir / f"{basename}_middle.json"
+        out["middle"] = (
+            json.loads(mid_path.read_text(encoding="utf-8")) if mid_path.is_file() else {}
+        )
+
+    if "images" in wanted:
+        images: dict[str, str] = {}
+        images_dir = output_dir / "images"
+        if images_dir.is_dir():
+            for img in sorted(images_dir.iterdir()):
+                if img.is_file():
+                    images[img.name] = base64.b64encode(img.read_bytes()).decode("ascii")
+        out["images"] = images
+
+    return out
 
 
-# Default presigned URL lifetime for `return: "s3"` uploads.
+# Default presigned URL lifetime for `transport: "s3"` uploads.
 # An hour is enough for a caller to fetch the tarball but short enough that a
 # leaked URL stops working before it's interesting.
 S3_PRESIGN_TTL_SECONDS = 3600
@@ -81,7 +107,7 @@ def package_s3(output_dir: Path, basename: str) -> dict[str, Any]:
     ]
     if missing:
         raise ValueError(
-            f"return='s3' requires worker env vars: {', '.join(missing)}. "
+            f"transport='s3' requires worker env vars: {', '.join(missing)}. "
             f"Set these in the RunPod endpoint env config and redeploy."
         )
 
@@ -90,7 +116,7 @@ def package_s3(output_dir: Path, basename: str) -> dict[str, Any]:
     if prefix and not prefix.endswith("/"):
         prefix += "/"
 
-    # boto3 import is lazy so workers that never call return='s3' don't pay
+    # boto3 import is lazy so workers that never call transport='s3' don't pay
     # the ~50 MB cold-import cost.
     import boto3  # noqa: PLC0415
     from botocore.client import Config  # noqa: PLC0415
@@ -126,3 +152,38 @@ def package_s3(output_dir: Path, basename: str) -> dict[str, Any]:
         "bucket_key": key,
         "bucket_bytes": len(tarball_bytes),
     }
+
+
+def package_results_entry(
+    *,
+    transport: str,
+    formats: Iterable[str],
+    output_dir: Path,
+    basename: str,
+    source: str,
+    pages_requested: int,
+) -> dict[str, Any]:
+    """Build one entry of the ``results: [...]`` response array.
+
+    Combines the per-file metadata (basename, source, pages_requested) with
+    the transport-specific payload. For inline, ``formats`` selects which
+    artifacts ride along; for tarball_b64 and s3 the archive carries all four
+    regardless (so ``formats`` is a no-op on those paths).
+
+    ``transport`` is expected to be a member of ``{"tarball_b64", "inline", "s3"}``
+    — the schema validates this upstream. The ``else`` branch falls through to
+    inline rather than raising; callers are responsible for passing a
+    validated value.
+    """
+    entry: dict[str, Any] = {
+        "basename": basename,
+        "source": source,
+        "pages_requested": pages_requested,
+    }
+    if transport == "tarball_b64":
+        entry["tarball_b64"] = package_tarball(output_dir)
+    elif transport == "s3":
+        entry.update(package_s3(output_dir, basename))
+    else:  # inline
+        entry.update(package_inline(output_dir, basename, formats=formats))
+    return entry
