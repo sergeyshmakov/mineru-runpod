@@ -199,6 +199,45 @@ def test_handler_probe_mode_returns_filesystem_dump():
 
 
 # -----------------------------------------------------------------------------
+# Progress updates — regression guard for the packaging/completion race.
+#
+# progress_update POSTs {"status": "IN_PROGRESS"} from a background thread
+# to the same endpoint the SDK posts the final result to. Any update emitted
+# after the parse phase runs milliseconds before the handler returns, so it
+# can land AFTER the COMPLETED post and overwrite the finished job back to
+# IN_PROGRESS — the job then appears stuck forever. The parse phase must
+# therefore be the last progress event of a request.
+# -----------------------------------------------------------------------------
+
+def test_no_progress_update_after_parse(monkeypatch):
+    async def fake_run(file_bytes, *, basename, work_dir, **kwargs):
+        out = work_dir / "out"
+        out.mkdir()
+        (out / f"{basename}.md").write_text("# fake\n", encoding="utf-8")
+        return out
+
+    monkeypatch.setattr("worker.parse.run_mineru", fake_run)
+
+    phases: list = []
+    monkeypatch.setattr(
+        "runpod.serverless.progress_update",
+        lambda job, data: phases.append(data.get("phase")),
+    )
+
+    result = asyncio.run(handler.handler({
+        "id": "race-regression-test",
+        "input": {"file_b64": "JVBERi0xLjQK", "basename": "doc", "transport": "inline"},
+    }))
+
+    assert result["ok"] is True
+    assert phases, "expected progress updates during the request"
+    assert phases[-1] == "parsing", (
+        f"last progress phase must be 'parsing'; a later update (got {phases!r}) "
+        f"races the COMPLETED result post and can strand the job IN_PROGRESS"
+    )
+
+
+# -----------------------------------------------------------------------------
 # _package_s3 — env-var validation only; the actual upload requires boto3 +
 # a live S3 endpoint and is not exercised here.
 # -----------------------------------------------------------------------------

@@ -226,8 +226,9 @@ The handler emits `runpod.serverless.progress_update` events during a parse. Pha
 ```json
 {"phase": "fetching_input"}
 {"phase": "parsing", "input_bytes": 1234567, "input_format": "pdf", "start_page": 0, "end_page": 99}
-{"phase": "packaging"}
 ```
+
+There is deliberately no `packaging` phase event: packaging completes milliseconds before the final result is posted, and a progress update that close to completion can arrive after the `COMPLETED` status and overwrite it, leaving the job stuck `IN_PROGRESS`.
 
 Consume them via the RunPod SDK's `endpoint.stream(job_id)` or the HTTP `GET /v2/{endpoint_id}/stream/{job_id}` endpoint. The `MineruClient` Python wrapper does not surface these (it only supports `run_sync`); use the RunPod SDK directly if you need progress.
 

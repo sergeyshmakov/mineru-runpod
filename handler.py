@@ -304,7 +304,10 @@ async def _handle_parse(
         _telemetry.histogram_record("phase_duration", parse_seconds, phase="parse")
 
         _check_shutdown()
-        _maybe_progress(job, {"phase": "packaging"})
+        # No progress_update here: the SDK sends progress from a background
+        # thread to the same endpoint as the final result, and packaging
+        # finishes in milliseconds — an update this close to completion can
+        # land after the COMPLETED post and strand the job IN_PROGRESS.
 
         t = time.monotonic()
         # `pages_requested` reflects the slice the caller asked for, NOT the
