@@ -1,16 +1,17 @@
 # Container-side dependencies. Consumers do NOT need these — they only need
 # the mineru_client subpackage which has its own pyproject.toml.
 
-# MinerU with vLLM backend support. The 3.2.x line bumped the default VLM
-# from MinerU2.5-Pro-2604-1.2B to MinerU2.5-Pro-2605-1.2B. We bake the
-# matching model in the Dockerfile, so the pin is locked to the SAME
-# minor (>=3.2.0,<3.3.0) — MinerU has a history of changing the default
-# model name on minor-version bumps (3.1→3.2 broke us once), and the
-# offline runtime cache cannot follow that without a coordinated rebuild.
-# Bump deliberately: when crossing minors, update both this pin AND the
-# Dockerfile bake step in the same commit. Requires vllm 0.10.1.1+ — see
-# Dockerfile FROM tag.
-mineru[core,vllm]>=3.2.0,<3.3.0
+# MinerU with vLLM backend support. Pinned minor-locked (>=3.4.0,<3.5.0)
+# because MinerU has a history of changing the default VLM model name on
+# minor-version bumps (3.1→3.2 swapped 2604→2605 and broke us once), and
+# the offline runtime cache cannot follow that without a coordinated
+# Dockerfile rebuild. The 3.4.x default VLM is MinerU2.5-Pro-2605-1.2B
+# (unchanged since 3.2) and the pipeline OCR is now PP-OCRv6 — both live
+# inside the two baked HF repos, so a rebuild picks them up with no bake
+# change. Bump deliberately: when crossing minors, re-verify the baked
+# models against the new library default in the same commit. Requires
+# vllm >=0.10.1.1,<0.22.0 — satisfied by the Dockerfile FROM tag.
+mineru[core,vllm]>=3.4.0,<3.5.0
 
 # RunPod serverless SDK — provides runpod.serverless.start() and async helpers.
 runpod>=1.7.0

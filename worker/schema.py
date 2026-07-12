@@ -13,7 +13,7 @@ VALID_TRANSPORTS = {"tarball_b64", "inline", "s3"}
 # is omitted, and as the iteration order for deduplication.
 VALID_FORMATS: tuple[str, ...] = ("markdown", "content_list", "middle", "images")
 
-# MinerU 3.2.x backends. Validated at the handler boundary so callers get a
+# MinerU 3.4.x backends. Validated at the handler boundary so callers get a
 # friendly error instead of a deep MinerU stack trace.
 VALID_BACKENDS = {
     "pipeline",
@@ -22,6 +22,12 @@ VALID_BACKENDS = {
     "hybrid-auto-engine",
     "hybrid-http-client",
 }
+
+# MinerU's hybrid-backend "effort" lever (3.3+). `high` enables image/chart
+# analysis at a speed cost; `medium` (MinerU's own default) disables it. Only
+# meaningful for the hybrid-* backends — rejected on the others in
+# validate_input. `None` means "let MinerU decide" and is not forwarded.
+VALID_EFFORTS = {"medium", "high"}
 
 # Archive container for the archive transports (tarball_b64, s3). The default
 # preserves historical behavior (.tar.gz); "zip" exists for callers that need a
@@ -46,6 +52,7 @@ INPUT_SCHEMA: dict[str, dict[str, Any]] = {
     "end_page":       {"type": int,  "required": False, "default": -1},
     "lang":           {"type": str,  "required": False, "default": "en"},
     "backend":        {"type": str,  "required": False, "default": "vlm-auto-engine"},
+    "effort":         {"type": str,  "required": False, "default": None},
     "server_url":     {"type": str,  "required": False, "default": None},
     "formula_enable": {"type": bool, "required": False, "default": True},
     "table_enable":   {"type": bool, "required": False, "default": True},
@@ -129,6 +136,20 @@ def validate_input(job_input: dict) -> dict:
     if backend not in VALID_BACKENDS:
         _fail(f"backend must be one of {sorted(VALID_BACKENDS)}; got {backend!r}")
     cleaned["backend"] = backend
+
+    # `effort` is a hybrid-backend-only lever. Left as None it isn't forwarded,
+    # so MinerU applies its own default. When set we validate it and require a
+    # hybrid-* backend, keeping the error next to the caller rather than deep in
+    # MinerU. Written back so downstream reads `cleaned["effort"]` unconditionally.
+    effort = cleaned.get("effort")
+    if effort is not None:
+        if effort not in VALID_EFFORTS:
+            _fail(f"effort must be one of {sorted(VALID_EFFORTS)}; got {effort!r}")
+        if not backend.startswith("hybrid-"):
+            _fail(
+                f"effort is only valid with a hybrid-* backend; got backend={backend!r}"
+            )
+    cleaned["effort"] = effort
 
     start_page = cleaned.get("start_page", 0) or 0
     if start_page < 0:

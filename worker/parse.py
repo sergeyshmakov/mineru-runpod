@@ -33,6 +33,7 @@ async def run_mineru(
     server_url: str | None,
     formula_enable: bool,
     table_enable: bool,
+    effort: str | None = None,
 ) -> Path:
     if not MINERU_AVAILABLE:
         raise RuntimeError(f"mineru is not importable: {MINERU_VERSION}")
@@ -48,6 +49,14 @@ async def run_mineru(
             file_bytes = images_bytes_to_pdf_bytes(file_bytes)
         except Exception as e:  # noqa: BLE001
             raise ValueError(f"image preprocessing failed: {type(e).__name__}: {e}") from e
+
+    # `effort` (hybrid backends only) is forwarded only when the caller set it,
+    # so MinerU's own default governs otherwise. Passing it unconditionally
+    # would override that default and would be meaningless on non-hybrid
+    # backends — the schema already rejects that combination upstream.
+    extra: dict[str, str] = {}
+    if effort is not None:
+        extra["effort"] = effort
 
     # MinerU 3.1.x adds f_dump_model_output / f_dump_orig_pdf with default True
     # — both write extra artefacts (raw model output JSON, copy of input PDF)
@@ -70,6 +79,7 @@ async def run_mineru(
         f_dump_orig_pdf=False,
         start_page_id=start_page,
         end_page_id=end_page,
+        **extra,
     )
 
     # Only one basename is passed in, so at most one matching .md exists.

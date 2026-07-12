@@ -1,5 +1,5 @@
 # MinerU on RunPod Serverless — generic PDF parsing worker.
-# MinerU 3.2.x runtime, MinerU2.5-Pro-2605-1.2B VLM as the default model.
+# MinerU 3.4.x runtime, MinerU2.5-Pro-2605-1.2B VLM as the default model.
 #
 # Base image: vllm/vllm-openai (recommended by MinerU upstream — bundles CUDA
 # + a working vLLM that the VLM backend depends on).
@@ -24,12 +24,14 @@ FROM vllm/vllm-openai:${VLLM_VERSION}
 # anything tries to call out at runtime — fail-fast against misconfigured
 # endpoints.
 #
-# Model selection: MinerU 3.2.x's library default is
-# `opendatalab/MinerU2.5-Pro-2605-1.2B` for the VLM backend; pipeline
-# backend uses `opendatalab/PDF-Extract-Kit-1.0`. Both are baked below.
-# Note: MinerU bumps the VLM default on minor-version releases (3.1→3.2
-# bumped 2604→2605); the requirements.txt pin is minor-locked to keep
-# the baked model in sync with the library default.
+# Model selection: MinerU 3.4.x's library default is
+# `opendatalab/MinerU2.5-Pro-2605-1.2B` for the VLM backend; pipeline +
+# hybrid backends use `opendatalab/PDF-Extract-Kit-1.0` (its OCR set was
+# upgraded to PP-OCRv6 in 3.4 — the weights live inside that same repo, so
+# a rebuild picks them up with no new bake step). Both repos are baked
+# below. Note: MinerU can bump the VLM default on minor-version releases
+# (3.1→3.2 bumped 2604→2605); the requirements.txt pin is minor-locked to
+# keep the baked models in sync with the library default.
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \

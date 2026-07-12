@@ -43,7 +43,8 @@ The worker accepts any of these formats — PDF, image (PNG/JPEG/GIF/BMP/TIFF/We
 | `start_page` | int | `0` | 0-based, inclusive |
 | `end_page` | int | `-1` | 0-based, inclusive. `-1` or omitted means "to end of document" |
 | `lang` | string | `"en"` | Language hint, **pipeline backend only** (VLM backends ignore it). Use script-family codes — `east_slavic`, `cyrillic`, `latin`, `arabic`, `devanagari`, `japan`, `korean`, `chinese_cht`, `el`, `th`, etc. 109 languages supported. NOT ISO codes. See [Input formats](/mineru-runpod/guides/input-formats/#the-lang-parameter-pipeline-backend-only) for the full list. |
-| `backend` | string | `"vlm-auto-engine"` | One of `pipeline` \| `vlm-auto-engine` \| `vlm-http-client` \| `hybrid-auto-engine` \| `hybrid-http-client`. See [Choosing a GPU → Picking a backend](/mineru-runpod/guides/choosing-gpu/#picking-a-backend) |
+| `backend` | string | `"vlm-auto-engine"` | One of `pipeline` \| `vlm-auto-engine` \| `vlm-http-client` \| `hybrid-auto-engine` \| `hybrid-http-client`. The `pipeline` and `hybrid-*` backends use MinerU's PP-OCRv6 OCR models. See [Choosing a GPU → Picking a backend](/mineru-runpod/guides/choosing-gpu/#picking-a-backend) |
+| `effort` | string | `null` | **Hybrid backends only** (`hybrid-auto-engine` / `hybrid-http-client`). `"medium"` (MinerU's default when omitted) or `"high"`: `"high"` enables image/chart analysis at a speed cost, `"medium"` skips it for throughput. Rejected on non-hybrid backends. |
 | `server_url` | string | `null` | Required for `*-http-client` backends. URL of an external vLLM OpenAI-compatible server (e.g. `https://your-host/v1`) |
 | `formula_enable` | bool | `true` | Extract LaTeX equations |
 | `table_enable` | bool | `true` | Extract structured HTML tables |
@@ -115,7 +116,7 @@ For single-file jobs the markdown lives at `result.results[0].markdown`. Higher-
 |---|---|---|
 | `ok` | bool | Always `true` on success |
 | `elapsed_seconds` | float | Wall time inside the handler. Does not include cold-start time or transport |
-| `mineru_version` | string | The MinerU version that produced the parse (e.g. `3.2.0`) |
+| `mineru_version` | string | The MinerU version that produced the parse (e.g. `3.4.4`) |
 | `results` | array | One entry per parsed file. Single-file jobs have a one-element list. See below for the entry shape. |
 | `debug` | object | Observability data: `backend` used, `model_dir` (which snapshot loaded), `gpu` info, `phase_ms` timings. See below |
 | `refresh_worker` | bool | Present only when a `REFRESH_WORKER_AFTER_*` threshold has tripped. Tells RunPod to recycle the worker after returning. |

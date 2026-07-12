@@ -181,6 +181,32 @@ def test_validate_input_http_client_requires_server_url():
         handler._validate_input({"file_b64": "AA==", "backend": "vlm-http-client"})
 
 
+def test_validate_input_defaults_effort_to_none():
+    cleaned = handler._validate_input({"file_b64": "AA=="})
+    assert cleaned["effort"] is None
+
+
+def test_validate_input_accepts_effort_with_hybrid_backend():
+    cleaned = handler._validate_input(
+        {"file_b64": "AA==", "backend": "hybrid-auto-engine", "effort": "high"}
+    )
+    assert cleaned["effort"] == "high"
+
+
+def test_validate_input_rejects_invalid_effort_value():
+    with pytest.raises(ValueError, match="effort must be one of"):
+        handler._validate_input(
+            {"file_b64": "AA==", "backend": "hybrid-auto-engine", "effort": "turbo"}
+        )
+
+
+def test_validate_input_rejects_effort_on_non_hybrid_backend():
+    with pytest.raises(ValueError, match="effort is only valid with a hybrid"):
+        handler._validate_input(
+            {"file_b64": "AA==", "backend": "vlm-auto-engine", "effort": "high"}
+        )
+
+
 # -----------------------------------------------------------------------------
 # probe mode — bypasses MinerU and dumps filesystem layout.
 # -----------------------------------------------------------------------------
