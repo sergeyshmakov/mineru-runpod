@@ -131,18 +131,31 @@ def test_concurrency_malformed_env_var_falls_back_to_one(monkeypatch):
 # SIGTERM shutdown breadcrumb
 # -----------------------------------------------------------------------------
 
-def test_check_shutdown_raises_when_event_set():
+def test_check_shutdown_drains_instead_of_raising(monkeypatch):
+    """SIGTERM mid-job must NOT fail the job: RunPod treats a handler error
+    as terminal (FAILED, no retry), so the guard logs a breadcrumb and lets
+    the accepted job drain to completion."""
+    warnings: list[tuple[str, dict]] = []
+    monkeypatch.setattr(
+        handler._logging, "warning", lambda msg, **kw: warnings.append((msg, kw))
+    )
     handler._shutting_down.set()
     try:
-        with pytest.raises(RuntimeError, match="shutting down"):
-            handler._check_shutdown()
+        handler._check_shutdown("parse")  # must not raise
     finally:
         handler._shutting_down.clear()
+    assert warnings, "expected a drain breadcrumb to be logged"
+    assert warnings[0][1].get("phase") == "parse"
 
 
-def test_check_shutdown_is_noop_when_clear():
+def test_check_shutdown_is_noop_when_clear(monkeypatch):
+    warnings: list[str] = []
+    monkeypatch.setattr(
+        handler._logging, "warning", lambda msg, **kw: warnings.append(msg)
+    )
     handler._shutting_down.clear()
-    handler._check_shutdown()  # should not raise
+    handler._check_shutdown("fetch_input")  # should not raise
+    assert not warnings
 
 
 def test_on_sigterm_sets_event():

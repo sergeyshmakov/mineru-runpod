@@ -42,10 +42,18 @@ from worker import telemetry as _telemetry
 # RunPod sends SIGTERM when recycling a worker (idle timeout, refresh, manual
 # stop). The SDK already drains in-flight jobs, but the user-visible signal
 # tends to be "worker logs go silent." We install a breadcrumb handler + a
-# shutdown event that the handler checks between phases — so a request that's
-# between fetch_input and parse can bail out instead of consuming GPU time
-# that's about to be killed anyway. Mid-parse cancellation is NOT possible
-# (vLLM forward pass is a blocking GPU call from asyncio's POV).
+# shutdown event that the handler notes between phases, so the logs show
+# where a job was when SIGTERM arrived.
+#
+# The between-phase check deliberately does NOT abort the job. After SIGTERM
+# the SDK stops pulling new jobs, so anything that reaches the check was
+# already accepted. Failing it would return a top-level `error`, which RunPod
+# treats as terminal (FAILED, never retried) — clients saw routine scale-ins
+# as permanent "worker shutting down, refusing further work" job failures.
+# Draining to completion (or dying with the worker, in which case RunPod
+# re-queues the job) is strictly better for the caller. Mid-parse
+# cancellation is NOT possible anyway (vLLM forward pass is a blocking GPU
+# call from asyncio's POV).
 
 _shutting_down = threading.Event()
 
@@ -66,10 +74,11 @@ except (ValueError, OSError) as e:  # pragma: no cover — non-main-thread case
     _logging.warning("could not install sigterm handler", error=repr(e))
 
 
-def _check_shutdown() -> None:
-    """Raise if SIGTERM has been received. Called between request phases."""
+def _check_shutdown(phase: str) -> None:
+    """Log a breadcrumb if SIGTERM has been received. Called between request
+    phases. Never raises — see the drain rationale in the section comment."""
     if _shutting_down.is_set():
-        raise RuntimeError("worker shutting down, refusing further work")
+        _logging.warning("sigterm received mid-job; continuing to drain", phase=phase)
 
 
 # -----------------------------------------------------------------------------
@@ -240,7 +249,7 @@ async def _handle_parse(
         compute_capability=gpu_info.get("compute_capability"),
     )
 
-    _check_shutdown()
+    _check_shutdown("fetch_input")
     _maybe_progress(job, {"phase": "fetching_input"})
     t = time.monotonic()
     with _telemetry.span("mineru.fetch_input", phase="fetch_input"):
@@ -264,7 +273,7 @@ async def _handle_parse(
             "file_url returned the file body (not an error page)."
         )
 
-    _check_shutdown()
+    _check_shutdown("parse")
     _maybe_progress(job, {
         "phase": "parsing",
         "input_bytes": len(file_bytes),
@@ -304,7 +313,7 @@ async def _handle_parse(
         phase_ms["mineru_parse"] = int(parse_seconds * 1000)
         _telemetry.histogram_record("phase_duration", parse_seconds, phase="parse")
 
-        _check_shutdown()
+        _check_shutdown("package")
         # No progress_update here: the SDK sends progress from a background
         # thread to the same endpoint as the final result, and packaging
         # finishes in milliseconds — an update this close to completion can

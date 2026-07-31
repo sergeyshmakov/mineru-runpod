@@ -352,11 +352,18 @@ When SIGTERM arrives, the worker logs:
 {"ts":"...","level":"warning","logger":"mineru-worker","msg":"sigterm received, draining current job"}
 ```
 
-**What gets honored**:
-- Cancellations **between** request phases (`fetch_input` → `parse` → `package`).
-  The next phase check raises `RuntimeError: worker shutting down` and the
-  job returns `ok: false` with that error.
-- The graceful drain handled by RunPod's SDK on currently-in-flight jobs.
+**What happens to in-flight jobs**: they drain to completion. After
+SIGTERM the RunPod SDK stops pulling new jobs, so anything still running
+was already accepted — the worker finishes it and returns the result
+normally. Between request phases (`fetch_input` → `parse` → `package`)
+the worker logs a `sigterm received mid-job; continuing to drain`
+breadcrumb so you can see where the job was when the signal landed.
+
+Worker versions up to 1.8.0 instead **failed** in-flight jobs at the
+next phase boundary with `RuntimeError: worker shutting down, refusing further work`.
+RunPod treats a handler-returned error as terminal (FAILED, never
+retried), so routine scale-ins surfaced as permanent job failures to
+clients. If you see that error, upgrade the worker image.
 
 **What does NOT get honored**:
 - Cancellation **mid-`aio_do_parse`**. The vLLM forward pass is a
