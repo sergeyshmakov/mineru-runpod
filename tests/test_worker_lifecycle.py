@@ -145,6 +145,9 @@ def test_check_shutdown_drains_instead_of_raising(monkeypatch):
     finally:
         handler._shutting_down.clear()
     assert warnings, "expected a drain breadcrumb to be logged"
+    # The exact message is an operational contract — troubleshooting.mdx tells
+    # operators to look for this line when tracing where SIGTERM landed.
+    assert warnings[0][0] == "sigterm received mid-job; continuing to drain"
     assert warnings[0][1].get("phase") == "parse"
 
 
