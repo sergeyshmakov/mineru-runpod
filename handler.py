@@ -74,7 +74,7 @@ except (ValueError, OSError) as e:  # pragma: no cover — non-main-thread case
     _logging.warning("could not install sigterm handler", error=repr(e))
 
 
-def _check_shutdown(phase: str) -> None:
+def _note_shutdown(phase: str) -> None:
     """Log a breadcrumb if SIGTERM has been received. Called between request
     phases. Never raises — see the drain rationale in the section comment."""
     if _shutting_down.is_set():
@@ -249,7 +249,7 @@ async def _handle_parse(
         compute_capability=gpu_info.get("compute_capability"),
     )
 
-    _check_shutdown("fetch_input")
+    _note_shutdown("fetch_input")
     _maybe_progress(job, {"phase": "fetching_input"})
     t = time.monotonic()
     with _telemetry.span("mineru.fetch_input", phase="fetch_input"):
@@ -273,7 +273,7 @@ async def _handle_parse(
             "file_url returned the file body (not an error page)."
         )
 
-    _check_shutdown("parse")
+    _note_shutdown("parse")
     _maybe_progress(job, {
         "phase": "parsing",
         "input_bytes": len(file_bytes),
@@ -313,7 +313,7 @@ async def _handle_parse(
         phase_ms["mineru_parse"] = int(parse_seconds * 1000)
         _telemetry.histogram_record("phase_duration", parse_seconds, phase="parse")
 
-        _check_shutdown("package")
+        _note_shutdown("package")
         # No progress_update here: the SDK sends progress from a background
         # thread to the same endpoint as the final result, and packaging
         # finishes in milliseconds — an update this close to completion can

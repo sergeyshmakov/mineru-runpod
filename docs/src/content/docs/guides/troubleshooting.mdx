@@ -365,7 +365,7 @@ RunPod treats a handler-returned error as terminal (FAILED, never
 retried), so routine scale-ins surfaced as permanent job failures to
 clients. If you see that error, upgrade the worker image.
 
-**What does NOT get honored**:
+**What SIGTERM cannot do**:
 - Cancellation **mid-`aio_do_parse`**. The vLLM forward pass is a
   blocking GPU call from asyncio's point of view; interrupting it would
   corrupt the engine state. The worker finishes the current document

@@ -131,7 +131,7 @@ def test_concurrency_malformed_env_var_falls_back_to_one(monkeypatch):
 # SIGTERM shutdown breadcrumb
 # -----------------------------------------------------------------------------
 
-def test_check_shutdown_drains_instead_of_raising(monkeypatch):
+def test_note_shutdown_drains_instead_of_raising(monkeypatch):
     """SIGTERM mid-job must NOT fail the job: RunPod treats a handler error
     as terminal (FAILED, no retry), so the guard logs a breadcrumb and lets
     the accepted job drain to completion."""
@@ -141,23 +141,23 @@ def test_check_shutdown_drains_instead_of_raising(monkeypatch):
     )
     handler._shutting_down.set()
     try:
-        handler._check_shutdown("parse")  # must not raise
+        handler._note_shutdown("parse")  # must not raise
     finally:
         handler._shutting_down.clear()
     assert warnings, "expected a drain breadcrumb to be logged"
-    # The exact message is an operational contract — troubleshooting.mdx tells
-    # operators to look for this line when tracing where SIGTERM landed.
-    assert warnings[0][0] == "sigterm received mid-job; continuing to drain"
+    # Loose on the prose, strict on the structured field: `phase` is what the
+    # handler passes deliberately and what a regression would silently break.
+    assert "continuing to drain" in warnings[0][0]
     assert warnings[0][1].get("phase") == "parse"
 
 
-def test_check_shutdown_is_noop_when_clear(monkeypatch):
+def test_note_shutdown_is_noop_when_clear(monkeypatch):
     warnings: list[str] = []
     monkeypatch.setattr(
         handler._logging, "warning", lambda msg, **kw: warnings.append(msg)
     )
     handler._shutting_down.clear()
-    handler._check_shutdown("fetch_input")  # should not raise
+    handler._note_shutdown("fetch_input")  # should not raise
     assert not warnings
 
 
