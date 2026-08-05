@@ -42,16 +42,16 @@ The worker accepts any of these formats — PDF, image (PNG/JPEG/GIF/BMP/TIFF/We
 |---|---|---|---|
 | `start_page` | int | `0` | 0-based, inclusive |
 | `end_page` | int | `-1` | 0-based, inclusive. `-1` or omitted means "to end of document" |
-| `lang` | string | `"en"` | Language hint, **pipeline backend only** (VLM backends ignore it). Use script-family codes — `east_slavic`, `cyrillic`, `latin`, `arabic`, `devanagari`, `japan`, `korean`, `chinese_cht`, `el`, `th`, etc. 109 languages supported. NOT ISO codes. See [Input formats](/mineru-runpod/guides/input-formats/#the-lang-parameter-pipeline-backend-only) for the full list. |
-| `backend` | string | `"vlm-auto-engine"` | One of `pipeline` \| `vlm-auto-engine` \| `vlm-http-client` \| `hybrid-auto-engine` \| `hybrid-http-client`. The `pipeline` and `hybrid-*` backends use MinerU's PP-OCRv6 OCR models. See [Choosing a GPU → Picking a backend](/mineru-runpod/guides/choosing-gpu/#picking-a-backend) |
+| `lang` | string | `"en"` | Language hint, **pipeline backend only** (VLM backends ignore it). Use script-family codes — `east_slavic`, `cyrillic`, `latin`, `arabic`, `devanagari`, `japan`, `korean`, `chinese_cht`, `el`, `th`, etc. 109 languages supported. NOT ISO codes. See [Input formats](/guides/input-formats/#the-lang-parameter-pipeline-backend-only) for the full list. |
+| `backend` | string | `"vlm-auto-engine"` | One of `pipeline` \| `vlm-auto-engine` \| `vlm-http-client` \| `hybrid-auto-engine` \| `hybrid-http-client`. The `pipeline` and `hybrid-*` backends use MinerU's PP-OCRv6 OCR models. See [Choosing a GPU → Picking a backend](/guides/choosing-gpu/#picking-a-backend) |
 | `effort` | string | `null` | **Hybrid backends only** (`hybrid-auto-engine` / `hybrid-http-client`). `"medium"` (MinerU's default when omitted) or `"high"`: `"high"` enables image/chart analysis at a speed cost, `"medium"` skips it for throughput. Rejected on non-hybrid backends. |
 | `server_url` | string | `null` | Required for `*-http-client` backends. URL of an external vLLM OpenAI-compatible server (e.g. `https://your-host/v1`) |
 | `formula_enable` | bool | `true` | Extract LaTeX equations |
 | `table_enable` | bool | `true` | Extract structured HTML tables |
-| `transport` | string | `"tarball_b64"` | How the worker ships output. `"tarball_b64"` (default, base64-encoded .tar.gz inside the entry), `"inline"` (per-format keys inside the entry, filterable via `formats`), or `"s3"` (presigned URL — requires `BUCKET_*` env vars on the endpoint). See [Output modes](/mineru-runpod/guides/output-modes/). |
+| `transport` | string | `"tarball_b64"` | How the worker ships output. `"tarball_b64"` (default, base64-encoded .tar.gz inside the entry), `"inline"` (per-format keys inside the entry, filterable via `formats`), or `"s3"` (presigned URL — requires `BUCKET_*` env vars on the endpoint). See [Output modes](/guides/output-modes/). |
 | `formats` | array of string | all four | Subset of `["markdown", "content_list", "middle", "images"]`. Selects which artifacts the inline payload contains. Omit (or pass all four) to get everything. **No-op for `tarball_b64` and `s3`** — those transports always ship a self-contained archive with all four artifacts. Empty list is rejected. |
 | `basename` | string | `"doc"` | Filename stem for output files. Must be alphanumeric with `-` or `_` |
-| `archive_format` | string | `"tar.gz"` | Archive container for the `tarball_b64` and `s3` transports: `"tar.gz"` (default) or `"zip"`. No-op for `inline`. See [Output modes → archive format](/mineru-runpod/guides/output-modes/#archive-format-targz-or-zip). |
+| `archive_format` | string | `"tar.gz"` | Archive container for the `tarball_b64` and `s3` transports: `"tar.gz"` (default) or `"zip"`. No-op for `inline`. See [Output modes → archive format](/guides/output-modes/#archive-format-targz-or-zip). |
 | `probe` | bool | `false` | Diagnostic mode. `{"probe": true}` skips parsing and every field above, then returns the worker's filesystem layout plus the running MinerU version instead of a parse result — for checking baked model paths and volume mounts. |
 
 ## I just want the Markdown — how do I get it?
@@ -130,9 +130,9 @@ For single-file jobs the markdown lives at `result.results[0].markdown`. Higher-
 | `pages_requested` | int | The slice the caller asked for. `-1` if `end_page` was open-ended |
 | `tarball_b64` | string | Present when `transport: "tarball_b64"`. Base64-encoded archive of the output directory — `.tar.gz` by default, `.zip` when `archive_format: "zip"` |
 | `markdown`, `content_list`, `middle`, `images` | various | Present when `transport: "inline"`. The set of keys reflects the `formats` filter — see below |
-| `tarball_url`, `tarball_url_expires_in`, `bucket_key`, `bucket_bytes` | various | Present when `transport: "s3"`. The archive is `.tar.gz` by default, `.zip` when `archive_format: "zip"`. See [Output modes → s3](/mineru-runpod/guides/output-modes/) |
+| `tarball_url`, `tarball_url_expires_in`, `bucket_key`, `bucket_bytes` | various | Present when `transport: "s3"`. The archive is `.tar.gz` by default, `.zip` when `archive_format: "zip"`. See [Output modes → s3](/guides/output-modes/) |
 
-Each job parses one file. To process many documents, submit them as individual jobs and raise `workers_max` — RunPod's queue runs them in parallel across workers (see [Scaling](/mineru-runpod/guides/scaling/)).
+Each job parses one file. To process many documents, submit them as individual jobs and raise `workers_max` — RunPod's queue runs them in parallel across workers (see [Scaling](/guides/scaling/)).
 
 ### When `transport: "inline"`
 

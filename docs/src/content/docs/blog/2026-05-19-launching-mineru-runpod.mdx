@@ -14,7 +14,7 @@ tags:
 *Last Updated: 2026-05-26*
 
 :::note[API note]
-The job-input field `return` was renamed to `transport` (with an orthogonal `formats` filter for inline outputs), and success responses now wrap each parsed file in a `results: [...]` list — see the current [API reference](/mineru-runpod/reference/api/). Snippets below predate that change and use the older `return` field; they're left intact as the post's original record.
+The job-input field `return` was renamed to `transport` (with an orthogonal `formats` filter for inline outputs), and success responses now wrap each parsed file in a `results: [...]` list — see the current [API reference](/reference/api/). Snippets below predate that change and use the older `return` field; they're left intact as the post's original record.
 :::
 
 If you're building a RAG pipeline, a document indexer, or any product that ingests PDFs at scale, you've probably hit the same wall I did. Hosted OCR APIs charge pennies per page that compound into thousands per million. CPU parsers are too slow for production volume. A permanent GPU pod is wasteful when traffic comes in bursts.
@@ -123,7 +123,7 @@ For a document indexer or RAG pipeline, `content_list_v2.json` is the file you'l
 
 The Markdown is for human-readable display. `middle.json` has bounding boxes per span when you need page coordinates for hover-to-source UI.
 
-Transport options on the request: `tarball_b64` (default) for outputs under ~20 MB, `inline` if you want the markdown directly in the JSON response, `s3` for anything that would exceed RunPod's response cap. See [the R2 bridge post](/mineru-runpod/blog/2026-05-20-runpod-20mb-response-cap-r2-bridge/) for the `s3` setup.
+Transport options on the request: `tarball_b64` (default) for outputs under ~20 MB, `inline` if you want the markdown directly in the JSON response, `s3` for anything that would exceed RunPod's response cap. See [the R2 bridge post](/blog/2026-05-20-runpod-20mb-response-cap-r2-bridge/) for the `s3` setup.
 
 ## When does mineru-runpod fit your workload, and when doesn't it?
 
@@ -150,15 +150,15 @@ The repo's defaults (`workers_min=0`, `idle_timeout=10s`) are tuned for batch-wi
 
 Roughly **110 seconds** before MinerU starts parsing your first request after a scale-from-zero. The composition: ~3 s fitness checks, ~20 s vLLM engine config, ~20 s model load, ~25 s torch.compile, ~5 s CUDA graph capture, ~5 s of actual parse. Billed at ~$1.10/hr on the 4090 default, that's roughly **$0.03 per cold start**.
 
-The per-phase breakdown is documented in the [troubleshooting guide](/mineru-runpod/guides/troubleshooting/) if you want to see where the time goes. The boot-time warmup in this template loads MinerU's model and JIT-compiles vLLM kernels *before* the worker accepts requests. When RunPod's FlashBoot snapshot is available on a subsequent scale-from-zero, the wall-clock drops to ~7–8 seconds because the snapshot captured a warm process. When the snapshot isn't available (new host, image rebuild), warmup re-runs and you pay the full ~110 s again.
+The per-phase breakdown is documented in the [troubleshooting guide](/guides/troubleshooting/) if you want to see where the time goes. The boot-time warmup in this template loads MinerU's model and JIT-compiles vLLM kernels *before* the worker accepts requests. When RunPod's FlashBoot snapshot is available on a subsequent scale-from-zero, the wall-clock drops to ~7–8 seconds because the snapshot captured a warm process. When the snapshot isn't available (new host, image rebuild), warmup re-runs and you pay the full ~110 s again.
 
-[The FlashBoot mechanism investigation](/mineru-runpod/blog/2026-05-26-runpod-flashboot-mechanism-investigation/) covers when the fast path applies, with measured numbers across multiple consecutive cold starts.
+[The FlashBoot mechanism investigation](/blog/2026-05-26-runpod-flashboot-mechanism-investigation/) covers when the fast path applies, with measured numbers across multiple consecutive cold starts.
 
 ## What should I watch out for before going to production?
 
 Three production gotchas the marketing won't mention. The 20 MB response cap silently drops large outputs (symptom: `NoneType` after a successful parse — covered by the R2 bridge). `execution_timeout` defaults to 900 s and won't cover full books. `file_b64` inline payloads cap around 10 MB on the way in. None of these crash the worker; they manifest as confusing client-side errors.
 
-- **20 MB response cap.** RunPod's `/runsync` gateway drops responses over ~20 MB. Multi-page parses with embedded images hit this around 50–80 pages. Worker logs `done`; client gets `NoneType`. Fix: `return: "s3"` + Cloudflare R2, walked through in [the R2 bridge post](/mineru-runpod/blog/2026-05-20-runpod-20mb-response-cap-r2-bridge/).
+- **20 MB response cap.** RunPod's `/runsync` gateway drops responses over ~20 MB. Multi-page parses with embedded images hit this around 50–80 pages. Worker logs `done`; client gets `NoneType`. Fix: `return: "s3"` + Cloudflare R2, walked through in [the R2 bridge post](/blog/2026-05-20-runpod-20mb-response-cap-r2-bridge/).
 - **Long-job timeout.** Repo defaults `execution_timeout=900s` (good for ~150–300 pages on 4090). A 5,000-page book is 80–500 minutes depending on content density. Bump `execution_timeout` for long jobs; the endpoint upper limit is 24 hours.
 - **Inline payload cap on the way in.** `file_b64` requests cap around 10 MB. For bigger files, pass `file_url` and let the worker fetch from your storage. R2 public dev URLs work well.
 - **Cold-start economics.** "Pennies per page" depends on amortization. Track average pages per cold start in your logs. If it's under 30, bump `idle_timeout` or run `workers_min=1`.
@@ -175,9 +175,9 @@ The repo ships with:
 
 For the deeper context that didn't fit:
 
-- [How RunPod FlashBoot actually works](/mineru-runpod/blog/2026-05-26-runpod-flashboot-mechanism-investigation/) — four-request investigation into the cold-start mechanism and the per-host snapshot caveat.
-- [The R2 bridge for the 20 MB response cap](/mineru-runpod/blog/2026-05-20-runpod-20mb-response-cap-r2-bridge/) — fix for `NoneType` on multi-page outputs.
-- [Choosing a GPU](/mineru-runpod/guides/choosing-gpu/) — when 24 GB is enough, when to opt up to 48 GB.
+- [How RunPod FlashBoot actually works](/blog/2026-05-26-runpod-flashboot-mechanism-investigation/) — four-request investigation into the cold-start mechanism and the per-host snapshot caveat.
+- [The R2 bridge for the 20 MB response cap](/blog/2026-05-20-runpod-20mb-response-cap-r2-bridge/) — fix for `NoneType` on multi-page outputs.
+- [Choosing a GPU](/guides/choosing-gpu/) — when 24 GB is enough, when to opt up to 48 GB.
 
 If this saved you time, the easiest way to say thanks is [signing up for RunPod through this link](https://runpod.io?ref=31jdfpnq). Star the [repo on GitHub](https://github.com/sergeyshmakov/mineru-runpod) for updates.
 
@@ -205,7 +205,7 @@ Yes. Fork the repo and update the Dockerfile's `huggingface_hub.snapshot_downloa
 
 ### What GPU does the template default to?
 
-`ADA_24` (RTX 4090, 24 GB). Switched from `AMPERE_24` (A5000) on 2026-05-26 after measuring per-page cost. The 4090 is 2–4× faster per page than the A5000 and cheaper per page despite the higher hourly rate. See [Choosing a GPU](/mineru-runpod/guides/choosing-gpu/) for the full math and when to opt up to 48 GB.
+`ADA_24` (RTX 4090, 24 GB). Switched from `AMPERE_24` (A5000) on 2026-05-26 after measuring per-page cost. The 4090 is 2–4× faster per page than the A5000 and cheaper per page despite the higher hourly rate. See [Choosing a GPU](/guides/choosing-gpu/) for the full math and when to opt up to 48 GB.
 
 ### How do I keep my RunPod endpoint warm to avoid cold starts?
 

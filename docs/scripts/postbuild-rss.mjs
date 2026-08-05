@@ -29,8 +29,8 @@ import { dirname, resolve } from "node:path";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const RSS_PATH = resolve(__dirname, "..", "dist", "blog", "rss.xml");
 
-const SITE = "https://sergeyshmakov.github.io";
-const BASE = "/mineru-runpod";
+const SITE = "https://mineru.shmakov.tools";
+const BASE = "";
 const FEED_CHANNEL_LINK = `${SITE}${BASE}/blog/`;
 const FEED_SELF_HREF = `${SITE}${BASE}/blog/rss.xml`;
 const AUTHOR_NAME = "Sergei Shmakov";

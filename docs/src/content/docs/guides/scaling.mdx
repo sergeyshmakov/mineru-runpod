@@ -5,7 +5,7 @@ description: Worker-level knobs for concurrency, memory hygiene, and MinerU's ow
 
 This page collects the worker-level tuning knobs — the things you set
 once on the endpoint, not per request. For per-request options (backend
-selection, page range, output format), see [API reference](/mineru-runpod/reference/api/).
+selection, page range, output format), see [API reference](/reference/api/).
 
 All values listed here are set as **environment variables on the
 RunPod endpoint**, not in the job payload. You'll find them under the
@@ -17,7 +17,7 @@ as `env` entries in `deploy.py` if you use that.
 `MINERU_MAX_CONCURRENCY` is the **in-worker** concurrency knob — one of
 two concurrency levers. For how it interacts with `workers_max` and the
 request queue (and which to reach for), see
-[Concurrency](/mineru-runpod/guides/concurrency/). It controls how many
+[Concurrency](/guides/concurrency/). It controls how many
 jobs a single worker handles in parallel. Default `1`.
 
 | Value | When to use |
@@ -34,7 +34,7 @@ baseline.
 wraps vLLM, which pre-allocates a large KV cache at engine init. Two
 concurrent jobs share that cache; on a 16 GB GPU you OOM around 2
 concurrent VLM parses. The pipeline backend is more frugal but still
-bound by per-page VRAM. See [Choosing a GPU](/mineru-runpod/guides/choosing-gpu/)
+bound by per-page VRAM. See [Choosing a GPU](/guides/choosing-gpu/)
 for the memory math.
 
 ## Worker recycling
@@ -82,7 +82,7 @@ First time the worker lands on a new host, it pays the full ~110 s
 warmup once and that host then has a snapshot. Subsequent scale-from-
 zeroes that RunPod schedules onto the same host get the fast restore.
 A scale-from-zero onto a *different* host re-runs warmup (~110 s,
-once). See [Troubleshooting → FlashBoot mechanism](/mineru-runpod/guides/troubleshooting/#flashboot-mechanism-confirmed)
+once). See [Troubleshooting → FlashBoot mechanism](/guides/troubleshooting/#flashboot-mechanism-confirmed)
 for the four-request investigation that pinned down this behavior.
 
 Practical operator math: on endpoints with high enough traffic that
@@ -127,7 +127,7 @@ vLLM server with limited VRAM.
   for local development with `runpod.serverless.start` running on your
   laptop.
 
-See [Troubleshooting → reading worker logs](/mineru-runpod/guides/troubleshooting/#reading-worker-logs) for the field reference.
+See [Troubleshooting → reading worker logs](/guides/troubleshooting/#reading-worker-logs) for the field reference.
 
 **Two caveats** for production deployments:
 

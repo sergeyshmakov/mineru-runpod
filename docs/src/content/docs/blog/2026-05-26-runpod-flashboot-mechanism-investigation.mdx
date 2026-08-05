@@ -182,7 +182,7 @@ No. Each image gets its own SHA, and FlashBoot snapshots are scoped to (host, im
 
 The `runpod-mineru` repo wraps all of this into one Docker image: MinerU 3.2.x + the `MinerU2.5-Pro-2605-1.2B` VLM, the JobScaler-bypass composition for warmup, structured logging, and the rest. Open source ([GitHub](https://github.com/sergeyshmakov/mineru-runpod)), MIT-licensed, deploys from the RunPod Hub in two clicks.
 
-If you want the deeper breakdown of which phases of a cold start cost what, the [troubleshooting guide](/mineru-runpod/guides/troubleshooting/#flashboot-mechanism-confirmed) has the per-phase timing table from the same test runs. The [scaling guide](/mineru-runpod/guides/scaling/#flashboot) covers when to pair FlashBoot with `workers_min ≥ 1` for fully predictable latency.
+If you want the deeper breakdown of which phases of a cold start cost what, the [troubleshooting guide](/guides/troubleshooting/#flashboot-mechanism-confirmed) has the per-phase timing table from the same test runs. The [scaling guide](/guides/scaling/#flashboot) covers when to pair FlashBoot with `workers_min ≥ 1` for fully predictable latency.
 
 * * *
 <small><strong>Disclosure:</strong> RunPod links in this post use a referral code that credits me at no cost to you. The post would read the same without it.</small>

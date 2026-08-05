@@ -31,7 +31,7 @@ The trade-off is honest: you run the infrastructure. There's a cold-start cost, 
 
 Roughly **$0.001 per page** warm on a 24 GB RTX 4090, plus a **~$0.03 cold-start tax** the first time a host boots the worker (≈110 s of GPU billing for vLLM init and loading the baked model into VRAM). FlashBoot then snapshots that state, so the same host restarts in ~7-8 s across scale-to-zero cycles. RunPod bills per second and scales to zero, so an idle endpoint costs nothing. The cloud API is free under its daily quota, then queues or meters you; self-hosting trades that ceiling for a steady, predictable per-page rate.
 
-The real number depends on how well you amortize that first-boot tax. A thousand pages parsed across one warm window land near $0.001/page; a single short doc on a cold host lands closer to $0.005–$0.01 because you're paying the one-time tax against very few pages. FlashBoot shrinks that in practice, since a host pays the full tax only once. I broke the full workload-shape math down in [Serverless MinerU on RunPod: honest cost math](/mineru-runpod/blog/2026-05-19-launching-mineru-runpod/).
+The real number depends on how well you amortize that first-boot tax. A thousand pages parsed across one warm window land near $0.001/page; a single short doc on a cold host lands closer to $0.005–$0.01 because you're paying the one-time tax against very few pages. FlashBoot shrinks that in practice, since a host pays the full tax only once. I broke the full workload-shape math down in [Serverless MinerU on RunPod: honest cost math](/blog/2026-05-19-launching-mineru-runpod/).
 
 One cost the marketing pages skip: the first-boot cold start (~110 s on a brand-new host) is billed GPU time. FlashBoot snapshots that boot, so the same host restarts in ~7-8 s afterward. The model is baked into the image, so there's no model-download step at boot or request time. Budget for the first boot per host, not for every request.
 
@@ -39,7 +39,7 @@ One cost the marketing pages skip: the first-boot cold start (~110 s on a brand-
 
 Deploy the open-source [mineru-runpod](https://github.com/sergeyshmakov/mineru-runpod) template from the RunPod Hub, or fork it and point RunPod's GitHub build at your fork. Create a Serverless Endpoint on a 24 GB GPU (`ADA_24` / RTX 4090) with FlashBoot enabled. For `full_zip_url` parity with the cloud API, also set four `BUCKET_*` env vars pointing at an S3-compatible bucket.
 
-The fastest path is the Hub listing: one click, fill in the deploy-time form, done. The full walkthrough (fork-and-build and bring-your-own-image included) is in the [deploy guide](/mineru-runpod/getting-started/deploy/).
+The fastest path is the Hub listing: one click, fill in the deploy-time form, done. The full walkthrough (fork-and-build and bring-your-own-image included) is in the [deploy guide](/getting-started/deploy/).
 
 The one piece worth getting right up front is object storage. The compat client returns results as a `full_zip_url`, which means the worker uploads the output archive to a bucket and hands back a presigned URL, exactly like the SaaS. That path needs four env vars on the endpoint:
 
@@ -95,7 +95,7 @@ done = client.wait_for_task(task_id)        # polls to a terminal state
 client.download_results(done, "./out")      # full_zip_url is a real .zip; unpacked for you
 ```
 
-Same lifecycle, same `{"code": 0, "data": {...}}` response shape. The parameter names map across cleanly too: `model_version` to the worker's `backend`, `language` to `lang`, `enable_formula` / `enable_table` straight through. The full field-by-field mapping is in [Migrate from the MinerU API](/mineru-runpod/getting-started/migrate-from-mineru-api/), and the [Clients](/mineru-runpod/getting-started/clients/) page covers the native client if you'd rather use the worker's own (richer) request shape once you've moved.
+Same lifecycle, same `{"code": 0, "data": {...}}` response shape. The parameter names map across cleanly too: `model_version` to the worker's `backend`, `language` to `lang`, `enable_formula` / `enable_table` straight through. The full field-by-field mapping is in [Migrate from the MinerU API](/getting-started/migrate-from-mineru-api/), and the [Clients](/getting-started/clients/) page covers the native client if you'd rather use the worker's own (richer) request shape once you've moved.
 
 One auth note: the self-hosted endpoint authenticates with your RunPod API key, also via `Authorization: Bearer`, so even that part of your code barely changes.
 

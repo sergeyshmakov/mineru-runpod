@@ -54,7 +54,7 @@ If you'd rather slim the image and rely on RunPod's Cached Models feature for th
 
 If a downstream pipeline (a follow-up job that does embeddings, indexing, classification) needs to read the parse output, you have three options:
 
-1. **`transport: "s3"` + S3 bucket** — see [Output modes](/mineru-runpod/guides/output-modes/). Best for cross-region or multi-tenant pipelines.
+1. **`transport: "s3"` + S3 bucket** — see [Output modes](/guides/output-modes/). Best for cross-region or multi-tenant pipelines.
 2. **`transport: "tarball_b64"` + caller persists to its own store** — fine if the caller already has a place to put things.
 3. **Network volume + writes from handler** — requires forking the handler to add a write step. Useful for tight self-contained pipelines but adds complexity.
 

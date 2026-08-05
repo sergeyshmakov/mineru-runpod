@@ -14,7 +14,7 @@ tags:
 *Last Updated: 2026-05-26*
 
 :::note[API note]
-The job-input field `return` shown below was renamed to `transport`, and success responses now wrap each parsed file in a `results: [...]` list — so today the presigned URL lives at `result["results"][0]["tarball_url"]` instead of `result["tarball_url"]`. The behavior described in this post (large outputs → S3 → small response) is unchanged. See the current [API reference](/mineru-runpod/reference/api/) for the new field names; the snippets below are kept in their original form as a historical record.
+The job-input field `return` shown below was renamed to `transport`, and success responses now wrap each parsed file in a `results: [...]` list — so today the presigned URL lives at `result["results"][0]["tarball_url"]` instead of `result["tarball_url"]`. The behavior described in this post (large outputs → S3 → small response) is unchanged. See the current [API reference](/reference/api/) for the new field names; the snippets below are kept in their original form as a historical record.
 :::
 
 If your RunPod serverless worker logs say `done` but your client raises `unexpected handler return type: <class 'NoneType'>`, you've hit RunPod's bidirectional 20 MB payload cap on `/runsync`. The handler succeeded. The gateway dropped the response on the way back because the payload was too large.
@@ -121,7 +121,7 @@ client.save_s3_tarball(result, "./out/")
 
 End-to-end wall-clock: 211 s for an 82-page doc on a cold worker. Breakdown: ~112 s before MinerU started parsing (worker boot + warmup), ~92 s warm parsing (1.1 s/page on A5000), ~11 s gzip and upload to R2 (the `package` phase). The extracted output: 313 KB Markdown plus structured JSON plus per-page images. Roughly 3.5 minutes for a document that previously couldn't return its output at all.
 
-The cold-start portion is a separate concern from the response cap. [The FlashBoot mechanism investigation](/mineru-runpod/blog/2026-05-26-runpod-flashboot-mechanism-investigation/) covers why the ~112 s exists, how the boot-time warmup interacts with RunPod's snapshot system, and when subsequent cold starts are much faster.
+The cold-start portion is a separate concern from the response cap. [The FlashBoot mechanism investigation](/blog/2026-05-26-runpod-flashboot-mechanism-investigation/) covers why the ~112 s exists, how the boot-time warmup interacts with RunPod's snapshot system, and when subsequent cold starts are much faster.
 
 ## What should I watch out for with the R2 bridge?
 
@@ -170,7 +170,7 @@ Both. The worker accepts `file_url` pointing at an R2 public dev URL (or a presi
 
 If you've shipped a multi-page PDF pipeline on RunPod and you're not using `return: "s3"`, you'll hit the gateway cap eventually. Set it up before you need it. The cost is ten minutes of env-var configuration and possibly zero dollars per month at indie volumes.
 
-If you're new to the template, the [getting-started guide](/mineru-runpod/getting-started/overview/) walks through the full deploy in about ten minutes. For the cold-start side of the picture (separate from the response cap covered here), see [the FlashBoot mechanism investigation](/mineru-runpod/blog/2026-05-26-runpod-flashboot-mechanism-investigation/). For GPU sizing, [Choosing a GPU](/mineru-runpod/guides/choosing-gpu/) covers when the default `ADA_24` (RTX 4090) is enough and when to opt up.
+If you're new to the template, the [getting-started guide](/getting-started/overview/) walks through the full deploy in about ten minutes. For the cold-start side of the picture (separate from the response cap covered here), see [the FlashBoot mechanism investigation](/blog/2026-05-26-runpod-flashboot-mechanism-investigation/). For GPU sizing, [Choosing a GPU](/guides/choosing-gpu/) covers when the default `ADA_24` (RTX 4090) is enough and when to opt up.
 
 If this saved you time, the easiest way to say thanks is [signing up for RunPod through this link](https://runpod.io?ref=31jdfpnq). Star the [repo on GitHub](https://github.com/sergeyshmakov/mineru-runpod) for updates.
 

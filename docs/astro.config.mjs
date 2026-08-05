@@ -6,8 +6,8 @@ import starlightBlog from "starlight-blog";
 const REPO_URL = "https://github.com/sergeyshmakov/mineru-runpod";
 
 export default defineConfig({
-	site: "https://sergeyshmakov.github.io",
-	base: "/mineru-runpod",
+	site: "https://mineru.shmakov.tools",
+	base: "",
 	integrations: [
 		starlight({
 			title: "mineru-runpod",
@@ -74,7 +74,7 @@ export default defineConfig({
 				},
 				{
 					tag: "meta",
-					attrs: { property: "og:image", content: "/mineru-runpod/og-default.png" },
+					attrs: { property: "og:image", content: "/og-default.png" },
 				},
 				{
 					tag: "meta",

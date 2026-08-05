@@ -24,7 +24,7 @@ The worker accepts a `file_url` and parses front-to-back, so technically you cou
 
 - **All-or-nothing failure.** A single job that dies at page 4,800 (OOM, a transient GPU eviction, a timeout) costs you the entire run. At ~78 minutes of GPU work (more on that below), that's an expensive coin flip.
 - **No resumability.** One job has no natural checkpoint. If it fails you start over.
-- **The 20 MB response cap.** MinerU's output for a few hundred pages already blows past [RunPod's ~20 MB sync-response ceiling](/mineru-runpod/blog/2026-05-20-runpod-20mb-response-cap-r2-bridge/). For 5,000 pages it isn't close: the extracted output here was **869 MB on disk**.
+- **The 20 MB response cap.** MinerU's output for a few hundred pages already blows past [RunPod's ~20 MB sync-response ceiling](/blog/2026-05-20-runpod-20mb-response-cap-r2-bridge/). For 5,000 pages it isn't close: the extracted output here was **869 MB on disk**.
 - **Memory.** Holding the layout model output for thousands of pages in one process is a needless VRAM/RAM risk when the work is embarrassingly sliceable.
 
 Batching fixes all four, but only if you batch at the *right* boundaries.
@@ -44,7 +44,7 @@ The result was **36 batches averaging 140 pages** (smallest 66, largest 238). Ev
 
 (One calibration gotcha specific to this PDF: printed page 1 is PDF page index 9. There's a 9-page front-matter offset you have to fold into the bookmark→page mapping or every boundary is off by nine.)
 
-A useful consequence: because the worker slices the PDF server-side via `start_page`/`end_page` (see the [API reference](/mineru-runpod/reference/api/)), **you never pre-split the PDF**. You upload it once and each batch job asks for its page range out of the same source file.
+A useful consequence: because the worker slices the PDF server-side via `start_page`/`end_page` (see the [API reference](/reference/api/)), **you never pre-split the PDF**. You upload it once and each batch job asks for its page range out of the same source file.
 
 ## Did the batches actually cover the whole document?
 
@@ -75,7 +75,7 @@ The presigned URL has a **1-hour TTL**, which has a real consequence for batchin
 
 ## What GPU and backend, and what did throughput look like?
 
-Backend: `vlm-auto-engine` (MinerU 2.5 Pro, the `MinerU2.5-Pro-2605-1.2B` vision-language model) on a 24 GB AMPERE_24 (RTX A5000-class) [RunPod](https://runpod.io?ref=31jdfpnq) serverless GPU. One parse per worker (`MINERU_MAX_CONCURRENCY=1`: vLLM's KV cache isn't safe to drive from concurrent parses on a 24 GB card). For how to pick a card, see [Choosing a GPU](/mineru-runpod/guides/choosing-gpu/).
+Backend: `vlm-auto-engine` (MinerU 2.5 Pro, the `MinerU2.5-Pro-2605-1.2B` vision-language model) on a 24 GB AMPERE_24 (RTX A5000-class) [RunPod](https://runpod.io?ref=31jdfpnq) serverless GPU. One parse per worker (`MINERU_MAX_CONCURRENCY=1`: vLLM's KV cache isn't safe to drive from concurrent parses on a 24 GB card). For how to pick a card, see [Choosing a GPU](/guides/choosing-gpu/).
 
 Across the 35 timed batches, total GPU compute was **4,674.8 s (77.9 min)** at an overall **1.04 pages/sec**, with individual batches ranging **0.84–1.27 pp/s** depending on table density. A few representative batches:
 
@@ -93,7 +93,7 @@ Cost worked out to roughly **$0.00023/page, ~$1.15 for the whole standard**. Bef
 
 This is the part that cost the most confusion: **a single batch is already parallelized inside the worker** (the VLM batches many page-images through the GPU at once), but **running multiple batches at once is a RunPod scaling decision, not something you trigger by submitting more jobs.**
 
-I learned this the hard way. The client submitted 3 batches concurrently, and RunPod ran exactly one while two sat in the queue. The endpoint was configured `workersMax=1`: one GPU worker, one batch at a time, no matter how many jobs you fire. Raising `workersMax` to 3 (and matching the client's concurrency) is what actually delivered 3×: the remaining 31 batches then finished in **27.8 minutes wall-clock**. The [scaling guide](/mineru-runpod/guides/scaling/) covers how concurrency and `workersMax` interact.
+I learned this the hard way. The client submitted 3 batches concurrently, and RunPod ran exactly one while two sat in the queue. The endpoint was configured `workersMax=1`: one GPU worker, one batch at a time, no matter how many jobs you fire. Raising `workersMax` to 3 (and matching the client's concurrency) is what actually delivered 3×: the remaining 31 batches then finished in **27.8 minutes wall-clock**. The [scaling guide](/guides/scaling/) covers how concurrency and `workersMax` interact.
 
 The mental-model fix:
 
@@ -177,11 +177,11 @@ Verify mechanically: check each batch's produced page span against its planned r
 
 ## Where to next
 
-The output is 36 batches of `content_list.json` with page-indexed, typed blocks. The next step is joining each block's page back to the clause outline to emit a clause-addressable tree (one compact file per clause) that an agent or a retrieval index can navigate. The clause-aligned batching is what makes that join clean: every block already lives inside exactly one clause's batch. [Part 2](/mineru-runpod/blog/2026-06-04-structuring-mineru-output-doc-tree/) walks through that post-processing: cleaning the blocks, building the tree, cross-linking, and verifying the result against the source PDF.
+The output is 36 batches of `content_list.json` with page-indexed, typed blocks. The next step is joining each block's page back to the clause outline to emit a clause-addressable tree (one compact file per clause) that an agent or a retrieval index can navigate. The clause-aligned batching is what makes that join clean: every block already lives inside exactly one clause's batch. [Part 2](/blog/2026-06-04-structuring-mineru-output-doc-tree/) walks through that post-processing: cleaning the blocks, building the tree, cross-linking, and verifying the result against the source PDF.
 
 ECMA-376 is freely available from [Ecma International](https://ecma-international.org/publications-and-standards/standards/ecma-376/); it's used here purely as a parsing benchmark. The parsed corpus is kept in a private repository for internal use, and this post shares only the parsing process and aggregate statistics, not the standard's content.
 
-If you want per-phase timings (fetch / parse / package) and throughput dashboards for a run like this, the worker can ship OpenTelemetry traces and metrics to any OTLP backend. See the [observability guide](/mineru-runpod/guides/observability/).
+If you want per-phase timings (fetch / parse / package) and throughput dashboards for a run like this, the worker can ship OpenTelemetry traces and metrics to any OTLP backend. See the [observability guide](/guides/observability/).
 
 If this saved you time, the easiest way to say thanks is [signing up for RunPod through this link](https://runpod.io?ref=31jdfpnq). Star the [repo on GitHub](https://github.com/sergeyshmakov/mineru-runpod) for updates.
 

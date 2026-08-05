@@ -107,7 +107,7 @@ way.
 **Fix**: deploy from the [Hub listing](https://console.runpod.io/hub/sergeyshmakov/mineru-runpod)
 instead, or via **The Hub → Serverless repos**, and let RunPod run the build.
 It takes ~5–10 minutes and the log is visible in the dashboard. See
-[Deploy](/mineru-runpod/getting-started/deploy/) for all three paths.
+[Deploy](/getting-started/deploy/) for all three paths.
 
 You never build this image locally, so your workstation's architecture
 doesn't matter — the build runs on RunPod's x86 builders. If you do want to
@@ -131,7 +131,7 @@ CUDA error (...flash-attention/hopper/flash_fwd_launch_template.h:188): invalid 
 
 **Why we can't just bump vllm**: MinerU 3.2.x's pyproject pins `vllm>=0.10.1.1,<0.12`. The first vllm release with any Blackwell mention in its notes is `v0.13.0` (2025-12-19, SM103 / GB300 "Blackwell Ultra"); broader Blackwell coverage follows in v0.14+. All Blackwell-aware vllm versions sit above MinerU's `<0.12` ceiling, so until MinerU loosens that pin we're stuck on v0.11.x, which has no SM120 kernel path. The v0.6.6 → v0.11.2 bump did not change this because v0.11.2 only adds SM100 (data-center Blackwell B200/GB200) MoE-prep code, not the SM120 (consumer 5090 / PRO 6000 Blackwell) flash-attn paths the VLM uses.
 
-**Fix**: keep the default `gpuIds: "ADA_24,AMPERE_24,AMPERE_48"` — all unambiguously pre-Blackwell. If you've manually opted into `ADA_48_PRO`, that pool can mix in Blackwell SKUs since RunPod groups them under the same pool name — remove it from your endpoint's GPU pool list. For workloads that need a 48 GB Ada-or-newer card, the `pipeline` backend doesn't use xformers/flash-attn and is unaffected, so it runs on Blackwell fine; only the VLM/hybrid backends crash. See [Choosing a GPU](/mineru-runpod/guides/choosing-gpu/#a-note-on-ada_48_pro-and-blackwell) for the GPU-pool background.
+**Fix**: keep the default `gpuIds: "ADA_24,AMPERE_24,AMPERE_48"` — all unambiguously pre-Blackwell. If you've manually opted into `ADA_48_PRO`, that pool can mix in Blackwell SKUs since RunPod groups them under the same pool name — remove it from your endpoint's GPU pool list. For workloads that need a 48 GB Ada-or-newer card, the `pipeline` backend doesn't use xformers/flash-attn and is unaffected, so it runs on Blackwell fine; only the VLM/hybrid backends crash. See [Choosing a GPU](/guides/choosing-gpu/#a-note-on-ada_48_pro-and-blackwell) for the GPU-pool background.
 
 ## "Pod scaled to zero" but the next job has a noticeable cold start
 
@@ -246,7 +246,7 @@ What gets preserved on a successful restore: Python interpreter state, MinerU's 
 - **Reduce concurrency** (`concurrencyModifier` on the endpoint) so fewer pages are in flight at once
 - **For one-off huge docs**, set `backend: "pipeline"` per-job — same worker can handle small docs with VLM and giant docs with pipeline
 
-See [Choosing a GPU](/mineru-runpod/guides/choosing-gpu/) for the VRAM math.
+See [Choosing a GPU](/guides/choosing-gpu/) for the VRAM math.
 
 ## `unexpected handler return type: <class 'NoneType'>` after a successful parse
 
@@ -344,7 +344,7 @@ Key fields:
 | `job_id` | RunPod's job UUID. Use this to correlate all lines from one request, especially when a worker handles multiple jobs in sequence. `<unknown>` when a sync caller submitted without a queued ID |
 | `phase_ms` | Per-phase timings (`fetch_input`, `mineru_parse`, `package`) |
 | `backend`, `lang`, `start_page`, `end_page` | Echoed from the job input — handy for correlating with the request |
-| `refresh_worker` | `true` if the worker is recycling after this job ([scaling guide](/mineru-runpod/guides/scaling/#worker-recycling)) |
+| `refresh_worker` | `true` if the worker is recycling after this job ([scaling guide](/guides/scaling/#worker-recycling)) |
 
 :::caution[Log throttling]
 RunPod's logging system throttles workers that produce too much output
@@ -354,7 +354,7 @@ worker's default emissions (a few lines per job) stay well below that
 ceiling. If you fork and add verbose per-page logging, expect dropped
 lines under load. RunPod also doesn't forward logs to external systems
 — if you need durable / queryable logs in Axiom or similar, the worker
-itself must push them (planned for the [observability guide](/mineru-runpod/guides/troubleshooting/) once
+itself must push them (planned for the [observability guide](/guides/troubleshooting/) once
 the OTel integration ships).
 :::
 

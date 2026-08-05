@@ -33,17 +33,17 @@ Client-side concurrency only helps up to `workers_max × MINERU_MAX_CONCURRENCY`
 
 ### Default: scale out with `workers_max`
 
-For almost every workload, **horizontal scaling is the right dial.** Each worker is an isolated container with its own 24 GB GPU and its own model copy, peaking ~13 GiB on a single parse (see [Choosing a GPU](/mineru-runpod/guides/choosing-gpu/)). Raising `workers_max` adds full-speed parallel parses with no shared-memory risk. Cost scales linearly with worker-seconds; the only downside is more cold starts, mitigated by [FlashBoot](/mineru-runpod/guides/scaling/#flashboot).
+For almost every workload, **horizontal scaling is the right dial.** Each worker is an isolated container with its own 24 GB GPU and its own model copy, peaking ~13 GiB on a single parse (see [Choosing a GPU](/guides/choosing-gpu/)). Raising `workers_max` adds full-speed parallel parses with no shared-memory risk. Cost scales linearly with worker-seconds; the only downside is more cold starts, mitigated by [FlashBoot](/guides/scaling/#flashboot).
 
-This is how the [5,039-page batching run](/mineru-runpod/blog/2026-06-03-clause-aligned-batching-large-pdf-mineru/) hit 3× throughput: `workers_max=3`, `MINERU_MAX_CONCURRENCY=1`, 36 page-range jobs fanned across three 24 GB workers.
+This is how the [5,039-page batching run](/blog/2026-06-03-clause-aligned-batching-large-pdf-mineru/) hit 3× throughput: `workers_max=3`, `MINERU_MAX_CONCURRENCY=1`, 36 page-range jobs fanned across three 24 GB workers.
 
 ### Niche: in-worker concurrency
 
-Raising `MINERU_MAX_CONCURRENCY` to `2-3` makes one worker run several jobs through the **same** vLLM engine. Because they share one KV cache, peak VRAM grows roughly linearly with concurrency — which is the one reason to move to a [48 GB pool](/mineru-runpod/guides/choosing-gpu/) (`AMPERE_48`).
+Raising `MINERU_MAX_CONCURRENCY` to `2-3` makes one worker run several jobs through the **same** vLLM engine. Because they share one KV cache, peak VRAM grows roughly linearly with concurrency — which is the one reason to move to a [48 GB pool](/guides/choosing-gpu/) (`AMPERE_48`).
 
 It only pays off when a **single request doesn't saturate the GPU** — a stream of small documents, or jobs with heavy non-GPU phases (download, PDF rasterization, S3 upload) that leave the GPU idle. Overlapping job A's I/O with job B's GPU time fills those gaps and packs more parses into one GPU-second. For large or dense documents that already keep the GPU busy, in-worker concurrency just adds memory pressure for little gain — add a worker instead.
 
-Only raise it on **≥24 GB GPUs** (`vlm-auto-engine`) or any GPU (`pipeline`), and watch VRAM via `nvidia-smi` or the `gpu.memory` log fields. See [Scaling and tuning → Concurrency](/mineru-runpod/guides/scaling/#concurrency) for the knob itself.
+Only raise it on **≥24 GB GPUs** (`vlm-auto-engine`) or any GPU (`pipeline`), and watch VRAM via `nvidia-smi` or the `gpu.memory` log fields. See [Scaling and tuning → Concurrency](/guides/scaling/#concurrency) for the knob itself.
 
 ### Not a lever: the engine window
 
@@ -55,4 +55,4 @@ You may see `Maximum concurrency for 8,192 tokens per request: 87.13x` in the lo
 |---|---|---|
 | More documents in parallel | `workers_max` (horizontal) | 24 GB per worker |
 | Better GPU use on small / I/O-heavy jobs | `MINERU_MAX_CONCURRENCY` `2-3` (in-worker) | 48 GB for headroom |
-| Faster on one large document | Neither — [batch it by page range](/mineru-runpod/guides/choosing-gpu/#large-documents-batch-dont-size-up) | 24 GB |
+| Faster on one large document | Neither — [batch it by page range](/guides/choosing-gpu/#large-documents-batch-dont-size-up) | 24 GB |

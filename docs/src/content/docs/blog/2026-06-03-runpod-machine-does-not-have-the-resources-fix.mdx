@@ -82,7 +82,7 @@ Because the two products use different GitHub triggers. A Serverless endpoint re
 | Who needs this | Anyone running a GitHub-connected worker | Template authors publishing to the Hub |
 | Where the error appears | Workers stuck initializing / throttled | The validator test pod after a Release |
 
-Most readers are in the left column. You deployed a worker from a repo (or one-click from the Hub) and you're iterating on it; a commit re-rolls it. The right column is for the smaller group of people *authoring* a Hub listing, where the validator test pod is the thing hitting the capacity wall. If you're not publishing your own Hub template, you can ignore the release workflow entirely. For the full deploy walkthrough, the [getting-started guide](/mineru-runpod/getting-started/overview/) covers both paths.
+Most readers are in the left column. You deployed a worker from a repo (or one-click from the Hub) and you're iterating on it; a commit re-rolls it. The right column is for the smaller group of people *authoring* a Hub listing, where the validator test pod is the thing hitting the capacity wall. If you're not publishing your own Hub template, you can ignore the release workflow entirely. For the full deploy walkthrough, the [getting-started guide](/getting-started/overview/) covers both paths.
 
 ## What if re-triggering doesn't fix it?
 
@@ -96,7 +96,7 @@ Three levers when retries aren't enough:
 - **Change the region** if your endpoint or template pins one. Capacity is per data center, so a pool that's full in one region can be wide open in another.
 - **Reduce the request.** Oversized container disk or volume sizes shrink the set of hosts that can fit your pod. Trim them if they're padded.
 
-For template authors, there's also an escape hatch documented in the [troubleshooting guide](/mineru-runpod/guides/troubleshooting/): if a release is urgent and the validator is the only blocker, rename `.runpod/tests.json` to `.runpod/tests_.json` so the Hub skips the test pod entirely. You lose all CI signal, so it's a temporary unblock, not a default. For the GPU-pool math behind these choices, see [Choosing a GPU](/mineru-runpod/guides/choosing-gpu/).
+For template authors, there's also an escape hatch documented in the [troubleshooting guide](/guides/troubleshooting/): if a release is urgent and the validator is the only blocker, rename `.runpod/tests.json` to `.runpod/tests_.json` so the Hub skips the test pod entirely. You lose all CI signal, so it's a temporary unblock, not a default. For the GPU-pool math behind these choices, see [Choosing a GPU](/guides/choosing-gpu/).
 
 ## FAQ
 
@@ -126,6 +126,6 @@ Stop targeting a contended pool. Switch `gpuTypeId` to a higher-availability GPU
 
 ## Where to next
 
-The error is annoying but harmless once you know it's capacity and not your build. For a Serverless worker, a commit re-rolls it; for a Hub template, a Release does. If it persists, it's a pool-availability problem, and the fix lives in your GPU choice, not your Dockerfile. The full set of Hub build failures (this one, the CUDA floor mismatch, and the 30-minute build timeout) is catalogued in the [troubleshooting guide](/mineru-runpod/guides/troubleshooting/).
+The error is annoying but harmless once you know it's capacity and not your build. For a Serverless worker, a commit re-rolls it; for a Hub template, a Release does. If it persists, it's a pool-availability problem, and the fix lives in your GPU choice, not your Dockerfile. The full set of Hub build failures (this one, the CUDA floor mismatch, and the 30-minute build timeout) is catalogued in the [troubleshooting guide](/guides/troubleshooting/).
 
 If this saved you a debugging session, star the [repo on GitHub](https://github.com/sergeyshmakov/mineru-runpod) for updates, or open an issue if you hit a build failure that isn't covered here.

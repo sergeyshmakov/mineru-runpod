@@ -10,7 +10,7 @@ Already calling the official MinerU cloud API (`mineru.net/api/v4/...`) and hitt
 `MineruApiClient` reproduces the official API's surface — `create_task` / `get_task`, returning the same response dicts — but talks to your RunPod endpoint underneath. Migration is **import + constructor + auth**.
 
 :::note[What this is — and isn't]
-This is a **trial and migration on-ramp**, not a permanent production interface. It lets you evaluate self-hosting against the SaaS with near-identical code. Once you've switched, the native [`MineruClient`](/mineru-runpod/getting-started/clients/) gives you the worker's richer features (inline markdown, format filtering, `volume_path`, the hybrid / http-client backends). Use the compat client to get in the door; use the native client long-term.
+This is a **trial and migration on-ramp**, not a permanent production interface. It lets you evaluate self-hosting against the SaaS with near-identical code. Once you've switched, the native [`MineruClient`](/getting-started/clients/) gives you the worker's richer features (inline markdown, format filtering, `volume_path`, the hybrid / http-client backends). Use the compat client to get in the door; use the native client long-term.
 :::
 
 ## Install
@@ -58,7 +58,7 @@ rp_done = rp.wait_for_task(rp_task_id)        # convenience: poll to completion
 rp.download_results(rp_done, "./out")          # unpack the result archive
 ```
 
-Compare the two `full.md` outputs side by side; pair this with the [cost math in the launch post](/mineru-runpod/blog/2026-05-19-launching-mineru-runpod/) to estimate $/page for your volume.
+Compare the two `full.md` outputs side by side; pair this with the [cost math in the launch post](/blog/2026-05-19-launching-mineru-runpod/) to estimate $/page for your volume.
 
 ## Side-by-side migration
 
@@ -141,7 +141,7 @@ The response dicts have the same shape (`{"code": 0, "msg": "ok", "data": {...}}
 
 `full_zip_url` is a presigned **`.zip`** — the compat client requests `archive_format: "zip"`, so the container matches the official cloud API. One requirement:
 
-- **Your endpoint must have object storage configured.** Set the `BUCKET_*` env vars (`BUCKET_ENDPOINT_URL`, `BUCKET_NAME`, `BUCKET_ACCESS_KEY_ID`, `BUCKET_SECRET_ACCESS_KEY`) on the endpoint — any S3-compatible store (Cloudflare R2, Backblaze B2, MinIO) works. See [Output modes → s3](/mineru-runpod/guides/output-modes/). If they're missing, the task comes back `failed` with an actionable message.
+- **Your endpoint must have object storage configured.** Set the `BUCKET_*` env vars (`BUCKET_ENDPOINT_URL`, `BUCKET_NAME`, `BUCKET_ACCESS_KEY_ID`, `BUCKET_SECRET_ACCESS_KEY`) on the endpoint — any S3-compatible store (Cloudflare R2, Backblaze B2, MinIO) works. See [Output modes → s3](/guides/output-modes/). If they're missing, the task comes back `failed` with an actionable message.
 
 `client.download_results(done, "./out")` fetches and unpacks the archive for you (autodetecting `.zip` vs `.tar.gz`), so you usually don't need to touch the URL directly.
 
@@ -159,11 +159,11 @@ The compat client raises a clear error rather than silently mis-parsing when you
 | `callback` / `seed` | ❌ `callback` raises — RunPod webhooks deliver a different, unsigned payload than MinerU's signed `{checksum, content}` callback; `seed` accepted but unused |
 | `data_id` | echoed from an in-process map; a `get_task` call in a *different* process won't echo it |
 | `data.extract_progress` (page counts) | not populated — RunPod's status API exposes `state`, not per-page progress |
-| Batch (`POST /extract/task/batch`, `file-urls/batch`) | not offered — submit tasks individually and raise `workers_max`; RunPod's queue runs them in parallel across workers ([Scaling](/mineru-runpod/guides/scaling/)) |
+| Batch (`POST /extract/task/batch`, `file-urls/batch`) | not offered — submit tasks individually and raise `workers_max`; RunPod's queue runs them in parallel across workers ([Scaling](/guides/scaling/)) |
 
 ## When to switch to the native client
 
-Once you've validated the output and decided to stay, move to [`MineruClient`](/mineru-runpod/getting-started/clients/). Self-hosting's whole payoff is the features the SaaS API doesn't expose:
+Once you've validated the output and decided to stay, move to [`MineruClient`](/getting-started/clients/). Self-hosting's whole payoff is the features the SaaS API doesn't expose:
 
 - **Inline markdown** without unpacking an archive (`transport: "inline"`, `formats: ["markdown"]`)
 - **Local / volume inputs** (`file_b64`, `volume_path`) — no need to host files at a URL first

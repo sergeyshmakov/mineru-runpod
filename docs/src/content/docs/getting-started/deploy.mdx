@@ -19,7 +19,7 @@ time you deploy (~5–10 min, watchable in the dashboard). That also means
 your local machine's architecture is irrelevant — nothing is built on it. If
 you create an endpoint by hand and type an image name instead, the pull
 fails with an access error; see
-[troubleshooting](/mineru-runpod/guides/troubleshooting/#you-dont-have-access-to-download-the-artifacts).
+[troubleshooting](/guides/troubleshooting/#you-dont-have-access-to-download-the-artifacts).
 
 This is the recommended path if your goal is parsing PDFs, not customising the worker.
 
@@ -64,14 +64,14 @@ This skips RunPod's auto-build entirely. Use it when you need custom base images
 | `gpu_ids` | `ADA_24` | 24 GB Ada / RTX 4090. Fits the [`MinerU2.5-Pro-2605-1.2B` VLM](https://huggingface.co/opendatalab/MinerU2.5-Pro-2605-1.2B) comfortably with KV cache; faster per page than the cheaper A5000 (`AMPERE_24`). |
 | `idle_timeout` | `10 s` | Scale workers to zero after 10 s of inactivity |
 | `workers_min` | `0` | Pay only when processing |
-| `workers_max` | `3` | [Concurrency](/mineru-runpod/guides/concurrency/) cap (parallel workers); bump for production |
+| `workers_max` | `3` | [Concurrency](/guides/concurrency/) cap (parallel workers); bump for production |
 | `execution_timeout` | `900 s` | Per-job cap; covers a several-hundred-page parse |
 | `flashboot` | `true` | RunPod's fast cold-start tech |
 
 Override any of these via flags to `deploy.py` (e.g. `--gpu-ids AMPERE_24 --workers-max 5`).
 
-See [Choosing a GPU](/mineru-runpod/guides/choosing-gpu/) for when to deviate from the default 24 GB pool.
+See [Choosing a GPU](/guides/choosing-gpu/) for when to deviate from the default 24 GB pool.
 
 ## What you get after deploy
 
-An endpoint id like `abcdef123456` that accepts the documented [job input contract](/mineru-runpod/reference/api/) via RunPod's standard `/run` and `/runsync` endpoints. From there, see [Clients](/mineru-runpod/getting-started/clients/) for how to actually call it from your code.
+An endpoint id like `abcdef123456` that accepts the documented [job input contract](/reference/api/) via RunPod's standard `/run` and `/runsync` endpoints. From there, see [Clients](/getting-started/clients/) for how to actually call it from your code.

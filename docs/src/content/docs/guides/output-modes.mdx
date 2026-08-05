@@ -247,7 +247,7 @@ The two archive transports — `tarball_b64` and `s3` — default to a `.tar.gz`
 - The response keys are unchanged (`tarball_b64` / `tarball_url`); only the container differs. For `s3`, the object key extension and Content-Type follow the format (`.tar.gz` + `application/gzip`, or `.zip` + `application/zip`).
 - The Python `MineruClient.save_tarball` / `save_s3_tarball` helpers autodetect the container, so they unpack either format.
 
-The main reason to pick `zip` is drop-in compatibility with the official MinerU cloud API's `full_zip_url` — the [`MineruApiClient`](/mineru-runpod/getting-started/migrate-from-mineru-api/) sets it for you.
+The main reason to pick `zip` is drop-in compatibility with the official MinerU cloud API's `full_zip_url` — the [`MineruApiClient`](/getting-started/migrate-from-mineru-api/) sets it for you.
 
 ## Picking the right mode
 

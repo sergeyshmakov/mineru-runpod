@@ -12,7 +12,7 @@ JSON logs to RunPod's dashboard, no spans, no metric flush).
 When you turn it on, the OpenTelemetry SDK is configured at worker
 boot to ship to any OTLP/HTTP-compatible backend. The template itself
 is vendor-neutral; the only Axiom-specific recipe lives in
-[the Axiom blog post](/mineru-runpod/blog/2026-05-26-otel-mineru-runpod-axiom/).
+[the Axiom blog post](/blog/2026-05-26-otel-mineru-runpod-axiom/).
 
 ## What gets emitted
 
@@ -112,7 +112,7 @@ backend will 404.
 Any OTLP/HTTP collector. Tested or known-compatible:
 
 - **Axiom** — OTLP-native, no agent. See
-  [the dedicated walkthrough](/mineru-runpod/blog/2026-05-26-otel-mineru-runpod-axiom/)
+  [the dedicated walkthrough](/blog/2026-05-26-otel-mineru-runpod-axiom/)
   for endpoint URLs, header layout, and the metrics-dataset gotcha.
 - **Honeycomb** — set `OTEL_EXPORTER_OTLP_ENDPOINT=https://api.honeycomb.io` and `OTEL_EXPORTER_OTLP_HEADERS=x-honeycomb-team=<key>`.
 - **Grafana Tempo / Loki / Mimir** — point at your Grafana Cloud
@@ -167,7 +167,7 @@ still serves requests.
 
 Independent of OpenTelemetry, the worker emits structured JSON to
 stdout on every log line — see
-[Troubleshooting → Reading worker logs](/mineru-runpod/guides/troubleshooting/#reading-worker-logs)
+[Troubleshooting → Reading worker logs](/guides/troubleshooting/#reading-worker-logs)
 for the schema and field reference. The OTel logs export above
 mirrors those records to your OTLP backend; the stdout JSON is
 always the primary channel and remains queryable through RunPod's

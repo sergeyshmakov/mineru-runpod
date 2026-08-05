@@ -33,7 +33,7 @@ The model itself is small (~2 GB). **The dominant consumer is vLLM's KV cache**,
 Implications:
 
 - **24 GB GPUs are the right minimum.** A 16 GB card cannot fit the default config — vLLM would OOM during engine init.
-- **Sequential parses don't grow above ~13 GiB — at any page count.** KV cache is bounded by `gpu_memory_utilization`; document length doesn't push it higher. We confirmed this end-to-end: a **5,039-page** PDF parsed on a 24 GB A5000 with the default `vlm-auto-engine` backend, sliced into page-range batches client-side ([walkthrough](/mineru-runpod/blog/2026-06-03-clause-aligned-batching-large-pdf-mineru/)). So **don't size up the GPU for a big document — batch it** (see [Large documents](#large-documents-batch-dont-size-up)).
+- **Sequential parses don't grow above ~13 GiB — at any page count.** KV cache is bounded by `gpu_memory_utilization`; document length doesn't push it higher. We confirmed this end-to-end: a **5,039-page** PDF parsed on a 24 GB A5000 with the default `vlm-auto-engine` backend, sliced into page-range batches client-side ([walkthrough](/blog/2026-06-03-clause-aligned-batching-large-pdf-mineru/)). So **don't size up the GPU for a big document — batch it** (see [Large documents](#large-documents-batch-dont-size-up)).
 - **Concurrent batching grows KV cache pressure**, not other components. To bound max VRAM under heavy concurrency, either move to a 48 GB pool or tune `gpu_memory_utilization` downward.
 
 ### Rough peak VRAM by workload shape (estimates)
@@ -51,7 +51,7 @@ The published benchmarks ran on dual RTX 4090 (effectively 48 GB combined) to **
 
 ## Workload-to-GPU map
 
-Concurrency comes from two independent levers — `workers_max` (more workers) and `MINERU_MAX_CONCURRENCY` (more jobs per worker); see [Concurrency](/mineru-runpod/guides/concurrency/) for the full model. Horizontal `workers_max` on 24 GB workers is the default throughput dial; the only shape that needs a 48 GB pool is in-worker concurrency.
+Concurrency comes from two independent levers — `workers_max` (more workers) and `MINERU_MAX_CONCURRENCY` (more jobs per worker); see [Concurrency](/guides/concurrency/) for the full model. Horizontal `workers_max` on 24 GB workers is the default throughput dial; the only shape that needs a 48 GB pool is in-worker concurrency.
 
 ### Single worker, one doc at a time
 
@@ -63,7 +63,7 @@ This is the default RunPod serverless shape: each incoming job spins a worker, t
 
 ### Single worker, batching multiple docs
 
-If you set `MINERU_MAX_CONCURRENCY` > 1 (RunPod calls this the `concurrencyModifier`) so one worker handles several requests at once, the vLLM async engine batches their pages through a shared KV cache, which grows roughly linearly with concurrency. Worth it only when single requests don't saturate the GPU (small or I/O-heavy docs) — otherwise add a worker instead. See [Concurrency → in-worker](/mineru-runpod/guides/concurrency/#niche-in-worker-concurrency).
+If you set `MINERU_MAX_CONCURRENCY` > 1 (RunPod calls this the `concurrencyModifier`) so one worker handles several requests at once, the vLLM async engine batches their pages through a shared KV cache, which grows roughly linearly with concurrency. Worth it only when single requests don't saturate the GPU (small or I/O-heavy docs) — otherwise add a worker instead. See [Concurrency → in-worker](/guides/concurrency/#niche-in-worker-concurrency).
 
 - **GPU pool**: `ADA_24` for light concurrency (≤4), `AMPERE_48` for more
 - **VRAM peak**: 11–16 GB depending on concurrency
@@ -100,13 +100,13 @@ The maximum-throughput shape: `workers_max > 1` AND `MINERU_MAX_CONCURRENCY > 1`
 A bigger document is **not** a reason for a bigger GPU. A single sequential parse peaks ~13 GiB no matter how many pages you feed it, so a 1,000- or 10,000-page PDF fits the default 24 GB pool exactly like a 10-page one does. What breaks on big documents isn't VRAM — it's everything *around* the parse:
 
 - **All-or-nothing failure** — one job that dies at page 4,800 (OOM, transient eviction, timeout) costs the whole run.
-- **The [20 MB response cap](/mineru-runpod/blog/2026-05-20-runpod-20mb-response-cap-r2-bridge/)** — a few hundred pages of output already blows past it.
+- **The [20 MB response cap](/blog/2026-05-20-runpod-20mb-response-cap-r2-bridge/)** — a few hundred pages of output already blows past it.
 - **No resumability** — one job has no checkpoint; a failure means starting over.
 
-The fix is **client-side page-range batching**, not a 48 GB card. The worker slices server-side: pass `start_page`/`end_page` ([API reference](/mineru-runpod/reference/api/)) and each job parses one contiguous range out of the same uploaded file — you never pre-split the PDF. Keep `MINERU_MAX_CONCURRENCY=1` and scale throughput with `workers_max` (more GPU workers, not a bigger GPU). See [Concurrency](/mineru-runpod/guides/concurrency/) for how `workers_max` and `MINERU_MAX_CONCURRENCY` interact.
+The fix is **client-side page-range batching**, not a 48 GB card. The worker slices server-side: pass `start_page`/`end_page` ([API reference](/reference/api/)) and each job parses one contiguous range out of the same uploaded file — you never pre-split the PDF. Keep `MINERU_MAX_CONCURRENCY=1` and scale throughput with `workers_max` (more GPU workers, not a bigger GPU). See [Concurrency](/guides/concurrency/) for how `workers_max` and `MINERU_MAX_CONCURRENCY` interact.
 
 :::note[The worker does not auto-batch]
-It parses one page range per job; splitting a large document into batches is something *you* do on the client. The full walkthrough — clause-aligned boundaries, R2 transport for huge output, and the throughput math — is in [Clause-aligned batching for large PDFs](/mineru-runpod/blog/2026-06-03-clause-aligned-batching-large-pdf-mineru/), where a **5,039-page** standard parsed on a 24 GB A5000 for ~$1.15.
+It parses one page range per job; splitting a large document into batches is something *you* do on the client. The full walkthrough — clause-aligned boundaries, R2 transport for huge output, and the throughput math — is in [Clause-aligned batching for large PDFs](/blog/2026-06-03-clause-aligned-batching-large-pdf-mineru/), where a **5,039-page** standard parsed on a 24 GB A5000 for ~$1.15.
 :::
 
 ## Picking a backend

@@ -16,7 +16,7 @@ tags:
 
 If you're running a serverless worker on [RunPod](https://runpod.io?ref=31jdfpnq), you can't ssh in to read logs and you can't run a sidecar agent — the worker scales to zero between jobs. You need to ship logs and metrics off the box during the request lifetime, on the worker's own time. The mineru-runpod template includes an OpenTelemetry exporter for exactly this, and [Axiom](https://axiom.co/) is the sink I picked for my own deployment.
 
-This post is the exact env-var layout. If you use a different OTLP backend (Honeycomb, Grafana, Datadog, Jaeger, your own [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/)), the [observability guide](/mineru-runpod/guides/observability/) covers the vendor-neutral setup; come back here only for the Axiom-specific values.
+This post is the exact env-var layout. If you use a different OTLP backend (Honeycomb, Grafana, Datadog, Jaeger, your own [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/)), the [observability guide](/guides/observability/) covers the vendor-neutral setup; come back here only for the Axiom-specific values.
 
 Setup time from a fresh Axiom account to logs flowing: ~10 minutes, dominated by waiting for the worker's next cold start.
 
@@ -95,7 +95,7 @@ In the Axiom UI:
 
 - **Stream** view → set dataset = `mineru-events` → you should see JSON log records flowing as soon as the worker handles a request. Each carries `service.name=mineru-runpod`, `runpod.endpoint_id=<your-endpoint>`, and `job_id` for correlation.
 - **Traces** view → on the same `mineru-events` dataset → one trace per RunPod job. The root span is `mineru.job`. Its children are `mineru.fetch_input`, `mineru.parse`, and `mineru.package`. The `mineru.warmup` span shows up once per worker boot.
-- **Metrics** view → set dataset = `mineru-metrics` → after the first 10-second flush you should see `mineru.jobs.total`, `mineru.job.duration`, the GPU memory gauges, and the rest of the [metric catalog](/mineru-runpod/guides/observability/#what-gets-emitted).
+- **Metrics** view → set dataset = `mineru-metrics` → after the first 10-second flush you should see `mineru.jobs.total`, `mineru.job.duration`, the GPU memory gauges, and the rest of the [metric catalog](/guides/observability/#what-gets-emitted).
 
 If **nothing arrives in any view**, open the worker's stdout (RunPod dashboard → Logs) and grep for `Failed to export`. The OTel SDK logs each retry with the HTTP status code:
 
@@ -148,7 +148,7 @@ Attribute paths in APL depend on how Axiom unrolls OTLP records — `['resource.
 
 Enabling OTel adds roughly 200–500 ms to the first-ever cold start (one-time SDK init plus DNS resolution for the OTLP endpoint). Subsequent FlashBoot snapshot restores on the same host inherit the warm state, so the cost amortizes per host, not per request. For a parse that takes 5–30 seconds wall-clock, the overhead is invisible.
 
-The numbers from my own deployment: on an RTX 4090 with `vlm-auto-engine`, the bare cold start is ~110 s (image pull + vLLM init + model load + warmup parse). OTel init adds 200–500 ms on top of that. On a FlashBoot-restored boot, the same overhead is 0 — the snapshot captures the initialized SDK along with the rest of the process state. See the [FlashBoot mechanism investigation](/mineru-runpod/blog/2026-05-26-runpod-flashboot-mechanism-investigation/) for how the snapshot path actually works.
+The numbers from my own deployment: on an RTX 4090 with `vlm-auto-engine`, the bare cold start is ~110 s (image pull + vLLM init + model load + warmup parse). OTel init adds 200–500 ms on top of that. On a FlashBoot-restored boot, the same overhead is 0 — the snapshot captures the initialized SDK along with the rest of the process state. See the [FlashBoot mechanism investigation](/blog/2026-05-26-runpod-flashboot-mechanism-investigation/) for how the snapshot path actually works.
 
 If you're cost-sensitive about cold starts and don't need observability on every deployment, leave `OTEL_EXPORTER_OTLP_ENDPOINT` unset. The mineru-runpod worker skips the OTel SDK import entirely when that variable is empty — zero overhead, zero behavior change. Flip it on for the endpoints where you actually want the visibility (production, staging) and leave it off for experimentation runs.
 
@@ -196,7 +196,7 @@ No. The mineru-runpod worker uses the OpenTelemetry Python SDK with the OTLP/HTT
 
 ## Same template, different backend
 
-The four env vars above are the only Axiom-specific configuration in this whole setup. Swap the URL and headers and the mineru-runpod worker ships the same logs, traces, and metrics to anything that speaks OTLP/HTTP — Honeycomb, Grafana Cloud, Datadog's OTLP intake, your own OpenTelemetry Collector. Most other backends don't even need the metrics-headers override that Axiom requires — a single `OTEL_EXPORTER_OTLP_HEADERS` value covers all three signals. The [observability guide](/mineru-runpod/guides/observability/) covers the vendor-neutral env-var layout and the metric catalog. Different backends, same template.
+The four env vars above are the only Axiom-specific configuration in this whole setup. Swap the URL and headers and the mineru-runpod worker ships the same logs, traces, and metrics to anything that speaks OTLP/HTTP — Honeycomb, Grafana Cloud, Datadog's OTLP intake, your own OpenTelemetry Collector. Most other backends don't even need the metrics-headers override that Axiom requires — a single `OTEL_EXPORTER_OTLP_HEADERS` value covers all three signals. The [observability guide](/guides/observability/) covers the vendor-neutral env-var layout and the metric catalog. Different backends, same template.
 
 If this saved you time, the easiest way to say thanks is [signing up for RunPod through this link](https://runpod.io?ref=31jdfpnq). Star the [repo on GitHub](https://github.com/sergeyshmakov/mineru-runpod) for updates.
 

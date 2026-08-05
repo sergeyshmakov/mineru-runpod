@@ -8,7 +8,7 @@ import { Tabs, TabItem } from "@astrojs/starlight/components";
 The worker template ships a Python wrapper (`mineru_client`) for convenience, but the actual API is the JSON payload contract that the handler accepts. You can hit the endpoint from any language. This page covers the two main paths and when to pick each.
 
 :::tip[Coming from the MinerU cloud API?]
-If you already call the official MinerU API (`mineru.net/api/v4/...`), the `MineruApiClient` facade lets you evaluate and migrate to a self-hosted endpoint with a near-identical code path. See [Migrate from the MinerU API](/mineru-runpod/getting-started/migrate-from-mineru-api/).
+If you already call the official MinerU API (`mineru.net/api/v4/...`), the `MineruApiClient` facade lets you evaluate and migrate to a self-hosted endpoint with a near-identical code path. See [Migrate from the MinerU API](/getting-started/migrate-from-mineru-api/).
 :::
 
 ## Path A: Quick start with `MineruClient`
@@ -108,7 +108,7 @@ Works in TypeScript, Go, Rust, curl, anything with an HTTP client. The endpoints
 - `GET /v2/{endpoint_id}/status/{job_id}` — poll job status
 - `GET /v2/{endpoint_id}/stream/{job_id}` — stream progress updates
 
-Full job-input shape is in [API reference](/mineru-runpod/reference/api/).
+Full job-input shape is in [API reference](/reference/api/).
 
 ## How to choose
 
@@ -167,6 +167,6 @@ Or with `transport: "inline"`:
 }
 ```
 
-Add `formats: ["markdown"]` to the input if you only want the markdown back — the other three keys are then absent from the entry. See [Output modes](/mineru-runpod/guides/output-modes/) for the full transport × formats matrix.
+Add `formats: ["markdown"]` to the input if you only want the markdown back — the other three keys are then absent from the entry. See [Output modes](/guides/output-modes/) for the full transport × formats matrix.
 
-Failure responses set `ok: false`, include a top-level `error` key, and have NO `results` field; RunPod marks the job FAILED in the dashboard. See [API reference](/mineru-runpod/reference/api/) for the full schema.
+Failure responses set `ok: false`, include a top-level `error` key, and have NO `results` field; RunPod marks the job FAILED in the dashboard. See [API reference](/reference/api/) for the full schema.

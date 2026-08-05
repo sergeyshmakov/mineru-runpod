@@ -50,9 +50,9 @@ See the [project README](https://github.com/sergeyshmakov/mineru-runpod#how-does
 
 ## What it accepts and what comes back
 
-- **Inputs**: PDF, image (PNG/JPEG/GIF/BMP/TIFF/WebP), DOCX, PPTX, XLSX — auto-detected from bytes. Three transports: URL, base64, or a path on a mounted volume. See [Input formats](/mineru-runpod/guides/input-formats/).
-- **Outputs**: Markdown + `content_list` + `middle.json` + extracted images. Three transport modes: base64 tarball, inline fields, or presigned URL to an S3-compatible bucket. See [Output modes](/mineru-runpod/guides/output-modes/).
-- **Backends**: five MinerU backends — the VLM (model card tagged English + Chinese; empirically handles Cyrillic correctly on the Pro model), the pipeline OCR (109 languages via PaddleOCR, documented-safe for any non-Latin script), the hybrid auto-router, and split-tier deploys. See [Picking a backend](/mineru-runpod/guides/choosing-gpu/#picking-a-backend).
+- **Inputs**: PDF, image (PNG/JPEG/GIF/BMP/TIFF/WebP), DOCX, PPTX, XLSX — auto-detected from bytes. Three transports: URL, base64, or a path on a mounted volume. See [Input formats](/guides/input-formats/).
+- **Outputs**: Markdown + `content_list` + `middle.json` + extracted images. Three transport modes: base64 tarball, inline fields, or presigned URL to an S3-compatible bucket. See [Output modes](/guides/output-modes/).
+- **Backends**: five MinerU backends — the VLM (model card tagged English + Chinese; empirically handles Cyrillic correctly on the Pro model), the pipeline OCR (109 languages via PaddleOCR, documented-safe for any non-Latin script), the hybrid auto-router, and split-tier deploys. See [Picking a backend](/guides/choosing-gpu/#picking-a-backend).
 
 ## Next steps
 

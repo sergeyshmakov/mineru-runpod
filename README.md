@@ -10,7 +10,7 @@
 
 Serverless [MinerU](https://github.com/opendatalab/MinerU) PDF parser on [RunPod](https://runpod.io?ref=31jdfpnq). MinerU 3.2.x runtime with the `MinerU2.5-Pro-2605-1.2B` VLM. Scales to zero, ~$0.0003 per page on a 24 GB serverless RTX 4090, ten minutes from sign-up to first parse.
 
-**📚 [Docs](https://sergeyshmakov.github.io/mineru-runpod/)**  ·  **🚀 [Get started on RunPod](https://runpod.io?ref=31jdfpnq)**  ·  **📝 [Blog](https://sergeyshmakov.github.io/mineru-runpod/blog/)**
+**📚 [Docs](https://mineru.shmakov.tools/)**  ·  **🚀 [Get started on RunPod](https://runpod.io?ref=31jdfpnq)**  ·  **📝 [Blog](https://mineru.shmakov.tools/blog/)**
 
 ## 30-second taste
 
@@ -38,7 +38,7 @@ curl -X POST "https://api.runpod.ai/v2/<endpoint-id>/runsync" \
 
 The response wraps each parsed file as an entry inside `results: [...]`. For a single document, the markdown sits at `output.results[0].markdown` — pipe it straight to a file: `curl ... | jq -r '.output.results[0].markdown' > report.md`.
 
-Accepts PDF, image (PNG/JPEG/GIF/BMP/TIFF/WebP), DOCX, PPTX, XLSX. Two orthogonal knobs control output — **transport** (`tarball_b64` / `inline` / `s3`) and **formats** — both covered in [Output modes](https://sergeyshmakov.github.io/mineru-runpod/guides/output-modes/).
+Accepts PDF, image (PNG/JPEG/GIF/BMP/TIFF/WebP), DOCX, PPTX, XLSX. Two orthogonal knobs control output — **transport** (`tarball_b64` / `inline` / `s3`) and **formats** — both covered in [Output modes](https://mineru.shmakov.tools/guides/output-modes/).
 
 ## Why this exists
 
@@ -62,7 +62,7 @@ uv pip install "mineru-client @ git+https://github.com/sergeyshmakov/mineru-runp
 
 ### B. Production with RunPod SDK / HTTP
 
-For high-throughput, async, or non-Python callers. Hit the endpoint directly using the documented [JSON payload contract](https://sergeyshmakov.github.io/mineru-runpod/reference/api/).
+For high-throughput, async, or non-Python callers. Hit the endpoint directly using the documented [JSON payload contract](https://mineru.shmakov.tools/reference/api/).
 
 ```python
 import runpod
@@ -73,9 +73,9 @@ result = endpoint.run_sync({"input": {"file_url": "https://example.com/report.pd
 
 ### C. Migrating from the official MinerU API
 
-Already calling the MinerU cloud API (`mineru.net/api/v4/...`)? `MineruApiClient` mirrors its `create_task` / `get_task` surface over your own endpoint, so you can evaluate or migrate with a near-identical code path. See [Migrate from the MinerU API](https://sergeyshmakov.github.io/mineru-runpod/getting-started/migrate-from-mineru-api/).
+Already calling the MinerU cloud API (`mineru.net/api/v4/...`)? `MineruApiClient` mirrors its `create_task` / `get_task` surface over your own endpoint, so you can evaluate or migrate with a near-identical code path. See [Migrate from the MinerU API](https://mineru.shmakov.tools/getting-started/migrate-from-mineru-api/).
 
-Prototype with A; switch to B once you need async, retries, or multi-language callers. See [Clients](https://sergeyshmakov.github.io/mineru-runpod/getting-started/clients/) for the full comparison.
+Prototype with A; switch to B once you need async, retries, or multi-language callers. See [Clients](https://mineru.shmakov.tools/getting-started/clients/) for the full comparison.
 
 ## API at a glance
 
@@ -89,7 +89,7 @@ Send `{"input": {...}}` to `/runsync` (or `/run`). The most-used fields:
 | `transport` | no | `"tarball_b64"` | `tarball_b64` / `inline` / `s3` — how output ships back |
 | `formats` | no | all four | Subset of `markdown` / `content_list` / `middle` / `images` |
 
-Responses wrap each file in a `results: [...]` list alongside a top-level `debug` block; failures set `ok=false` with a top-level `error`. The full field list, per-transport response shapes, and validation rules live in the **[API reference](https://sergeyshmakov.github.io/mineru-runpod/reference/api/)** (mirrored from the docstring atop [`handler.py`](handler.py)).
+Responses wrap each file in a `results: [...]` list alongside a top-level `debug` block; failures set `ok=false` with a top-level `error`. The full field list, per-transport response shapes, and validation rules live in the **[API reference](https://mineru.shmakov.tools/reference/api/)** (mirrored from the docstring atop [`handler.py`](handler.py)).
 
 ## How does it compare?
 
@@ -119,13 +119,13 @@ The license row matters most for production SaaS. Marker pairs GPL-3.0 code with
 
 Everything below the surface lives on the docs site:
 
-- **[Overview](https://sergeyshmakov.github.io/mineru-runpod/getting-started/overview/)** — what it is, who it's for, architecture
-- **[Deploy](https://sergeyshmakov.github.io/mineru-runpod/getting-started/deploy/)** — Hub one-click, fork-and-build, or BYO image
-- **[Clients](https://sergeyshmakov.github.io/mineru-runpod/getting-started/clients/)** — Python `MineruClient` vs. direct RunPod SDK
-- **[Migrate from the MinerU API](https://sergeyshmakov.github.io/mineru-runpod/getting-started/migrate-from-mineru-api/)** — drop-in-shaped `MineruApiClient` for moving off the cloud API
-- **[Choosing a GPU](https://sergeyshmakov.github.io/mineru-runpod/guides/choosing-gpu/)** — workload-to-pool map, when to bump VRAM
-- **[API reference](https://sergeyshmakov.github.io/mineru-runpod/reference/api/)** — JSON payload contract, response shapes, validation rules
-- **[Blog](https://sergeyshmakov.github.io/mineru-runpod/blog/)** — launch posts and project notes
+- **[Overview](https://mineru.shmakov.tools/getting-started/overview/)** — what it is, who it's for, architecture
+- **[Deploy](https://mineru.shmakov.tools/getting-started/deploy/)** — Hub one-click, fork-and-build, or BYO image
+- **[Clients](https://mineru.shmakov.tools/getting-started/clients/)** — Python `MineruClient` vs. direct RunPod SDK
+- **[Migrate from the MinerU API](https://mineru.shmakov.tools/getting-started/migrate-from-mineru-api/)** — drop-in-shaped `MineruApiClient` for moving off the cloud API
+- **[Choosing a GPU](https://mineru.shmakov.tools/guides/choosing-gpu/)** — workload-to-pool map, when to bump VRAM
+- **[API reference](https://mineru.shmakov.tools/reference/api/)** — JSON payload contract, response shapes, validation rules
+- **[Blog](https://mineru.shmakov.tools/blog/)** — launch posts and project notes
 
 ## Contributing
 
