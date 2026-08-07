@@ -127,7 +127,7 @@ Returns Markdown tables (one per sheet) in `content_list`.
 
 ## Size limits
 
-| Transport | Max input size |
+| Source | Max input size |
 |---|---|
 | `file_b64` (inline) | Whole JSON request: 20 MB on `/runsync`, 10 MB on `/run`. Because base64 expands the file, keep raw input below roughly 15 MB or 7.5 MB respectively. |
 | `file_url` | 200 MB (worker download cap); fetched with a 120 s timeout |

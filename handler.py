@@ -254,14 +254,17 @@ async def _handle_parse(
     t = time.monotonic()
     with _telemetry.span("mineru.fetch_input", phase="fetch_input"):
         file_bytes, source = await _io.resolve_input_bytes(cleaned)
+        telemetry_source = _io.telemetry_source_kind(source)
         _telemetry.set_span_attrs(**{
-            "mineru.source": source,
+            "mineru.source": telemetry_source,
             "mineru.bytes_in": len(file_bytes),
         })
     fetch_seconds = time.monotonic() - t
     phase_ms["fetch_input"] = int(fetch_seconds * 1000)
     _telemetry.histogram_record("phase_duration", fetch_seconds, phase="fetch_input")
-    _telemetry.counter_add("bytes_in_total", len(file_bytes), source=source)
+    _telemetry.counter_add(
+        "bytes_in_total", len(file_bytes), source=telemetry_source,
+    )
     _telemetry.histogram_record("input_size_bytes", float(len(file_bytes)))
 
     input_format = _io.detect_format(file_bytes)

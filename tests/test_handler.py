@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 
 import handler
+from worker import io as worker_io
 
 
 # -----------------------------------------------------------------------------
@@ -56,6 +57,20 @@ def test_resolve_volume_path_missing_file(tmp_path):
     missing = tmp_path / "nope.pdf"
     with pytest.raises(ValueError, match="volume_path not found"):
         asyncio.run(handler._resolve_input_bytes({"volume_path": str(missing)}))
+
+
+@pytest.mark.parametrize(
+    ("source_label", "expected"),
+    [
+        ("b64", "b64"),
+        ("url:https://example.com/report.pdf?token=secret", "url"),
+        ("volume:/customer/acme/report.pdf", "volume"),
+        ("other:customer-data", "unknown"),
+        ("", "unknown"),
+    ],
+)
+def test_telemetry_source_kind_is_bounded(source_label, expected):
+    assert worker_io.telemetry_source_kind(source_label) == expected
 
 
 # -----------------------------------------------------------------------------

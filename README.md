@@ -104,12 +104,12 @@ Parsing accuracy is MinerU's domain; their published [OmniDocBench](https://gith
 | Scale-to-zero | ✅ ready to use | ⚠️ possible, needs extra setup | ❌ (always-on) | ❌ |
 | GPU support | GPU only | CPU or GPU | CPU | GPU required |
 | Equations | ✅ LaTeX | ✅ LaTeX | ❌ | ✅ LaTeX |
-| Multi-lang | ✅ 109 langs (pipeline backend) | per upstream README | EN only | per upstream README |
+| Multi-lang | ✅ script-family OCR models (pipeline backend) | per upstream README | EN only | per upstream README |
 | Setup time | 5 min | 10 min | 30 min | 20 min |
 | License | MinerU Open Source License\* | **GPL-3.0 code + modified RAIL-M weights**\*\* | Apache 2.0 | MIT code + **CC-BY-NC 4.0 weights** |
-| Commercial SaaS | ✅ free below thresholds\* | ⚠️ depends on RAIL-M competitor clause\*\* | ✅ free | ⚠️ subject to CC-BY-NC non-commercial clause |
+| Commercial SaaS | ✅ permitted below stated thresholds\* | ⚠️ depends on RAIL-M competitor clause\*\* | ✅ free | ⚠️ subject to CC-BY-NC non-commercial clause |
 
-<sub>\*The MinerU Open Source License is based on Apache 2.0 and adds attribution and commercial-use terms. Review the [current upstream license](https://github.com/opendatalab/MinerU/blob/master/LICENSE.md) for your use case.</sub>
+<sub>\*The MinerU Open Source License is based on Apache 2.0, requires attribution for third-party online services, and requires a separate commercial license when consolidated monthly active users exceed 100 million or total monthly revenue exceeds USD 20 million. Review the [current upstream license](https://github.com/opendatalab/MinerU/blob/master/LICENSE.md) for your use case.</sub>
 
 <sub>\*\*Marker's code is GPL-3.0; its OCR engine (Surya) ships under a modified RAIL-M licence whose §2(c) prohibits use by entities that "provide … any product or service that competes with … Licensor." Datalab's own README says Marker is free for "startups under $2M funding/revenue" — that carveout doesn't appear in the literal licence text, so the two read differently. Verify the current licence against your own usage with counsel before depending on Marker for a competing service. Datalab ships [Chandra](https://github.com/datalab-to/chandra) (the model behind their hosted API) under the same modified RAIL-M licence. See [Surya MODEL_LICENSE](https://github.com/datalab-to/surya/blob/master/MODEL_LICENSE) and [Chandra MODEL_LICENSE](https://github.com/datalab-to/chandra/blob/master/MODEL_LICENSE).</sub>
 

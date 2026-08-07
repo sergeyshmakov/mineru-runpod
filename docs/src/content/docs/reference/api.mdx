@@ -150,7 +150,7 @@ Each entry contains the requested format keys directly. With the default `format
 | Field | Type | Notes |
 |---|---|---|
 | `markdown` | string | The full Markdown rendering of the document |
-| `content_list` | array | Flat list of typed entries: `{"type": "text"\|"equation"\|"table"\|"image"\|"code", "page_idx": int, ...}`. Suitable for RAG chunking |
+| `content_list` | array | Flat list of MinerU block objects. Common types include `text`, `equation`, `table`, `image`, `code`, and `list`; backend-specific auxiliary types such as `header` and `page_number` can also appear. Suitable for RAG chunking |
 | `middle` | object | MinerU's intermediate representation with layout, bounding boxes, reading order |
 | `images` | object | `{filename: base64-encoded-bytes}` for each extracted image; the original image filename and format are preserved |
 
@@ -166,6 +166,7 @@ version. These are the common 3.4.x fields used by the examples in this repo:
 | `code` | `code_body`, `code_caption` | Code may already include a fenced block. |
 | `equation` | `text` | Usually LaTeX, sometimes already wrapped in math delimiters. |
 | `image` | `content`, `image_caption`, sometimes `img_path` | `content` is a generated description; use the `images` map or archive for image bytes. |
+| `header`, `page_number`, and other auxiliary types | backend-specific | Headers, footers, page numbers, margin notes, and footnotes can appear alongside document content. |
 
 Most blocks also include zero-based `page_idx`. Treat unknown block types and
 extra fields as forward-compatible data rather than rejecting the response.
@@ -261,7 +262,7 @@ There is deliberately no `packaging` phase event: packaging completes millisecon
 With the RunPod SDK, submit asynchronously and stream from the returned job:
 
 ```python
-job = endpoint.run({"input": {"file_url": "https://example.com/report.pdf"}})
+job = endpoint.run({"file_url": "https://example.com/report.pdf"})
 for update in job.stream():
     print(update)
 ```

@@ -55,9 +55,9 @@ Paste this into your endpoint's **Environment Variables** section in the RunPod 
 
 ```sh
 OTEL_EXPORTER_OTLP_ENDPOINT=https://eu-central-1.aws.edge.axiom.co
-OTEL_EXPORTER_OTLP_LOGS_HEADERS=Authorization=Bearer xaat-YOUR-TOKEN,x-axiom-dataset=mineru-logs
-OTEL_EXPORTER_OTLP_TRACES_HEADERS=Authorization=Bearer xaat-YOUR-TOKEN,x-axiom-dataset=mineru-traces
-OTEL_EXPORTER_OTLP_METRICS_HEADERS=Authorization=Bearer xaat-YOUR-TOKEN,x-axiom-metrics-dataset=mineru-metrics
+OTEL_EXPORTER_OTLP_LOGS_HEADERS="Authorization=Bearer xaat-YOUR-TOKEN,x-axiom-dataset=mineru-logs"
+OTEL_EXPORTER_OTLP_TRACES_HEADERS="Authorization=Bearer xaat-YOUR-TOKEN,x-axiom-dataset=mineru-traces"
+OTEL_EXPORTER_OTLP_METRICS_HEADERS="Authorization=Bearer xaat-YOUR-TOKEN,x-axiom-metrics-dataset=mineru-metrics"
 ```
 
 > **The endpoint URL is your Axiom edge deployment, NOT `api.axiom.co` / `api.eu.axiom.co`.** This is the single biggest gotcha and the one that cost me hours when I first set this up. The `api.*` hosts are for management API (token creation, queries via REST). OTLP ingest goes to your workspace's *edge deployment* hostname. As of writing, the two are:

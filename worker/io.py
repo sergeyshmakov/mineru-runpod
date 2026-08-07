@@ -64,10 +64,16 @@ def detect_format(file_bytes: bytes) -> str:
     return "unknown"
 
 
-async def resolve_input_bytes(job_input: dict) -> tuple[bytes, str]:
-    """Return (file_bytes, source_label). Raises ValueError on bad transport.
+def telemetry_source_kind(source_label: str) -> str:
+    """Return a bounded, non-sensitive input-source label for telemetry."""
+    kind = source_label.partition(":")[0]
+    return kind if kind in {"url", "b64", "volume"} else "unknown"
 
-    Enforces XOR over the three transports as a defensive check — the schema
+
+async def resolve_input_bytes(job_input: dict) -> tuple[bytes, str]:
+    """Return (file_bytes, source_label). Raises ValueError on a bad source.
+
+    Enforces XOR over the three sources as a defensive check — the schema
     validates this too, but this function is safe to use standalone (and the
     test suite calls it directly). Format is auto-detected downstream by
     `detect_format` / MinerU itself.

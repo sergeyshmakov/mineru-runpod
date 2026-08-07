@@ -85,7 +85,7 @@ Datadog) accepts exponential histograms.
 |---|---|---|---|
 | `mineru.jobs.total` | counter | `status`, `backend`, `input_format` | How many jobs, what outcome? |
 | `mineru.pages.total` | counter | `backend` | Requested pages for bounded page ranges. Full-document jobs with an open-ended range currently add zero. |
-| `mineru.bytes_in.total` | counter | `source` | Ingest bytes. `source` is `b64`, `url:<full URL>`, or `volume:<full path>` in the current worker. |
+| `mineru.bytes_in.total` | counter | `source` (`b64`/`url`/`volume`) | Ingest bytes by input source. URLs and filesystem paths are reduced to their source kind before export. |
 | `mineru.bytes_out.total` | counter | `transport` (`tarball_b64`/`inline`/`s3`) | Egress volume by transport. Inline payloads are approximated as `markdown` text + image bytes (ignoring JSON overhead). |
 | `mineru.errors.total` | counter | `type`, `phase` | Error count by exception type. `phase` is currently reported as `handler`. |
 | `mineru.job.duration` | histogram | `backend`, `input_format` | End-to-end wall-clock per job. |
@@ -102,12 +102,9 @@ Datadog) accepts exponential histograms.
 | `mineru.gpu.memory_total_bytes` | gauge | `device` | Constant per pod; enables % math. |
 | `mineru.gpu.utilization_percent` | gauge | `device` | SM utilization. GPU-bound vs CPU-bound. |
 
-:::caution[Source labels can be sensitive]
-For URL and volume inputs, the current `mineru.bytes_in.total` source label
-contains the full URL or filesystem path. Do not put credentials or customer
-identifiers in URLs or paths sent to an external telemetry backend. Presigned
-URLs also create high-cardinality metric series.
-:::
+The `mineru.source` fetch-span attribute uses the same bounded source kind.
+Full URLs and volume paths remain in the job's `results[].source` response for
+caller-side correlation, but they are not exported as telemetry attributes.
 
 **Resource attributes** are attached to every signal (logs, spans,
 metrics):

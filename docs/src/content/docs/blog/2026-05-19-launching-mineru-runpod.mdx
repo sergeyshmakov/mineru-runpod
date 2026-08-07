@@ -13,7 +13,7 @@ tags:
 
 If you're building a RAG pipeline, a document indexer, or any product that ingests PDFs at scale, you've probably hit the same wall I did. Hosted OCR APIs charge pennies per page that compound into thousands per million. CPU parsers are too slow for production volume. A permanent GPU pod is wasteful when traffic comes in bursts.
 
-[MinerU 2.5](https://github.com/opendatalab/MinerU) produces Markdown and structured JSON from complex PDFs, with published results in its [model card](https://huggingface.co/opendatalab/MinerU2.5-Pro-2604-1.2B). Its open-source license is based on Apache 2.0 with additional terms. The 1.2B model fits on a 24 GB GPU, and RunPod Serverless scales to zero when nothing is calling.
+[MinerU 2.5](https://github.com/opendatalab/MinerU) produces Markdown and structured JSON from complex PDFs, with published results in the [`MinerU2.5-Pro-2605-1.2B` model card](https://huggingface.co/opendatalab/MinerU2.5-Pro-2605-1.2B). Its open-source license is based on Apache 2.0 with additional terms. The 1.2B model fits on a 24 GB GPU, and RunPod Serverless scales to zero when nothing is calling.
 
 Real numbers from my open-source [mineru-runpod](https://github.com/sergeyshmakov/mineru-runpod) template, measured on a 24 GB RTX 4090 in May 2026: **~$0.001 per page for warm parses, plus a ~$0.03 fixed tax per cold start**. The all-in per-page cost depends on how much work you do before the worker scales back to zero. Here's the deploy, the response shape, and the workload patterns this template is the right fit for.
 

@@ -86,12 +86,10 @@ runpod.api_key = os.environ["RUNPOD_API_KEY"]
 
 endpoint = runpod.Endpoint("<endpoint-id>")
 result = endpoint.run_sync({
-    "input": {
-        "file_url": "https://example.com/report.pdf",
-        "start_page": 0,
-        "end_page": 99,
-        "transport": "tarball_b64",
-    }
+    "file_url": "https://example.com/report.pdf",
+    "start_page": 0,
+    "end_page": 99,
+    "transport": "tarball_b64",
 })
 # run_sync returns the handler output directly
 archive_b64 = result["results"][0]["tarball_b64"]
@@ -101,7 +99,7 @@ For asynchronous work, `endpoint.run(...)` returns a job object. Streaming is
 on that job, not on the endpoint:
 
 ```python
-job = endpoint.run({"input": {"file_url": "https://example.com/report.pdf"}})
+job = endpoint.run({"file_url": "https://example.com/report.pdf"})
 for update in job.stream():
     print(update)
 ```
