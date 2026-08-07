@@ -62,8 +62,8 @@ After the next worker boot, submit one parse and confirm that you see a
 **Traces.** One span per job (`mineru.job`) and one span per phase inside it:
 `mineru.fetch_input`, `mineru.parse`, and `mineru.package`. The boot-time
 warmup has its own `mineru.warmup` span. Fetch spans include input size and
-format; parse spans include backend and requested page range; package spans
-include the selected transport.
+source kind; parse spans include input format, backend, and requested page
+range; package spans include the selected transport.
 
 **Logs.** Every line emitted by the worker's structured logger is
 mirrored to OTLP, additive to the existing stdout JSON. RunPod's
