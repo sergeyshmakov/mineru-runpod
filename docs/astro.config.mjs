@@ -99,6 +99,17 @@ export default defineConfig({
 					tag: "link",
 					attrs: { rel: "sitemap", href: "/sitemap-index.xml" },
 				},
+				{
+					// Cloudflare Web Analytics — the site is not proxied through
+					// Cloudflare, so the beacon has to be injected manually.
+					tag: "script",
+					attrs: {
+						type: "module",
+						src: "https://static.cloudflareinsights.com/beacon.min.js",
+						"data-cf-beacon":
+							'{"token": "83b8c1b967de4691b508fa301d309bd3"}',
+					},
+				},
 			],
 		}),
 		sitemap(),
