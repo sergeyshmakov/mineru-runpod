@@ -1,7 +1,7 @@
 // Patch starlight-blog's generated RSS feed.
 //
 // Why this exists:
-//   - starlight-blog (0.26.x) passes Astro's `site` directly to @astrojs/rss
+//   - starlight-blog (0.28.x) passes Astro's `site` directly to @astrojs/rss
 //     as the channel <link>, dropping the `base` path. Result: the feed's
 //     channel <link> points at https://<host>/ instead of
 //     https://<host>/<base>/blog/. Aggregators following the channel link

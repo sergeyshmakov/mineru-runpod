@@ -26,14 +26,23 @@ Send a POST to `/v2/{endpoint_id}/runsync` (or `/run` for async) with an `input`
 }
 ```
 
+Complete cURL request:
+
+```sh
+curl --request POST "https://api.runpod.ai/v2/<endpoint-id>/runsync" \
+  --header "Authorization: Bearer $RUNPOD_API_KEY" \
+  --header "Content-Type: application/json" \
+  --data '{"input":{"file_url":"https://example.com/report.pdf","transport":"inline","formats":["markdown"]}}'
+```
+
 ### Required (exactly one of)
 
-The worker accepts any of these formats — PDF, image (PNG/JPEG/GIF/BMP/TIFF/WebP), DOCX, PPTX, XLSX — auto-detected from the input bytes. **Provide exactly one transport; providing zero or two raises a validation error.**
+The worker accepts PDF, image (PNG/JPEG/GIF/BMP/TIFF/WebP), DOCX, PPTX, and XLSX, auto-detected from the bytes. **Provide exactly one input source; providing zero or two raises a validation error.**
 
 | Field | Type | Notes |
 |---|---|---|
 | `file_url` | string | Public or presigned HTTP/HTTPS URL the worker can `GET`. Downloaded server-side with a 200 MB cap and a 120 s timeout |
-| `file_b64` | string | Base64-encoded file bytes. RunPod's gateway caps payloads at 10 MB on `/run` and 20 MB on `/runsync`; for bigger files use `file_url` or `volume_path` |
+| `file_b64` | string | Base64-encoded file bytes. RunPod caps the whole JSON request at 10 MB on `/run` and 20 MB on `/runsync`. Base64 adds about 33%, so keep raw files below roughly 7.5 MB and 15 MB respectively; for larger inputs use `file_url` or `volume_path`. |
 | `volume_path` | string | Absolute path to a file inside the container. Useful for files mounted via a RunPod network volume or baked into the image |
 
 ### Optional
@@ -41,8 +50,8 @@ The worker accepts any of these formats — PDF, image (PNG/JPEG/GIF/BMP/TIFF/We
 | Field | Type | Default | Notes |
 |---|---|---|---|
 | `start_page` | int | `0` | 0-based, inclusive |
-| `end_page` | int | `-1` | 0-based, inclusive. `-1` or omitted means "to end of document" |
-| `lang` | string | `"en"` | Language hint, **pipeline backend only** (VLM backends ignore it). Use script-family codes — `east_slavic`, `cyrillic`, `latin`, `arabic`, `devanagari`, `japan`, `korean`, `chinese_cht`, `el`, `th`, etc. 109 languages supported. NOT ISO codes. See [Input formats](/guides/input-formats/#the-lang-parameter-pipeline-backend-only) for the full list. |
+| `end_page` | int | `-1` | 0-based, inclusive. Any negative value or omission means "to end of document" |
+| `lang` | string | `"en"` | OCR model hint for the **pipeline backend**; VLM backends ignore it. MinerU 3.4's public choices are `ch`, `ch_server`, `korean`, `ta`, `te`, `ka`, `th`, `el`, `arabic`, `east_slavic`, `cyrillic`, and `devanagari`. The default `en` remains a compatibility alias that normalizes to `ch`. See [Input formats](/guides/input-formats/#the-lang-parameter-pipeline-backend-only). |
 | `backend` | string | `"vlm-auto-engine"` | One of `pipeline` \| `vlm-auto-engine` \| `vlm-http-client` \| `hybrid-auto-engine` \| `hybrid-http-client`. The `pipeline` and `hybrid-*` backends use MinerU's PP-OCRv6 OCR models. See [Choosing a GPU → Picking a backend](/guides/choosing-gpu/#picking-a-backend) |
 | `effort` | string | `null` | **Hybrid backends only** (`hybrid-auto-engine` / `hybrid-http-client`). `"medium"` (MinerU's default when omitted) or `"high"`: `"high"` enables image/chart analysis at a speed cost, `"medium"` skips it for throughput. Rejected on non-hybrid backends. |
 | `server_url` | string | `null` | Required for `*-http-client` backends. URL of an external vLLM OpenAI-compatible server (e.g. `https://your-host/v1`) |
@@ -118,7 +127,7 @@ For single-file jobs the markdown lives at `result.results[0].markdown`. Higher-
 | `elapsed_seconds` | float | Wall time inside the handler. Does not include cold-start time or transport |
 | `mineru_version` | string | The MinerU version that produced the parse (e.g. `3.4.4`) |
 | `results` | array | One entry per parsed file. Single-file jobs have a one-element list. See below for the entry shape. |
-| `debug` | object | Observability data: `backend` used, `model_dir` (which snapshot loaded), `gpu` info, `phase_ms` timings. See below |
+| `debug` | object | Observability data: `backend`, GPU info, phase timings, and a best-effort cached VLM path. See below. |
 | `refresh_worker` | bool | Present only when a `REFRESH_WORKER_AFTER_*` threshold has tripped. Tells RunPod to recycle the worker after returning. |
 
 ### Per-entry keys (file-scoped, inside `results[]`)
@@ -126,7 +135,7 @@ For single-file jobs the markdown lives at `result.results[0].markdown`. Higher-
 | Field | Type | Notes |
 |---|---|---|
 | `basename` | string | Echo of the input `basename`, handy for correlating many concurrent jobs |
-| `source` | string | Echo of the input transport: `url:...`, `b64`, or `volume:/path/...` |
+| `source` | string | Echo of the input source: `url:...`, `b64`, or `volume:/path/...` |
 | `pages_requested` | int | The slice the caller asked for. `-1` if `end_page` was open-ended |
 | `tarball_b64` | string | Present when `transport: "tarball_b64"`. Base64-encoded archive of the output directory — `.tar.gz` by default, `.zip` when `archive_format: "zip"` |
 | `markdown`, `content_list`, `middle`, `images` | various | Present when `transport: "inline"`. The set of keys reflects the `formats` filter — see below |
@@ -143,7 +152,25 @@ Each entry contains the requested format keys directly. With the default `format
 | `markdown` | string | The full Markdown rendering of the document |
 | `content_list` | array | Flat list of typed entries: `{"type": "text"\|"equation"\|"table"\|"image"\|"code", "page_idx": int, ...}`. Suitable for RAG chunking |
 | `middle` | object | MinerU's intermediate representation with layout, bounding boxes, reading order |
-| `images` | object | `{filename: base64-encoded-png-bytes}` for every extracted image |
+| `images` | object | `{filename: base64-encoded-bytes}` for each extracted image; the original image filename and format are preserved |
+
+`content_list` is a convenient integration surface, but it is MinerU output,
+not a schema owned by this wrapper. Fields can vary by backend and MinerU
+version. These are the common 3.4.x fields used by the examples in this repo:
+
+| Block `type` | Common fields | Notes |
+|---|---|---|
+| `text` | `text`, optional `text_level` | `text_level` can indicate a heading, but still needs document-specific validation. |
+| `list` | `list_items` | Ordered markers may be preserved inside the item strings. |
+| `table` | `table_body`, `table_caption`, `table_footnote` | `table_body` is HTML. Caption and footnote fields are arrays when present. |
+| `code` | `code_body`, `code_caption` | Code may already include a fenced block. |
+| `equation` | `text` | Usually LaTeX, sometimes already wrapped in math delimiters. |
+| `image` | `content`, `image_caption`, sometimes `img_path` | `content` is a generated description; use the `images` map or archive for image bytes. |
+
+Most blocks also include zero-based `page_idx`. Treat unknown block types and
+extra fields as forward-compatible data rather than rejecting the response.
+The [document-tree case study](/blog/2026-06-04-structuring-mineru-output-doc-tree/)
+shows the rendering and verification rules used on a 5,039-page parse.
 
 ### Filtering with `formats`
 
@@ -190,7 +217,7 @@ Every response includes a top-level `debug` block with information that lets you
 | Field | Notes |
 |---|---|
 | `backend` | The backend that ran. Echoes the input or the default |
-| `model_dir` | Filesystem path of the model snapshot that loaded. Both VLM and pipeline models are baked into the image at `/root/.cache/huggingface/`; the path you see here proves which snapshot the worker resolved (`null` if HF cache is empty, which should not happen on the published image) |
+| `model_dir` | Best-effort path to a cached MinerU VLM snapshot. It confirms a matching cache directory exists, not which model the selected backend loaded. Pipeline weights are baked separately. |
 | `gpu` | Card name, `compute_capability` (8.6 = Ampere, 8.9 = Ada, 9.0 = Hopper, 12.0 = Blackwell), VRAM. Helps debug "why did my job land on a different card than my pool config?" |
 | `phase_ms` | Per-phase timings: `fetch_input` (download/decode), `mineru_parse` (MinerU's `aio_do_parse`), `package` (tarball or inline assembly) |
 
@@ -231,16 +258,26 @@ The handler emits `runpod.serverless.progress_update` events during a parse. Pha
 
 There is deliberately no `packaging` phase event: packaging completes milliseconds before the final result is posted, and a progress update that close to completion can arrive after the `COMPLETED` status and overwrite it, leaving the job stuck `IN_PROGRESS`.
 
-Consume them via the RunPod SDK's `endpoint.stream(job_id)` or the HTTP `GET /v2/{endpoint_id}/stream/{job_id}` endpoint. The `MineruClient` Python wrapper does not surface these (it only supports `run_sync`); use the RunPod SDK directly if you need progress.
+With the RunPod SDK, submit asynchronously and stream from the returned job:
+
+```python
+job = endpoint.run({"input": {"file_url": "https://example.com/report.pdf"}})
+for update in job.stream():
+    print(update)
+```
+
+The HTTP equivalent is `GET /v2/{endpoint_id}/stream/{job_id}`. The
+`MineruClient` wrapper only supports `run_sync`, so use the RunPod SDK or HTTP
+directly when you need progress.
 
 ## Validation behaviour
 
 The handler validates input before doing any work:
 
 1. **Field types and bounds** via `runpod.serverless.utils.rp_validator`. Wrong type, missing required field, out-of-range value, or unknown field name raises `ValueError`.
-2. **XOR transport rule.** Exactly one of `file_url`, `file_b64`, `volume_path` must be set. Zero or two raises `ValueError`.
-3. **Basename safety.** `basename` must match `[a-zA-Z0-9_-]+`; otherwise `ValueError`.
-4. **Inline file size.** `file_b64` decoded length must be ≤ 20 MB (matching RunPod's `/runsync` gateway cap).
+2. **XOR source rule.** Exactly one of `file_url`, `file_b64`, `volume_path` must be set. Zero or two raises `ValueError`.
+3. **Basename safety.** Every character in `basename` must be alphanumeric, `-`, or `_`. Unicode letters and digits are accepted.
+4. **Inline file size.** The worker rejects decoded `file_b64` data over 20 MB. RunPod's whole-request limits are reached earlier because base64 expands the raw file; use the practical thresholds above.
 5. **Format detection.** The first few bytes must match a known signature (PDF / image / OOXML); otherwise `ValueError`.
 6. **`formats` membership.** Each entry must be one of `["markdown", "content_list", "middle", "images"]`; empty list is rejected; duplicates are silently collapsed.
 

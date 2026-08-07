@@ -1,10 +1,10 @@
 ---
-title: mineru-runpod
-description: Open-source template to deploy MinerU (3.2 runtime, 2.5 Pro VLM) onto RunPod Serverless in two clicks. Your endpoint, scales to zero, ~$0.0003 per page on a warm 24 GB RTX 4090.
+title: Deploy MinerU on RunPod Serverless
+description: Deploy MinerU 3.4 on RunPod Serverless in two clicks. The open-source endpoint scales to zero and returns Markdown, structured JSON, and images.
 template: splash
 hero:
   title: Deploy <br/>MinerU 2.5 Pro <br/>on RunPod <br/><span class="rm-accent">in two clicks</span>
-  tagline: Open-source RunPod Serverless template. Self-hosted endpoint, scales to zero, ~$0.0003 per warm page on a 24 GB RTX 4090.
+  tagline: Open-source RunPod Serverless template. Your endpoint scales to zero; best-case warm parses measured about $0.0003 per page on a 24 GB RTX 4090.
   image:
     html: |
       <img src="/promo_bg.png" alt="PDF transformed to Markdown by a serverless cloud" class="rm-hero-promo" loading="eager" decoding="async" width="1024" height="1024" />
@@ -34,22 +34,22 @@ import { Card, CardGrid } from "@astrojs/starlight/components";
 
 This is an open-source repo and [RunPod Hub](https://runpod.io?ref=31jdfpnq) template — not a hosted service. Deploy it from the Hub (or fork it for full control), and the worker runs on **your** RunPod account against **your** wallet.
 
-Under the hood it's one Docker image wrapping [MinerU](https://github.com/opendatalab/MinerU) (3.2.x runtime, `MinerU2.5-Pro-2605-1.2B` VLM by default). Send a PDF as a URL, base64 blob, or path on a mounted volume. Get back Markdown, a structured `content_list`, the raw `middle.json`, and extracted images. When traffic stops, RunPod tears the worker down in seconds.
+Under the hood it is one Docker image wrapping [MinerU](https://github.com/opendatalab/MinerU) 3.4.x with the `MinerU2.5-Pro-2605-1.2B` VLM by default. Send a PDF as a URL, base64 blob, or path on a mounted volume. Get back Markdown, a structured `content_list`, the raw `middle.json`, and extracted images. When traffic stops, RunPod tears the worker down in seconds.
 
 ## What you get
 
 <CardGrid>
-  <Card title="State-of-the-art accuracy" icon="seti:json">
-    The 1.2B MinerU VLM tops [OmniDocBench](https://github.com/opendatalab/OmniDocBench) for text, tables, formulas, and reading order. Combined with the pipeline backend, 109 languages of OCR, handwriting included.
+  <Card title="MinerU 2.5 Pro output" icon="seti:json">
+    The 1.2B VLM produces Markdown, tables, formulas, reading order, and structured JSON. See the [model card](https://huggingface.co/opendatalab/MinerU2.5-Pro-2605-1.2B) for benchmark scope and limitations.
   </Card>
   <Card title="Pay per second, not per hour" icon="rocket">
-    `idle_timeout=10` + FlashBoot means a 100-page doc lands for about $0.03 on a 24 GB RTX 4090. No worker running? No bill.
+    Best-case warm parsing measured about $0.0003 per page on a 24 GB RTX 4090. Content density and cold starts raise the real cost; see the [measured range](/guides/choosing-gpu/).
   </Card>
   <Card title="No glue code" icon="puzzle">
     Deploy from the Hub in one click, or fork and let RunPod auto-build your copy. Either way: ten minutes from sign-up to first parse.
   </Card>
-  <Card title="Safe to ship" icon="approve-check">
-    Apache 2.0 with clear commercial thresholds (100M MAU, $20M revenue). The cleanest open license in the GPU-PDF space.
+  <Card title="Published license terms" icon="approve-check">
+    MinerU uses an [open-source license](https://github.com/opendatalab/MinerU/blob/master/LICENSE.md) based on Apache 2.0 with additional terms and stated commercial thresholds. Review those terms for your use case.
   </Card>
 </CardGrid>
 
@@ -75,7 +75,7 @@ client.save_tarball(result, "./out/doc")
   <Card title="Deploy in 10 minutes" icon="external">
     Sign up for RunPod, deploy `mineru-runpod` from the Hub, paste the endpoint id, parse your first PDF.
 
-    [Sign up for RunPod](https://runpod.io?ref=31jdfpnq)
+    [Open the deploy guide](/getting-started/deploy/)
   </Card>
   <Card title="Pick the right GPU" icon="setting">
     When 24 GB is enough, when to jump to 48 GB, and which RunPod pool IDs map to which workload shapes. Includes the official MinerU hardware compatibility table.
@@ -87,8 +87,13 @@ client.save_tarball(result, "./out/doc")
 
     [Troubleshooting](/guides/troubleshooting/)
   </Card>
+  <Card title="Observe production jobs" icon="seti:config">
+    Export structured logs, traces, and GPU metrics to any OTLP/HTTP backend with the OpenTelemetry exporter already included in the image.
+
+    [Set up OpenTelemetry](/guides/observability/)
+  </Card>
   <Card title="The source" icon="github">
-    MIT-licensed. ~30 files. Issues and PRs welcome.
+    The wrapper code is MIT-licensed; MinerU and its model retain their own terms. Issues and PRs are welcome.
 
     [sergeyshmakov/mineru-runpod](https://github.com/sergeyshmakov/mineru-runpod)
   </Card>

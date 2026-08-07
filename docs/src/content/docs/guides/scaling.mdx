@@ -9,8 +9,9 @@ selection, page range, output format), see [API reference](/reference/api/).
 
 All values listed here are set as **environment variables on the
 RunPod endpoint**, not in the job payload. You'll find them under the
-endpoint's *Environment Variables* section in the RunPod dashboard, or
-as `env` entries in `deploy.py` if you use that.
+endpoint's *Environment Variables* section in the RunPod dashboard or
+the RunPod Hub deploy form. The current `deploy.py` does not configure
+environment variables.
 
 ## Concurrency
 
@@ -66,23 +67,22 @@ request lands on a fresh worker (with a cold-start cost; pair with
 
 ## FlashBoot
 
-RunPod's FlashBoot is a CRIU-style process-snapshot mechanism that
-captures the worker's full state (Python interpreter, GPU VRAM,
-subprocess tree) when the worker scales to zero and restores it on
-the next scale-from-zero. Enable it in the endpoint config (default
-on for Hub-deployed templates).
+Our measurements indicate that FlashBoot restores process state, including
+the warm vLLM child process and GPU allocations, after scale-to-zero. RunPod
+does not document the exact snapshot implementation or scoping, so treat the
+host-and-image model below as an evidence-based operating model rather than a
+public platform guarantee. Enable FlashBoot in the endpoint configuration; it
+is on by default for Hub-deployed templates.
 
 The boot-time warmup loads the MinerU model into VRAM before
-`serverless.start()` runs, so FlashBoot captures a post-warmup
-snapshot. A snapshot-restored cold start is ~7-8 s wall-clock
-instead of the ~110 s a fresh boot would take.
+`serverless.start()` runs. In our test, the fast FlashBoot path restored that
+warm state: ~7-8 s wall-clock instead of ~110 s for a fresh boot.
 
-**Snapshots are per (worker host, image SHA), not per endpoint.**
-First time the worker lands on a new host, it pays the full ~110 s
-warmup once and that host then has a snapshot. Subsequent scale-from-
-zeroes that RunPod schedules onto the same host get the fast restore.
-A scale-from-zero onto a *different* host re-runs warmup (~110 s,
-once). See [Troubleshooting → FlashBoot mechanism](/guides/troubleshooting/#flashboot-mechanism-confirmed)
+**The observed scope was worker host plus image SHA, not endpoint.** In the
+four-request test, the first run on a host paid the full ~110 s warmup and a
+later run in the same host context took the fast path. Moving to another host
+repeated the warmup once. See
+[Troubleshooting → observed FlashBoot behavior](/guides/troubleshooting/#flashboot-behavior-observed-in-four-requests)
 for the four-request investigation that pinned down this behavior.
 
 Practical operator math: on endpoints with high enough traffic that
@@ -129,17 +129,15 @@ vLLM server with limited VRAM.
 
 See [Troubleshooting → reading worker logs](/guides/troubleshooting/#reading-worker-logs) for the field reference.
 
-**Two caveats** for production deployments:
+**Two notes** for production deployments:
 
 - **Throttling**: RunPod drops logs from workers producing too much
   output. The worker's defaults (~4 lines per job) are well under any
   practical ceiling, but verbose forks may lose data.
-- **No external shipping**: RunPod does not forward logs to external
-  systems. The dashboard retains endpoint logs for 90 days; worker-level
-  logs disappear when the worker terminates. For durable / queryable
-  logs in Axiom, Honeycomb, etc., the worker must push them — this is
-  what the planned OTel integration does (item 8 in the runtime
-  improvements plan).
+- **External shipping is opt-in**: set `OTEL_EXPORTER_OTLP_ENDPOINT` to
+  mirror structured logs and export traces and metrics to an OTLP/HTTP
+  backend. The worker already includes the exporter; see
+  [OpenTelemetry](/guides/observability/) for setup and verification.
 
 ## Summary
 

@@ -1,18 +1,15 @@
 ---
-title: "Clause-aligned batching for large PDFs on MinerU + RunPod"
-description: "How I parsed a 5,039-page standard on serverless MinerU: clause-boundary batching, R2 transport for huge output, and where single-GPU throughput caps."
+title: "Batch a 5,039-page PDF with MinerU"
+description: "A measured 5,039-page MinerU run using clause-boundary batches, R2 output, and mechanical checks for gaps and overlaps."
 date: 2026-06-03
+lastUpdated: 2026-06-03
 authors: sergei
 tags:
   - MinerU
   - RunPod
-  - PDF parsing
-  - Batching
-  - Document AI
   - Serverless
+  - Document parsing
 ---
-
-*Last Updated: 2026-06-03*
 
 [ECMA-376](https://ecma-international.org/publications-and-standards/standards/ecma-376/) Part 1 (the *Office Open XML File Formats — Fundamentals and Markup Language Reference*) is **5,039 pages** of dense, table-heavy, XML-schema-laden specification in a single 35 MB PDF. It is the document that defines `.docx`, `.xlsx`, and `.pptx` down to the attribute. If you want a machine-readable, clause-addressable version of it, you have to parse all 5,039 pages, and almost everything about that page count makes a naive approach fall over.
 
@@ -67,7 +64,7 @@ The contiguity check is the one piece of validation I wouldn't skip on a documen
 
 Two different transports, for two different size problems.
 
-**Input: R2 URL.** At 35 MB the PDF is well over the 20 MB inline (`file_b64`) limit, so it can't ride in the request body. I put it on Cloudflare **R2** and passed a public URL as `file_url`. The worker downloads it (≤200 MB cap) and slices the requested pages itself. One upload, 36 jobs read from it.
+**Input: R2 URL.** At 35 MB the PDF is well over the inline (`file_b64`) limit, so it can't ride in the request body. I put it on Cloudflare **R2** and passed a URL as `file_url`. The worker downloads it (≤200 MB cap) and slices the requested pages itself. One upload, 36 jobs read from it.
 
 **Output: `transport="s3"`.** Per-batch output is large (the biggest batch produced a **32 MB** tarball), so embedding results in the sync response was out. With `transport="s3"`, the worker uploads each result `.tar.gz` back to R2 and returns a presigned URL the client downloads and extracts. The tarball carries everything: `content_list.json` (the flat, typed, page-indexed block list I treat as source of truth), the rendered markdown, `middle.json`, and a layout-overlay PDF.
 

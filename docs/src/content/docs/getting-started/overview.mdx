@@ -3,15 +3,15 @@ title: Overview
 description: Architecture, what's in the repo, supported workloads, and how it compares to Marker, GROBID, and Nougat.
 ---
 
-`mineru-runpod` is a generic, reusable [MinerU](https://github.com/opendatalab/MinerU) PDF-parsing service running on [RunPod Serverless](https://runpod.io?ref=31jdfpnq). MinerU 3.2.x runtime with the [`MinerU2.5-Pro-2605-1.2B`](https://huggingface.co/opendatalab/MinerU2.5-Pro-2605-1.2B) VLM by default. The repo deliberately knows nothing about any specific downstream system — it ships a worker image, a small Python client, and the deploy / destroy glue. Anything that needs `PDF → structured Markdown + JSON` (a RAG pipeline, a document indexer, an Office-doc archive) calls it the same way.
+`mineru-runpod` runs [MinerU](https://github.com/opendatalab/MinerU) 3.4.x on [RunPod Serverless](https://runpod.io?ref=31jdfpnq), using the [`MinerU2.5-Pro-2605-1.2B`](https://huggingface.co/opendatalab/MinerU2.5-Pro-2605-1.2B) VLM by default. It is a generic parsing endpoint rather than a hosted application: the repo contains the worker image, two Python client surfaces, and endpoint lifecycle scripts. A RAG pipeline, document indexer, or Office archive can call the same `document → Markdown + structured JSON` contract.
 
 ## What's in the repo
 
 - **`handler.py`** — the serverless worker. Accepts a PDF via URL, base64, or mounted-volume path; calls MinerU's async parse; returns Markdown + `content_list` + `middle.json` + images.
-- **`mineru_client/`** — the Python package consumers import. One class (`MineruClient`), two methods (`parse_document`, `parse_document_from_file`). Pure-Python; imports nothing GPU- or MinerU-related, so it's safe to depend on from any caller.
-- **`deploy.py` / `destroy.py`** — stand up and tear down the RunPod endpoint from CLI flags. Every dashboard setting is exposed as a flag.
-- **`.runpod/hub.json`** — disabled RunPod Hub listing metadata (title, description, GPU pool list, CUDA versions).
-- **`examples/`** — `parse_url_example.py`, `parse_b64_example.py`, and a `parser_adapter_example.py` showing how to wrap MinerU output in your own typed domain model.
+- **`mineru_client/`** — the dependency-light Python package. `MineruClient` exposes the native worker contract; `MineruApiClient` provides a temporary compatibility facade for evaluating a move from the MinerU cloud API.
+- **`deploy.py` / `destroy.py`** — create and remove endpoints with CLI flags for identity, scaling, GPU, disk, and timeout settings. Configure environment variables, secrets, storage, and regions in RunPod.
+- **`.runpod/hub.json`** — the active RunPod Hub listing and deploy form, including GPU pools and optional integration settings.
+- **`examples/`** — URL, base64, API-compatibility, and typed-adapter examples.
 
 ## Who it's for
 
@@ -21,13 +21,13 @@ description: Architecture, what's in the repo, supported workloads, and how it c
 | **Document RAG pipelines** | Section-aware chunks with page provenance out of the box |
 | **Contract / spec / standards parsing** | Handles long attribute tables and cross-page constructs |
 | **Invoice / receipt extraction** | Table fidelity + image extraction in one pass |
-| **Multi-language documents** | MinerU's pipeline backend supports 109 languages, including handwriting |
+| **Multilingual documents** | MinerU 3.4's pipeline backend provides script-family OCR models for Cyrillic, Arabic, Devanagari, Korean, and other supported scripts |
 
 ## Why MinerU + serverless
 
-- **Accuracy.** The `MinerU2.5-Pro-2605-1.2B` VLM leads the [OmniDocBench](https://github.com/opendatalab/OmniDocBench) leaderboard on text, formula, table, and reading-order metrics — see the [HuggingFace model card](https://huggingface.co/opendatalab/MinerU2.5-Pro-2605-1.2B) and the [technical report](https://arxiv.org/abs/2604.04771).
+- **Published evaluation.** The `MinerU2.5-Pro-2605-1.2B` model card reports OmniDocBench results for text, formulas, tables, and reading order. Review the [model card](https://huggingface.co/opendatalab/MinerU2.5-Pro-2605-1.2B), [benchmark](https://github.com/opendatalab/OmniDocBench), and [technical report](https://arxiv.org/abs/2604.04771) for scope and limitations.
 - **Economics.** Per-second billing on RunPod with FlashBoot means an idle worker costs nothing. ~$0.0003 per page on a 24 GB RTX 4090 (default) at current rates (see [RunPod pricing](https://www.runpod.io/pricing); rates change).
-- **Licensing.** MinerU is Apache 2.0 with explicit commercial thresholds (free below 100M MAU and $20M monthly revenue, with attribution). Among open-source GPU-class PDF parsers, that's the cleanest license for production SaaS use.
+- **Licensing.** MinerU uses an [open-source license](https://github.com/opendatalab/MinerU/blob/master/LICENSE.md) based on Apache 2.0 with additional terms, attribution requirements, and stated commercial thresholds. Review the upstream terms for your use case.
 
 [![MinerU2.5-Pro-2605 vs other PDF parsers — OmniDocBench leaderboard](https://hotelll.github.io/MinerU2.5-Pro/leaderboard.png)](https://huggingface.co/opendatalab/MinerU2.5-Pro-2605-1.2B)
 
@@ -41,7 +41,7 @@ description: Architecture, what's in the repo, supported workloads, and how it c
 | GPU | required | CPU or GPU | CPU | required |
 | Equations | ✅ LaTeX | ✅ LaTeX | ❌ | ✅ LaTeX |
 | Multi-lang | ✅ 109 (pipeline backend) | per upstream README | EN only | per upstream README |
-| License | Apache 2.0 + thresholds | **GPL-3.0 code + modified RAIL-M weights** | Apache 2.0 | MIT code, **CC-BY-NC 4.0 weights** |
+| License | MinerU Open Source License | **GPL-3.0 code + modified RAIL-M weights** | Apache 2.0 | MIT code, **CC-BY-NC 4.0 weights** |
 | Commercial SaaS | ✅ | ⚠️ depends on RAIL-M competitor clause | ✅ | ⚠️ subject to CC-BY-NC non-commercial clause |
 
 Marker uses Surya as its in-process OCR/layout engine; Surya's weights ship under a modified RAIL-M license. The license's §2(c) competitor clause does not include the $2M revenue carveout that §2(a) and §2(b) carry, while Marker's own README markets the model weights as free for "startups under $2M funding/revenue." The two read differently — get counsel before depending on Marker for a service that could be characterized as competitive. Datalab's [Chandra](https://github.com/datalab-to/chandra) model (what their hosted API runs) carries the same modified RAIL-M license.
@@ -50,16 +50,16 @@ See the [project README](https://github.com/sergeyshmakov/mineru-runpod#how-does
 
 ## What it accepts and what comes back
 
-- **Inputs**: PDF, image (PNG/JPEG/GIF/BMP/TIFF/WebP), DOCX, PPTX, XLSX — auto-detected from bytes. Three transports: URL, base64, or a path on a mounted volume. See [Input formats](/guides/input-formats/).
+- **Inputs**: PDF, image (PNG/JPEG/GIF/BMP/TIFF/WebP), DOCX, PPTX, XLSX — auto-detected from bytes. Three sources: URL, base64, or a path on a mounted volume. See [Input formats](/guides/input-formats/).
 - **Outputs**: Markdown + `content_list` + `middle.json` + extracted images. Three transport modes: base64 tarball, inline fields, or presigned URL to an S3-compatible bucket. See [Output modes](/guides/output-modes/).
-- **Backends**: five MinerU backends — the VLM (model card tagged English + Chinese; empirically handles Cyrillic correctly on the Pro model), the pipeline OCR (109 languages via PaddleOCR, documented-safe for any non-Latin script), the hybrid auto-router, and split-tier deploys. See [Picking a backend](/guides/choosing-gpu/#picking-a-backend).
+- **Backends**: five MinerU backends — the VLM (model card tagged English + Chinese; empirically handles Cyrillic on the tested Pro model), the pipeline OCR with script-family language models, the hybrid auto-router, and two backends for an external VLM server. See [Picking a backend](/guides/choosing-gpu/#picking-a-backend).
 
 ## Next steps
 
-There are two paths from here, depending on whether you want to run the official image as-is or run your own customised build:
+The [Deploy guide](/getting-started/deploy/) covers all three supported paths:
 
-**Easiest — deploy from the RunPod Hub.** Sign up via [this referral link](https://runpod.io?ref=31jdfpnq), open the [mineru-runpod Hub listing](https://console.runpod.io/hub/sergeyshmakov/mineru-runpod), and click Deploy. Grab the endpoint id and you're parsing PDFs.
+1. Deploy the public RunPod Hub template for the shortest setup.
+2. Fork the repository and let RunPod auto-build it when you need code or dependency changes.
+3. Bring your own container image when you control the image pipeline.
 
-**Customise — fork and auto-build.** Fork [the repo](https://github.com/sergeyshmakov/mineru-runpod), then in the RunPod dashboard do **The Hub → Serverless repos → Import Git Repository** pointed at your fork. RunPod builds the image on every push to `main`. Use this path if you need to pin different MinerU / vLLM versions or modify `handler.py`.
-
-Either way, total wall time is roughly 10 minutes assuming RunPod has spare capacity. See the [project README's Deploy section](https://github.com/sergeyshmakov/mineru-runpod#deploy) for the full step-by-step.
+After deployment, use [Clients](/getting-started/clients/) for the first request and [OpenTelemetry](/guides/observability/) when the endpoint needs production logs, traces, and metrics.

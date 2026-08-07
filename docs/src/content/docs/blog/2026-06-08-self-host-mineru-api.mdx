@@ -1,39 +1,38 @@
 ---
-title: "How to self-host the MinerU API on RunPod"
-description: "Hitting the MinerU cloud API's daily quota or data-residency limits? Self-host the same engine on RunPod serverless and migrate with a near-drop-in client."
+title: "Self-host the MinerU API on RunPod"
+description: "Evaluate a move from the MinerU cloud API to RunPod Serverless with a compatibility client, documented gaps, and an explicit infrastructure data path."
 date: 2026-06-08
+lastUpdated: 2026-08-07
 authors: sergei
 tags:
   - MinerU
   - RunPod
   - Serverless
-  - PDF
-  - API
+  - Document parsing
 ---
 
-*Last Updated: 2026-06-08*
-
-If you're calling the [official MinerU API](https://mineru.net/apiManage/docs) (`mineru.net/api/v4`) in production, you've probably hit one of three walls: the daily quota of 1,000 high-priority pages, the per-file 200 MB cap, or a compliance review asking why your documents leave your infrastructure for a third-party cloud. You can run the exact same MinerU engine yourself on RunPod Serverless, keep documents in your own bucket, drop the quota, and pay roughly $0.001 per page warm. The migration is close to drop-in: swap the client, keep your create-task / poll / download loop.
+If you're calling the [official MinerU API](https://mineru.net/apiManage/docs) (`mineru.net/api/v4`) in production, you may hit its daily quota of 1,000 high-priority pages, its 200 MB / 200-page file limits, or a regional data requirement. You can deploy the open-source MinerU runtime on RunPod Serverless, choose your own bucket, and keep a compatible create-task / poll / download loop. It is not a drop-in copy: the hosted service and your endpoint can run different versions, models, and configuration.
 
 The cloud API is the right way to *try* MinerU. Once you're parsing real volume, self-hosting changes the economics and the data path. Here's why, what it costs, and how to move your code over.
 
 ## Why self-host the MinerU API instead of using mineru.net?
 
-Three reasons: cost at volume, data residency, and control. The cloud API meters a daily high-priority page quota and then deprioritizes you; a self-hosted endpoint has no quota. Self-hosted, your PDFs and their parsed output never leave your RunPod worker and your own S3 bucket. And you pin the model version, pick the GPU, and set your own concurrency.
+Three reasons: cost at volume, regional control, and runtime control. The cloud API meters a daily high-priority page quota and then deprioritizes you; your RunPod endpoint has no MinerU SaaS quota. You choose the MinerU version, GPU, concurrency, RunPod region, and object-storage provider.
 
 The [official MinerU API](https://mineru.net/apiManage/docs) caps each file at 200 MB and gives each account a daily quota of 1,000 high-priority pages (see the [published limits](https://mineru.net/apiManage/limit)) before jobs drop to lower priority. That ceiling is fine for evaluation and light use. It becomes a planning problem the moment you're ingesting thousands of pages a day on a deadline.
 
-The data path matters too. On the SaaS, every document round-trips through `mineru.net`. Self-hosted, the worker pulls the file from a URL you control (or you send the bytes inline), parses on your GPU, and writes the result to your bucket. Nothing transits a vendor you have to put in a data-processing agreement.
+The data path matters too. On the SaaS, each document goes through `mineru.net`. With this template, the document goes through infrastructure in your RunPod account and, when configured, your chosen object-storage provider. That removes the MinerU SaaS from the parsing path; it does not remove third-party infrastructure or the need to evaluate its region, subprocessors, and data-processing terms.
 
-The trade-off is honest: you run the infrastructure. There's a cold-start cost, but FlashBoot blunts it: once a host has booted the worker, it restores from a process snapshot in ~7-8 s across scale-to-zero cycles, and only a brand-new host pays the full ~110 s (vLLM init plus loading the model into VRAM). The model is baked into the image, so nothing is downloaded at request time. If your traffic is a handful of pages a month, the cloud API's free tier is simpler; cross into steady volume and the math flips.
+The trade-off is honest: you run the infrastructure. In a four-request test, the fast FlashBoot path returned in ~7-8 s after a host had already paid the ~110 s model boot, while another host repeated the full initialization. RunPod does not document that scheduling or restore scope as a guarantee. The model is baked into the image, so nothing is downloaded at request time. If your traffic is a handful of pages a month, the cloud API's free tier is simpler; steady volume is where self-hosting becomes worth measuring.
 
 ## What does self-hosting MinerU cost vs the cloud API?
 
-Roughly **$0.001 per page** warm on a 24 GB RTX 4090, plus a **~$0.03 cold-start tax** the first time a host boots the worker (≈110 s of GPU billing for vLLM init and loading the baked model into VRAM). FlashBoot then snapshots that state, so the same host restarts in ~7-8 s across scale-to-zero cycles. RunPod bills per second and scales to zero, so an idle endpoint costs nothing. The cloud API is free under its daily quota, then queues or meters you; self-hosting trades that ceiling for a steady, predictable per-page rate.
+Roughly **$0.001 per page** warm on a 24 GB RTX 4090, plus a **~$0.03 fresh-host tax** in the measured ~110 s vLLM boot. The observed fast FlashBoot path reduced a later same-context request to ~7-8 s. RunPod bills GPU time by the second and can scale workers to zero. The cloud API's published quota controls high-priority processing; self-hosting replaces that MinerU SaaS ceiling with GPU, storage, and network costs you operate.
 
-The real number depends on how well you amortize that first-boot tax. A thousand pages parsed across one warm window land near $0.001/page; a single short doc on a cold host lands closer to $0.005–$0.01 because you're paying the one-time tax against very few pages. FlashBoot shrinks that in practice, since a host pays the full tax only once. I broke the full workload-shape math down in [Serverless MinerU on RunPod: honest cost math](/blog/2026-05-19-launching-mineru-runpod/).
-
-One cost the marketing pages skip: the first-boot cold start (~110 s on a brand-new host) is billed GPU time. FlashBoot snapshots that boot, so the same host restarts in ~7-8 s afterward. The model is baked into the image, so there's no model-download step at boot or request time. Budget for the first boot per host, not for every request.
+The real number depends on how many pages share a warm window and how often a
+request lands on a fresh host. Benchmark your document mix and use the
+[measured workload-shape math](/blog/2026-05-19-launching-mineru-runpod/)
+instead of treating one per-page number as universal.
 
 ## How do you deploy your own MinerU endpoint on RunPod?
 
@@ -50,11 +49,11 @@ BUCKET_ACCESS_KEY_ID=<key>
 BUCKET_SECRET_ACCESS_KEY=<secret>
 ```
 
-Cloudflare R2 is a good pairing here because its egress is free, so downloading your own results costs nothing. Any S3-compatible store works (R2, Backblaze B2, MinIO, AWS S3). To get started you'll need a RunPod account; [sign up here](https://runpod.io?ref=31jdfpnq) (full disclosure: that's a referral link). Add a few dollars of credit and it covers thousands of cold starts plus millions of warm pages.
+Cloudflare R2 is a common pairing because direct R2 egress is free; any compatible store works, including Backblaze B2, MinIO, and AWS S3. To get started you need a RunPod account; [this signup link](https://runpod.io?ref=31jdfpnq) is a referral link. At the measured rates, $5 is roughly 160 full cold starts or 5,000 warm pages before storage and other charges.
 
 ## How do you migrate your code off the MinerU API?
 
-Install the `mineru-client` package and swap the official `requests` calls for `MineruApiClient`. It mirrors the cloud API's `create_task` / `get_task` surface and returns the same response dicts, so your existing poll loop keeps working. Under the hood it requests `archive_format="zip"`, so `full_zip_url` comes back as a real `.zip` like the SaaS does.
+Install the `mineru-client` package and swap the supported `requests` calls for `MineruApiClient`. It maps `create_task` / `get_task` into compatible response dicts, so the polling structure can remain. Under the hood it requests `archive_format="zip"`, so `full_zip_url` points to a `.zip` as it does in the SaaS response.
 
 Install it (no version pin, so it tracks the repo):
 
@@ -101,7 +100,7 @@ One auth note: the self-hosted endpoint authenticates with your RunPod API key, 
 
 ## What doesn't carry over from the cloud API?
 
-Most of it carries; four things don't. The compat client **rejects** `callback` (a RunPod webhook delivers a different, unsigned payload than MinerU's signed `{checksum, content}` callback, so it raises instead of misleading you), and it doesn't support `extra_formats` (docx/html/latex), the `MinerU-HTML` model, or multi-range `page_ranges` like `"2,4-6"`. There's no batch endpoint (RunPod's queue already parallelizes individual jobs across workers, so one isn't needed). And `full_zip_url` requires the `BUCKET_*` setup above.
+The compat client rejects `callback` because RunPod's webhook shape differs from MinerU's signed callback. It does not support `extra_formats` (docx/html/latex), the `MinerU-HTML` model, or multi-range `page_ranges` such as `"2,4-6"`. It accepts `seed` for call compatibility but does not use it without callback support. There is no batch endpoint, and `full_zip_url` requires the `BUCKET_*` setup above.
 
 The full list, so there are no surprises:
 
@@ -112,23 +111,24 @@ The full list, so there are no surprises:
 | `model_version: MinerU-HTML` | Not supported, raises |
 | `extra_formats` (docx / html / latex) | Not produced by this worker, raises |
 | `page_ranges` multi-range (`"2,4-6"`) | One contiguous range per job, raises otherwise |
-| `callback` + `seed` | Rejected (poll with `get_task` / `wait_for_task` instead) |
+| `callback` | Rejected; poll with `get_task` / `wait_for_task` instead |
+| `seed` | Accepted but unused because callback signing is not implemented |
 | Batch (`/extract/task/batch`) | Not offered; submit tasks individually and raise `workers_max` — RunPod's queue parallelizes them across workers |
 
 Where it falls down: if your pipeline leans on webhook callbacks or exports to DOCX/LaTeX, the compat client isn't a clean swap today. There's no batch endpoint either, but you rarely need one: submit tasks individually and let RunPod fan them across `workers_max` workers (the queue parallelizes them). For everything else, the create / poll / download path behaves like the SaaS.
 
-One more practical detail. The compat client is URL-only, mirroring the cloud API's `POST /extract/task`, which doesn't accept file uploads. For small local files you don't need to host anything: use the native `MineruClient` with `file_b64` instead, which sends the bytes inline (fine under RunPod's ~20 MB request cap). I parsed a 522 KB scanned Russian invoice that way and got clean Cyrillic Markdown back, no bucket round-trip involved.
+One more practical detail. The compat client is URL-only, mirroring the cloud API's `POST /extract/task`, which doesn't accept file uploads. For small local files you don't need to host anything: use the native `MineruClient` with `file_b64` instead. RunPod's 20 MB `/runsync` JSON limit leaves roughly 15 MB for raw bytes after base64 expansion. I parsed a 522 KB scanned Russian invoice that way and got clean Cyrillic Markdown back, no bucket round-trip involved.
 
 ## FAQ
 
 ### Is the MinerU API free?
-The [official MinerU cloud API](https://mineru.net/apiManage/docs) has a free daily quota of 1,000 high-priority pages, after which jobs run at lower priority. There's no per-call charge inside the quota. Self-hosting removes the quota entirely and replaces it with per-second GPU billing (around $0.001 per page warm).
+The [official MinerU cloud API](https://mineru.net/apiManage/docs) has a free daily quota of 1,000 high-priority pages, after which jobs run at lower priority. There's no per-call charge inside the quota. A RunPod deployment has no MinerU SaaS page quota; it replaces that limit with per-second GPU billing and storage or network costs.
 
 ### What are the MinerU API's limits?
-Each file is capped at 200 MB, with a daily quota of 1,000 high-priority pages plus rate limits of 50 files/minute and 5,000 files/day (see the [published limits](https://mineru.net/apiManage/limit)). Self-hosting on RunPod removes the daily quota; the per-file practical limit becomes your GPU's memory and your endpoint's job timeout rather than a fixed page count.
+The precision cloud API currently caps a file at 200 MB and 200 pages, with 1,000 high-priority pages per account per day (see the [published API docs](https://mineru.net/apiManage/docs)). This worker rejects decoded `file_b64` data over 20 MB, while RunPod's JSON limit makes the practical raw-file ceiling lower; `file_url` is capped at 200 MB, and `volume_path` has no explicit application cap. GPU memory, temporary disk, output size, and endpoint timeout still apply.
 
 ### Can I self-host MinerU without RunPod?
-Yes. MinerU is [Apache-2.0 open source](https://github.com/opendatalab/MinerU) and runs anywhere with a CUDA GPU. RunPod Serverless is the path this template targets because it scales to zero, so a bursty workload doesn't pay for an idle GPU. On a fixed VPS or your own hardware you'd run MinerU directly and skip the serverless wrapper.
+Yes. MinerU is open source under its [MinerU Open Source License](https://github.com/opendatalab/MinerU/blob/master/LICENSE.md) and supports several deployment paths. This template targets RunPod Serverless because it scales to zero; on a fixed GPU host you would run MinerU directly and skip this wrapper.
 
 ### Does the self-hosted output match the cloud API's full_zip_url?
 Yes, when the endpoint has object storage configured. The compat client requests `archive_format="zip"`, so the worker uploads a `.zip` to your bucket and returns a presigned `full_zip_url`, the same container and field the SaaS returns. `download_results` fetches and unpacks it for you, and autodetects `.tar.gz` too if you change the format.
@@ -137,8 +137,8 @@ Yes, when the endpoint has object storage configured. The compat client requests
 At steady volume, usually yes, because you stop being throttled by the daily quota and pay only for GPU seconds used. The crossover depends on cold-start amortization: dense traffic lands near $0.001/page, sparse one-doc-per-cold-start traffic closer to $0.005–$0.01. Below a few hundred pages a month, the cloud API's free tier is the cheaper and simpler option.
 
 ### Do my documents stay private when self-hosting?
-Yes. The worker fetches each file from a URL you control or from bytes you send inline, parses on your own RunPod GPU, and writes output to your own S3 bucket. No document or result passes through a third-party parsing service, which is the usual blocker in a data-residency or compliance review.
+The MinerU SaaS is no longer in the data path. Files are processed in your RunPod account and may be read from or written to your configured storage provider. Whether that satisfies a privacy or residency requirement depends on those vendors, selected regions, access controls, retention, logging, and your agreements with them.
 
 ---
 
-Self-hosting MinerU isn't about beating the cloud API on accuracy. The accuracy is identical: it's the same model. It's about removing the quota ceiling, keeping documents in your stack, and paying per-second instead of per-tier. If that's the wall you've hit, fork the [template](https://github.com/sergeyshmakov/mineru-runpod), or deploy it from the RunPod Hub and [grab a RunPod account](https://runpod.io?ref=31jdfpnq) to run the first parse.
+Self-hosting is about control over quotas, versions, infrastructure, and billing, not guaranteed output parity. Compare both paths on representative documents before switching. If the trade fits, deploy the [template](https://github.com/sergeyshmakov/mineru-runpod) from the RunPod Hub or fork it for tighter version control.

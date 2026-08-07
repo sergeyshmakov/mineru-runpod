@@ -12,7 +12,7 @@ export default defineConfig({
 		starlight({
 			title: "mineru-runpod",
 			description:
-				"Open-source template to deploy MinerU (3.2 runtime, MinerU 2.5 Pro VLM) onto RunPod Serverless in two clicks. Self-hosted endpoint, scales to zero, ~$0.0003 per page on 24 GB Ampere.",
+				"Deploy MinerU 3.4 on RunPod Serverless. The open-source endpoint scales to zero and returns Markdown, structured JSON, and extracted images.",
 			favicon: "/favicon.png",
 			customCss: ["./src/styles/custom.css"],
 			social: [{ icon: "github", label: "GitHub", href: REPO_URL }],
@@ -28,6 +28,7 @@ export default defineConfig({
 			plugins: [
 				starlightBlog({
 					title: "Blog",
+					postCount: 12,
 					authors: {
 						sergei: {
 							name: "Sergei Shmakov",
@@ -74,11 +75,29 @@ export default defineConfig({
 				},
 				{
 					tag: "meta",
-					attrs: { property: "og:image", content: "/og-default.png" },
+					attrs: {
+						property: "og:image",
+						content: "https://mineru.shmakov.tools/og-default.png",
+					},
 				},
 				{
 					tag: "meta",
-					attrs: { name: "twitter:card", content: "summary_large_image" },
+					attrs: {
+						property: "og:image:alt",
+						content: "MinerU document parsing deployed on RunPod Serverless",
+					},
+				},
+				{
+					tag: "meta",
+					attrs: { property: "og:image:width", content: "1200" },
+				},
+				{
+					tag: "meta",
+					attrs: { property: "og:image:height", content: "630" },
+				},
+				{
+					tag: "link",
+					attrs: { rel: "sitemap", href: "/sitemap-index.xml" },
 				},
 			],
 		}),

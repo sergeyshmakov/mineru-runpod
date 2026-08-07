@@ -72,6 +72,31 @@ Override any of these via flags to `deploy.py` (e.g. `--gpu-ids AMPERE_24 --work
 
 See [Choosing a GPU](/guides/choosing-gpu/) for when to deviate from the default 24 GB pool.
 
-## What you get after deploy
+## What to do after deploy
 
-An endpoint id like `abcdef123456` that accepts the documented [job input contract](/reference/api/) via RunPod's standard `/run` and `/runsync` endpoints. From there, see [Clients](/getting-started/clients/) for how to actually call it from your code.
+RunPod gives you an endpoint id such as `abcdef123456`. It accepts the
+documented [job input contract](/reference/api/) through the standard
+`/run` and `/runsync` endpoints.
+
+1. Follow [Clients](/getting-started/clients/) to submit your first parse.
+2. Enable [OpenTelemetry](/guides/observability/) if you need searchable
+   logs, per-job traces, GPU metrics, or production alerts. The exporter is
+   already in the image and remains off until you set an OTLP endpoint.
+3. Review [Scaling and tuning](/guides/scaling/) before raising worker or
+   in-worker concurrency.
+
+Before production traffic:
+
+- Keep API keys and bucket credentials in the endpoint environment, scope
+  them to the resources this worker needs, and keep them out of job payloads.
+- Choose the [input source](/guides/input-formats/#size-limits) and
+  [output mode](/guides/output-modes/) for your document sizes. Large outputs
+  usually need S3-compatible storage plus a bucket lifecycle policy.
+- Align the client timeout with the endpoint execution timeout, then test a
+  representative worst-case document.
+- Add application-level retries and idempotency if jobs are business-critical;
+  the starter client does not retry. Review the worker's
+  [cancellation limits](/guides/troubleshooting/#cancellation-and-worker-recycling)
+  before promising hard mid-parse cancellation.
+- Enable [OpenTelemetry](/guides/observability/) with a production-safe
+  cardinality and data-retention policy.

@@ -19,7 +19,7 @@ runpod>=1.7.0
 # Used by the handler for downloading URL-supplied PDFs.
 httpx>=0.27
 
-# Used by the handler when callers request `return: "s3"` to upload the
+# Used by the handler when callers request `transport: "s3"` to upload the
 # output tarball to an S3-compatible bucket and return a presigned URL.
 # Only imported lazily inside the s3 code path, so a worker without S3
 # env vars never touches it.

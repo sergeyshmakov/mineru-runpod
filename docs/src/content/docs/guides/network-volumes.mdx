@@ -1,22 +1,24 @@
 ---
 title: Network volumes
-description: When and how to use a RunPod network volume to pre-stage input corpora, cache MinerU weights, or persist outputs between jobs.
+description: Use RunPod network volumes for large input corpora or shared pipeline files, and avoid duplicating model weights already baked into the image.
 ---
 
-A [RunPod network volume](https://docs.runpod.io/serverless/storage/overview) is a persistent block-storage device that gets mounted into every worker of an endpoint at the same path (typically `/runpod-volume`). Survives scale-to-zero. Charged per-GB-month, not per-second like compute.
+A [RunPod network volume](https://docs.runpod.io/serverless/storage/overview) is persistent storage mounted into workers at the same path, usually `/runpod-volume`. It survives scale-to-zero and is billed separately from GPU compute.
 
-For mineru-runpod, network volumes solve three concrete problems:
+For mineru-runpod, a volume has two practical uses:
 
 1. **Avoid re-downloading large input corpora** on each job
-2. **Cache MinerU weights** so cold starts skip the HuggingFace fetch
-3. **Persist intermediate or final outputs** between jobs in a multi-step pipeline
+2. **Share intermediate or final files** between RunPod jobs in a multi-step pipeline
+
+Do not attach a volume only for MinerU's model weights. The published image
+already contains both model repositories and runs with Hugging Face offline.
 
 ## Problem 1: pre-staging large input corpora
 
 If you're parsing a fixed collection of documents (a regulatory archive, a books library, customer-supplied PDFs you've already uploaded), uploading each one over `file_url` or `file_b64` on every job wastes time and money:
 
-- `file_url`: the worker downloads on each request — costs cold-start time and RunPod's egress
-- `file_b64`: capped at 20 MB total request size
+- `file_url`: the worker downloads on each request, adding transfer time and possibly egress charges from the source provider
+- `file_b64`: base64 expansion leaves roughly 15 MB of raw-file room on `/runsync` and 7.5 MB on `/run`
 
 Mount a network volume once, upload the corpus to `/runpod-volume/inputs/`, and reference each file via `volume_path`:
 
@@ -29,7 +31,8 @@ Mount a network volume once, upload the corpus to `/runpod-volume/inputs/`, and 
 }
 ```
 
-No download. No size limit. Same volume is visible across all warm and cold workers of the endpoint.
+No repeated download and no application-level input cap. Workers in the
+volume's region see the same files.
 
 ### How to upload to the volume
 
@@ -38,19 +41,19 @@ RunPod gives you two options:
 1. **CLI**: `runpodctl create volume` then `runpodctl push <local-path> <volume-name>:/<path>`
 2. **Filesystem pod**: spin up a cheap CPU pod with the volume mounted, then `scp` / `rsync` from your machine. Tear it down when done.
 
-I usually use the filesystem pod approach for anything over a few hundred MB — it's faster and you can use familiar tools.
+The filesystem-pod approach is useful for large transfers because it supports familiar tools such as `scp` and `rsync`.
 
 ### Cost trade-off
 
-Network volume storage on RunPod is roughly **$0.07/GB-month** (check [current pricing](https://www.runpod.io/pricing) — this number drifts). For a 50 GB corpus that's ~$3.50/month for storage, vs paying re-download time + egress for every job that touches it. Pays off quickly if you parse the same docs more than ~10 times.
+Compare the [current storage price](https://www.runpod.io/pricing) with the transfer time and source-provider egress you avoid. A volume is most useful when several jobs reuse the same large files.
 
-## Problem 2: caching MinerU weights
+## Model weights are already baked in
 
 **You don't need to do anything here** — both model dependencies (`opendatalab/MinerU2.5-Pro-2605-1.2B` for the VLM backend and `opendatalab/PDF-Extract-Kit-1.0` for the pipeline backend) are **baked into the worker image at build time**, at `/root/.cache/huggingface/`. No Cached Models setup, no Network Volume, no runtime download.
 
 If you'd rather slim the image and rely on RunPod's Cached Models feature for the VLM only (which has a single-model dashboard limit), fork the Dockerfile to skip the `RUN snapshot_download` step. The pipeline backend would then need either a Network Volume or `HF_HUB_OFFLINE=0` for runtime downloads.
 
-## Problem 3: persisting outputs between jobs
+## Problem 2: sharing outputs between jobs
 
 If a downstream pipeline (a follow-up job that does embeddings, indexing, classification) needs to read the parse output, you have three options:
 
@@ -74,19 +77,21 @@ The volume is read-write by default. Every worker in the endpoint sees the same 
 The `volume_path` field of the job input is **just a filesystem path inside the worker container**. It works for:
 
 - Files on a mounted network volume (`/runpod-volume/<anything>`)
-- Files baked into the Docker image at build time (e.g. `/worker/test-fixture.pdf` — the path we use in the disabled Hub test)
+- Files baked into the Docker image at build time (for example, the fixture used by the Hub validator)
 - Files written by an earlier handler step (advanced — only if you fork the handler)
 
 The worker validates the path is a real file and raises `ValueError: volume_path not found inside container: <path>` if not.
 
 ## Picking a region
 
-Network volumes are **regional** — a volume in `us-east-1` is invisible to a worker in `eu-central-1`. When you create the volume, pick the region with the most GPU availability for your `gpuIds` list. For the template defaults (`ADA_24,AMPERE_24,AMPERE_48`), any US or EU region works.
+Network volumes are **regional**: a volume in one region is not visible to a
+worker in another. Check current GPU availability for the template's pool list
+before choosing the volume region.
 
 If your endpoint has multiple regions enabled and you're running on a network volume, **pin the endpoint to the volume's region** (RunPod dashboard → endpoint → GPU configuration) — otherwise some workers may land in regions without the volume and fail with `volume_path not found`.
 
 ## When NOT to use a network volume
 
 - **You parse each document once and discard.** Just use `file_url` — no point paying storage rent.
-- **Your input set is small and changes constantly.** Inline base64 (`file_b64`) is fine for ≤20 MB inputs.
+- **Your input set is small and changes constantly.** Inline base64 (`file_b64`) is fine below the gateway thresholds; use `file_url` for larger one-off inputs.
 - **You only care about cold-start latency.** Both MinerU models are baked into the image; a volume for model weights duplicates that work.

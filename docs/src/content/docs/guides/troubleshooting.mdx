@@ -1,9 +1,9 @@
 ---
 title: Troubleshooting
-description: The most common failure modes — Hub build flakes, GPU compatibility on newer architectures, OOM, format-detection errors — and how to read the worker's `debug` block to diagnose anything else.
+description: Diagnose mineru-runpod build, GPU, OOM, timeout, input-format, and cold-start failures from the response debug block and worker logs.
 ---
 
-When something doesn't work, the worker tries hard to fail loudly. Every response (success **and** failure) includes a `debug` block with what backend ran, which model loaded, what GPU the worker landed on, and per-phase timings. Start there.
+When something doesn't work, start with the `debug` block. Success and failure responses include the requested backend, detected input format, GPU, a best-effort cached model path, and per-phase timings.
 
 ## How to read the `debug` block
 
@@ -33,8 +33,8 @@ What to look at:
 | Field | What's wrong if it's surprising |
 |---|---|
 | `backend` | The string passed to MinerU. If you set `pipeline` but see `vlm-auto-engine`, your caller isn't sending what you think it is |
-| `input_format` | Auto-detected from bytes. If you uploaded a PDF and see `unknown`, your transport returned an error page (HTML), not the file body |
-| `model_dir` | Filesystem path of the snapshot that actually loaded. Both VLM and pipeline models are baked into the image at `/root/.cache/huggingface/`; if this is `null` on a successful job, the image build skipped the model bake step (unusual — file a bug) |
+| `input_format` | Auto-detected from bytes. If you supplied a PDF URL and see `unknown`, the URL likely returned an error page (HTML), not the file body |
+| `model_dir` | Best-effort path to a cached MinerU VLM snapshot. It confirms that a matching cache directory exists, but does not prove which model the selected backend loaded. Pipeline models are baked separately. |
 | `gpu.compute_capability` | 8.6 = Ampere (3090, A5000, A6000), 8.9 = Ada (4090, RTX 6000 Ada), 9.0 = Hopper (H100), 12.0 = **Blackwell — VLM will crash** |
 | `phase_ms.fetch_input` | If hundreds of seconds on a `file_url` job, the source URL is slow / failing |
 | `phase_ms.mineru_parse` | Per-page guidance for warm workers, **highly GPU- and content-dependent**: MinerU upstream cites **~0.5 s/page (2.12 fps) on an A100** for the VLM backend; we measured a range of **~1 s/page on uniform multi-page reports up to ~10 s/page on dense financial forms** on an A5000 24 GB (≈3.5 s/page is a reasonable single-number estimate) under the default `gpu_memory_utilization=0.5`. Pipeline backend is ~3–5 s/page across GPUs (CPU-bound for layout, GPU-bound only for OCR). **First call on a fresh worker is much higher** (model load + vLLM warmup adds ~90–130 s for the VLM backend). If a warm-worker call is 5× the expected per-page number for your GPU and content type, you're memory-bound and vLLM is swapping |
@@ -129,7 +129,11 @@ CUDA error (...flash-attention/hopper/flash_fwd_launch_template.h:188): invalid 
 
 **Cause**: xformers / flash-attention in vllm 0.11.2 (our base image) ships kernels for Ampere (8.x), Ada (8.9), and Hopper (9.0) — no Blackwell-SM120 code path. On Blackwell, xformers misroutes to the Hopper kernel and crashes during VLM model init.
 
-**Why we can't just bump vllm**: MinerU 3.2.x's pyproject pins `vllm>=0.10.1.1,<0.12`. The first vllm release with any Blackwell mention in its notes is `v0.13.0` (2025-12-19, SM103 / GB300 "Blackwell Ultra"); broader Blackwell coverage follows in v0.14+. All Blackwell-aware vllm versions sit above MinerU's `<0.12` ceiling, so until MinerU loosens that pin we're stuck on v0.11.x, which has no SM120 kernel path. The v0.6.6 → v0.11.2 bump did not change this because v0.11.2 only adds SM100 (data-center Blackwell B200/GB200) MoE-prep code, not the SM120 (consumer 5090 / PRO 6000 Blackwell) flash-attn paths the VLM uses.
+**Why the published image still fails**: the Dockerfile currently selects vLLM
+0.11.2. MinerU 3.4 allows newer vLLM releases, so the old `<0.12` dependency
+ceiling is no longer the blocker. Changing the base image still requires a
+coordinated compatibility test across MinerU, CUDA, vLLM, xformers, the baked
+models, and RunPod's GPU pools; that upgrade has not been validated here yet.
 
 **Fix**: keep the default `gpuIds: "ADA_24,AMPERE_24,AMPERE_48"` — all unambiguously pre-Blackwell. If you've manually opted into `ADA_48_PRO`, that pool can mix in Blackwell SKUs since RunPod groups them under the same pool name — remove it from your endpoint's GPU pool list. For workloads that need a 48 GB Ada-or-newer card, the `pipeline` backend doesn't use xformers/flash-attn and is unaffected, so it runs on Blackwell fine; only the VLM/hybrid backends crash. See [Choosing a GPU](/guides/choosing-gpu/#a-note-on-ada_48_pro-and-blackwell) for the GPU-pool background.
 
@@ -191,11 +195,11 @@ Headline observations from this run:
   - `MINERU_WARMUP_LANG` (default `en`) — only meaningful for the pipeline backend; VLM ignores it.
   - `MINERU_SKIP_WARMUP=1` — bypass entirely (worker falls back to lazy load on first request, ~100s tax).
 
-  **Expected post-warmup cold-start latency for the *first request*: ~7–8 s wall-clock on A5000** (measured 2026-05-26 against the deployed template). Breakdown: ~3 s of FlashBoot snapshot restore + ~5 s of parse on a fully-warm engine. **FlashBoot empirically captures Python process memory + CUDA VRAM + the vLLM engine subprocess** — see [FlashBoot mechanism](#flashboot-mechanism-confirmed) below for the full analysis.
+  **Observed snapshot-restore latency for the first request: ~7–8 s wall-clock on A5000** (measured 2026-05-26). The logs and persistent vLLM PID indicate that FlashBoot restored a warm process and its GPU state. See [the four-request evidence](#flashboot-behavior-observed-in-four-requests) below.
 
-### FlashBoot mechanism (confirmed)
+### FlashBoot behavior observed in four requests
 
-We confirmed on 2026-05-26 that **FlashBoot is process-snapshot based** (CRIU or functional equivalent), and that snapshots are scoped **per (host, image-SHA)** — not per endpoint. Each worker host maintains its own snapshot store. When RunPod's scheduler picks a host that has run this image before, you get a fast restore. When it picks a new host, the worker re-runs warmup once.
+In a four-request test on 2026-05-26, FlashBoot behaved like a process snapshot scoped by host and image SHA. RunPod does not publicly document those internals, so this is an inference from timings, missing boot logs, persistent process identity, and host changes.
 
 The four-request investigation that pinned this down. Same short single-page PDF, same parameters every time, worker scaled to zero between every request:
 
@@ -206,7 +210,7 @@ The four-request investigation that pinned this down. Same short single-page PDF
 | 3 | 122 s | B (different host) | none | Image cached on B, but fresh process: fitness checks + `[mineru-warmup] done in 101.5s` + parse 5.6 s |
 | 4 | **7.4 s** | B (same as R3) | yes (post-R3) | Same pattern as R2 — snapshot restore, no boot logs |
 
-Worker identity is visible in the logs three ways: the `EngineCore_DP0 pid=NNN` line (different per container), the `distributed_init_method=tcp://192.168.X.X` pod-internal IP, and the request-id `-u1` / `-u2` suffix (RunPod's region/partition identifier). All three agreed: R1+R2 were the same pod; R3+R4 were a different same pod.
+Worker identity is visible in the logs three ways: the `EngineCore_DP0 pid=NNN` line, the `distributed_init_method=tcp://192.168.X.X` pod-internal IP, and the request-id suffix. All three agreed: R1+R2 shared one worker context; R3+R4 shared another.
 
 **The per-host model:**
 
@@ -216,13 +220,13 @@ FlashBoot lookup = (worker host, image SHA)
 - no match → fresh boot, run fitness checks + warmup → ~110 s wall-clock
 ```
 
-What gets preserved on a successful restore: Python interpreter state, MinerU's in-memory engine handle, vLLM's `AsyncLLMEngine` subprocess (PID persists), CUDA VRAM (model weights + KV cache + CUDA graphs), `torch.compile` cache, and the boot-time signal handlers.
+The observed restore retained the Python process, MinerU engine handle, vLLM child process, warm GPU allocations, and compiled state. The logs do not prove RunPod's underlying implementation.
 
 **Practical implications:**
 
 - The boot-time warmup pays off **per host that the worker visits**, not once per endpoint or once forever. Each new host pays the warmup tax once; every subsequent restore on that same host is fast.
 - Snapshot invalidation: the obvious triggers are image rebuild (new SHA), `MINERU_SKIP_WARMUP=1`, and presumably eventual eviction after long idle. RunPod doesn't document the eviction policy.
-- Either way, **the per-request cold tax is gone** — even the slow case (~110 s) is the *worker boot* paying it once, not every request paying it.
+- A request that lands on a fresh host still waits for the ~110 s worker boot. Requests restored in the observed warm context avoided that cost.
 
 **What controls which path you'll see:**
 
@@ -238,13 +242,16 @@ What gets preserved on a successful restore: Python interpreter state, MinerU's 
 
 **Symptom**: handler errors with `CUDA out of memory` mid-parse. `debug.gpu.total_memory_gb` shows your card has fewer GB than the workload needs.
 
-**Cause**: vLLM allocates KV cache upfront based on `gpu_memory_utilization` (default 0.5). On a 24 GB card this targets ~12 GB. If concurrency or document size pushes KV usage above the budget plus model weights (~2.2 GB) plus activations (~0.75 GB), you OOM.
+**Cause**: vLLM allocates KV cache up front based on `gpu_memory_utilization`
+(default 0.5). Concurrent jobs and unusually complex pages can exhaust the
+remaining VRAM. A longer document does not steadily increase VRAM when pages
+are processed sequentially.
 
 **Fix**:
 - **Bump to a 48 GB pool** for the affected workload (`AMPERE_48`)
 - **Switch to the pipeline backend** which doesn't use vLLM and is documented at 4 GB minimum VRAM (per MinerU's hardware compatibility table), regardless of doc length
-- **Reduce concurrency** (`concurrencyModifier` on the endpoint) so fewer pages are in flight at once
-- **For one-off huge docs**, set `backend: "pipeline"` per-job — same worker can handle small docs with VLM and giant docs with pipeline
+- **Reduce `MINERU_MAX_CONCURRENCY`** so fewer jobs share one worker
+- **Batch very long documents** for shorter retries, bounded job time, and smaller outputs; batching is not a VLM memory fix
 
 See [Choosing a GPU](/guides/choosing-gpu/) for the VRAM math.
 
@@ -352,10 +359,9 @@ RunPod's logging system throttles workers that produce too much output
 [RunPod docs](https://docs.runpod.io/serverless/development/logs)). The
 worker's default emissions (a few lines per job) stay well below that
 ceiling. If you fork and add verbose per-page logging, expect dropped
-lines under load. RunPod also doesn't forward logs to external systems
-— if you need durable / queryable logs in Axiom or similar, the worker
-itself must push them (planned for the [observability guide](/guides/troubleshooting/) once
-the OTel integration ships).
+lines under load. RunPod does not forward logs to external systems. For
+durable, queryable logs plus traces and metrics, enable the worker's shipped
+[OpenTelemetry exporter](/guides/observability/).
 :::
 
 ## Cancellation and worker recycling

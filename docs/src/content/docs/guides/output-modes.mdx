@@ -3,7 +3,7 @@ title: Output modes
 description: Pick between tarball_b64, inline, and S3 presigned URLs with the transport field, and use formats to filter which artifacts the inline payload carries.
 ---
 
-The worker hands back parsed output through two orthogonal knobs:
+The worker uses one transport choice plus an inline-only filter:
 
 - **`transport`** — how the output is shipped (`tarball_b64` / `inline` / `s3`).
 - **`formats`** — for inline transport, which subset of `markdown` / `content_list` / `middle` / `images` rides along in the response.
@@ -15,8 +15,8 @@ Pick `transport` based on **how big the output is** and **what you want to do wi
 | `transport` | Output shape | Size limit | When to pick it |
 |---|---|---|---|
 | `"tarball_b64"` *(default)* | entry has `tarball_b64`: base64-encoded `.tar.gz` of the output directory | ~20 MB total response (RunPod gateway cap) | Small to medium docs; you want one blob you can decode and stash anywhere |
-| `"inline"` | entry has `markdown` + `content_list` + `middle` + `images` (each base64, filterable via `formats`) | Same ~20 MB cap | You want structured fields back, easy to consume in JSON-only callers; small docs |
-| `"s3"` | entry has `tarball_url`: presigned URL to the same `.tar.gz` on an S3-compatible bucket | No practical limit (bucket-side) | Large docs (long books, image-heavy reports); response stays tiny |
+| `"inline"` | entry has text/JSON fields plus base64-encoded images, filterable via `formats` | Same ~20 MB cap | You want structured fields back in a JSON-only caller; small docs |
+| `"s3"` | entry has `tarball_url`: presigned URL to the same `.tar.gz` on an S3-compatible bucket | No gateway-response cap; worker RAM, disk, timeout, and provider limits still apply | Large docs and image-heavy reports; response stays tiny |
 
 All three modes produce the **same** underlying output — Markdown, content list, middle JSON, extracted images. The choice is purely about transport.
 
@@ -108,6 +108,7 @@ Response entry contains only `markdown` (plus the usual `basename` / `source` / 
 ```json
 {
   "input": {
+    "file_url": "https://example.com/report.pdf",
     "transport": "inline",
     "formats": ["markdown", "content_list"]
   }
@@ -190,7 +191,7 @@ Each upload uses key `{BUCKET_PREFIX}{basename}-{uuid}.tar.gz` — the UUID prev
 
 Default is **3600 seconds (1 hour)**. Long enough for any human or service to fetch the tarball but short enough that a leaked URL stops working before it's interesting.
 
-If you need a longer lifetime, fork the worker and bump `S3_PRESIGN_TTL_SECONDS` in [`worker/package.py`](https://github.com/sergeyshmakov/mineru-runpod/blob/main/worker/package.py). I haven't exposed this as a per-job knob because the default is rarely too short — a job that needs >1 h to fetch its output usually has a different bug.
+If you need a longer lifetime, fork the worker and change `S3_PRESIGN_TTL_SECONDS` in [`worker/package.py`](https://github.com/sergeyshmakov/mineru-runpod/blob/main/worker/package.py). It is not a per-job setting.
 
 ### Costs
 

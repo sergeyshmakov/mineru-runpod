@@ -3,7 +3,7 @@ title: Input formats
 description: PDF, image, DOCX, PPTX, XLSX — what the worker accepts, how format detection works, and per-format quirks.
 ---
 
-The worker accepts five input formats through the same three transports (`file_url`, `file_b64`, `volume_path`). Format is **auto-detected from the input bytes** — there's no `format` field to set, and the field name `file_*` is intentionally format-agnostic. Send whatever you have; the worker figures out what it is.
+The worker accepts five input formats through the same three sources (`file_url`, `file_b64`, `volume_path`). Format is **auto-detected from the input bytes** — there's no `format` field to set, and the field name `file_*` is intentionally format-agnostic. Send whichever source you have; the worker detects the format.
 
 ## Supported formats
 
@@ -23,34 +23,40 @@ The output shape is the same regardless of input format: Markdown + `content_lis
 
 ## When format matters for the backend choice
 
-The five MinerU backends (see [Picking a backend](/guides/choosing-gpu/#picking-a-backend)) handle the input pool differently:
+The five MinerU backends (see [Picking a backend](/guides/choosing-gpu/#picking-a-backend)) share the same input contract:
 
-- **`vlm-auto-engine`** (default): MinerU's end-to-end VLM. Best for **PDF**. MinerU's README attaches the [109-language claim](https://github.com/opendatalab/MinerU#supported-languages) specifically to the pipeline backend's OCR layer; the VLM's [model card](https://huggingface.co/opendatalab/MinerU2.5-Pro-2605-1.2B) carries only `English` and `Chinese` HuggingFace language tags. **Verified empirically on Russian (2026-05-21, on the prior `Pro-2604` weights)**: the Pro VLM does produce real Cyrillic output despite the limited model-card tags. The 2605 release kept the same language tag set; we have not re-run the Cyrillic check on 2605 but its lineage gives no reason to expect a regression. Coverage of other non-Latin scripts (Arabic, Devanagari, etc.) is undocumented and unverified by us; if you hit transliteration on those, `pipeline` with the matching script-family `lang` code is the documented-safe alternative.
-- **`pipeline`**: native multi-language OCR (109 languages). Best for **images** and **scanned PDFs without an embedded text layer**. Respects the `lang` parameter (script-family codes — see below).
-- **`hybrid-auto-engine`**: routes between pipeline and VLM based on page content. Best when you don't know in advance what mix of layouts you have.
+| Workload | Start with | Language behavior |
+|---|---|---|
+| Digital PDF with complex layout | `vlm-auto-engine` (default) | `lang` is ignored. The model card lists English and Chinese; test other scripts on your own corpus. |
+| Scan or image that needs explicit OCR control | `pipeline` | Set one of the supported script-family `lang` values below. |
+| Mixed native-text and scanned pages | `hybrid-auto-engine` | MinerU combines native extraction, VLM, and pipeline OCR. |
+| External OpenAI-compatible inference server | `vlm-http-client` or `hybrid-http-client` | Requires `server_url`; language behavior follows the corresponding VLM or hybrid path. |
 
 Office formats (DOCX/PPTX/XLSX) are parsed by MinerU's dedicated analysers regardless of which `backend` you set — the choice only affects which engine handles the *embedded* graphics / equations / scanned regions inside the document.
 
 ## The `lang` parameter (pipeline backend only)
 
-For non-English/Chinese content, set `backend: "pipeline"` and use a **script-family** code (NOT an ISO language code):
+For explicit OCR language selection, set `backend: "pipeline"` and use one
+of MinerU 3.4's model-family codes, not an ISO language code:
 
 | Script family | Use for |
 |---|---|
-| `arabic` | Arabic, Persian, Urdu |
-| `ch`, `ch_lite`, `ch_server`, `en` | Variants of Chinese / English defaults |
-| `chinese_cht` | Traditional Chinese |
+| `ch` | Chinese, English, Japanese, Traditional Chinese, and Latin-script content |
+| `ch_server` | Server variant of the Chinese-family OCR model |
+| `arabic` | Arabic-script content |
 | `cyrillic` | Bulgarian, Macedonian, Mongolian, Serbian (non-Slavic Cyrillic) |
 | `devanagari` | Hindi, Marathi, Nepali |
 | `east_slavic` | Belarusian, Russian, Ukrainian |
 | `el` | Greek |
-| `japan` | Japanese (kanji + kana) |
 | `ka`, `ta`, `te` | Kannada, Tamil, Telugu |
 | `korean` | Korean (hangul) |
-| `latin` | French, German, Indonesian, Polish, Spanish, Vietnamese, etc. |
 | `th` | Thai |
 
-The VLM backends (`vlm-*`, `hybrid-*` with VLM routing) **ignore the `lang` field** — model selection is not conditional on it. That said, the Pro VLM has been empirically verified to handle Cyrillic (Russian) correctly without `lang` being set, so for Cyrillic content either backend works. Coverage of other non-Latin scripts on the VLM is undocumented; if you see transliteration in practice, switching to `pipeline` with the right script-family `lang` code is the safer path.
+MinerU 3.4 removed `en`, `japan`, `chinese_cht`, and `latin` as distinct
+model choices and routes those compatibility aliases through `ch`. The worker
+still defaults to `en`, which MinerU normalizes to `ch`. VLM backends ignore
+`lang`; test multilingual VLM output against your own documents and switch to
+`pipeline` when you need explicit OCR model selection.
 
 ## Examples
 
@@ -64,7 +70,7 @@ The VLM backends (`vlm-*`, `hybrid-*` with VLM routing) **ignore the `lang` fiel
 }
 ```
 
-Default `backend: "vlm-auto-engine"`, `lang: "en"` — both ignored for non-Latin VLM input.
+The default `vlm-auto-engine` handles the PDF. Its `lang` value is ignored.
 
 ### Cyrillic scan (Russian)
 
@@ -78,7 +84,7 @@ Default `backend: "vlm-auto-engine"`, `lang: "en"` — both ignored for non-Lati
 }
 ```
 
-Either backend produces Russian output (Pro VLM handles Cyrillic correctly; pipeline uses PaddleOCR with explicit script-family OCR models). For scans without an embedded text layer or for Cyrillic dialects beyond Russian/Ukrainian/Belarusian, `pipeline` is the documented-safe choice.
+Both backends produced usable Russian output in our test: the Pro VLM handled Cyrillic, while pipeline used its explicit script-family OCR model. Treat that as a limited test, not a general script-coverage claim. For scans without an embedded text layer or when you need explicit OCR selection, start with `pipeline`.
 
 ### Scanned image (PNG)
 
@@ -87,7 +93,7 @@ Either backend produces Russian output (Pro VLM handles Cyrillic correctly; pipe
   "input": {
     "file_url": "https://example.com/page-scan.png",
     "backend": "pipeline",
-    "lang": "latin"
+    "lang": "ch"
   }
 }
 ```
@@ -123,11 +129,15 @@ Returns Markdown tables (one per sheet) in `content_list`.
 
 | Transport | Max input size |
 |---|---|
-| `file_b64` (inline) | 20 MB (RunPod gateway cap on `/runsync`; 10 MB on `/run`) |
+| `file_b64` (inline) | Whole JSON request: 20 MB on `/runsync`, 10 MB on `/run`. Because base64 expands the file, keep raw input below roughly 15 MB or 7.5 MB respectively. |
 | `file_url` | 200 MB (worker download cap); fetched with a 120 s timeout |
 | `volume_path` | No hard cap; only limited by the network volume's free space |
 
-For files up to 200 MB, a signed S3 URL via `file_url` is cheapest; for larger books or image archives, pre-stage on a network volume and use `volume_path` — see [Network volumes](/guides/network-volumes/).
+The worker also rejects decoded `file_b64` data over 20 MB, but the gateway's
+whole-request limit normally triggers first. For files up to 200 MB, use a
+short-lived signed object URL via `file_url`. For larger books or archives,
+pre-stage on a network volume and use `volume_path` — see
+[Network volumes](/guides/network-volumes/).
 
 ## Page selection (PDF only)
 

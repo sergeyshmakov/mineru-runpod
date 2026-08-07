@@ -132,8 +132,8 @@ class MineruClient:
         Input formats (auto-detected by the worker):
             PDF, image (PNG/JPEG/GIF/BMP/TIFF/WebP), DOCX, PPTX, XLSX.
 
-        Backends (MinerU 3.2.x):
-            "pipeline"           PaddleOCR + layout/formula/table. 109-language OCR.
+        Backends (MinerU 3.4.x):
+            "pipeline"           PP-OCRv6 + layout/formula/table. Multilingual OCR.
                                   Best for non-Latin scripts; respects `lang`.
             "vlm-auto-engine"    VLM via vLLM (default). Fast on EN/CH; ignores `lang`.
             "vlm-http-client"    VLM via external vLLM server (`server_url` required).
@@ -143,7 +143,7 @@ class MineruClient:
         For non-English/Chinese scripts (e.g. Russian/Cyrillic), use
         `backend="pipeline"` with a script-family `lang` code such as
         `"east_slavic"` (Russian/Ukrainian/Belarusian), `"cyrillic"`,
-        `"latin"`, `"arabic"`, `"devanagari"`. NOT ISO codes.
+        `"arabic"`, or `"devanagari"`. These are not ISO language codes.
 
         Transport:
             "tarball_b64"  (default) base64-encoded .tar.gz inside the entry

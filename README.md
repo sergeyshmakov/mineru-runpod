@@ -4,11 +4,11 @@
 [![CI](https://github.com/sergeyshmakov/mineru-runpod/actions/workflows/ci.yml/badge.svg)](https://github.com/sergeyshmakov/mineru-runpod/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12-blue.svg)](pyproject.toml)
-[![MinerU](https://img.shields.io/badge/MinerU-3.2-purple)](https://github.com/opendatalab/MinerU)
+[![MinerU](https://img.shields.io/badge/MinerU-3.4-purple)](https://github.com/opendatalab/MinerU)
 [![Runpod](https://api.runpod.io/badge/sergeyshmakov/mineru-runpod)](https://console.runpod.io/hub/sergeyshmakov/mineru-runpod)
 [![Conventional Commits](https://img.shields.io/badge/Conventional%20Commits-1.0.0-fa6673.svg)](https://www.conventionalcommits.org/)
 
-Serverless [MinerU](https://github.com/opendatalab/MinerU) PDF parser on [RunPod](https://runpod.io?ref=31jdfpnq). MinerU 3.2.x runtime with the `MinerU2.5-Pro-2605-1.2B` VLM. Scales to zero, ~$0.0003 per page on a 24 GB serverless RTX 4090, ten minutes from sign-up to first parse.
+Serverless [MinerU](https://github.com/opendatalab/MinerU) document parser on [RunPod](https://runpod.io?ref=31jdfpnq). MinerU 3.4.x runtime with the `MinerU2.5-Pro-2605-1.2B` VLM. Scales to zero; best-case warm parses measured about $0.0003 per page on a 24 GB serverless RTX 4090.
 
 **📚 [Docs](https://mineru.shmakov.tools/)**  ·  **🚀 [Get started on RunPod](https://runpod.io?ref=31jdfpnq)**  ·  **📝 [Blog](https://mineru.shmakov.tools/blog/)**
 
@@ -42,7 +42,7 @@ Accepts PDF, image (PNG/JPEG/GIF/BMP/TIFF/WebP), DOCX, PPTX, XLSX. Two orthogona
 
 ## Why this exists
 
-- **MinerU** is SOTA for PDF → structured Markdown/JSON: charts, tables, math, 109 languages. Apache 2.0 with explicit commercial thresholds. See the [paper](https://arxiv.org/abs/2604.04771), [repo](https://github.com/opendatalab/MinerU), and [model card](https://huggingface.co/opendatalab/MinerU2.5-Pro-2605-1.2B).
+- **MinerU** produces structured Markdown/JSON for text, charts, tables, and math. MinerU 3.4 also provides script-family OCR models through its pipeline backend. See the [paper](https://arxiv.org/abs/2604.04771), [repo](https://github.com/opendatalab/MinerU), and [model card](https://huggingface.co/opendatalab/MinerU2.5-Pro-2605-1.2B) for the published evaluation scope.
 - **RunPod Serverless** bills per-second and scales to zero. A 100-page document costs roughly $0.03 on a 24 GB serverless RTX 4090 instead of paying for an always-on GPU. See [RunPod pricing](https://www.runpod.io/pricing) for current rates.
 - **You don't have to wire any of that together yourself.** Deploy from the [RunPod Hub](https://runpod.io?ref=31jdfpnq) in one click, or fork this repo for full control.
 
@@ -106,14 +106,14 @@ Parsing accuracy is MinerU's domain; their published [OmniDocBench](https://gith
 | Equations | ✅ LaTeX | ✅ LaTeX | ❌ | ✅ LaTeX |
 | Multi-lang | ✅ 109 langs (pipeline backend) | per upstream README | EN only | per upstream README |
 | Setup time | 5 min | 10 min | 30 min | 20 min |
-| License | Apache 2.0 + attribution\* | **GPL-3.0 code + modified RAIL-M weights**\*\* | Apache 2.0 | MIT code + **CC-BY-NC 4.0 weights** |
+| License | MinerU Open Source License\* | **GPL-3.0 code + modified RAIL-M weights**\*\* | Apache 2.0 | MIT code + **CC-BY-NC 4.0 weights** |
 | Commercial SaaS | ✅ free below thresholds\* | ⚠️ depends on RAIL-M competitor clause\*\* | ✅ free | ⚠️ subject to CC-BY-NC non-commercial clause |
 
-<sub>\*MinerU is Apache 2.0 with an addendum: free commercial use up to 100M MAU and $20M monthly revenue, with attribution required in UI/docs. See the [MinerU LICENSE](https://github.com/opendatalab/MinerU/blob/master/LICENSE.md).</sub>
+<sub>\*The MinerU Open Source License is based on Apache 2.0 and adds attribution and commercial-use terms. Review the [current upstream license](https://github.com/opendatalab/MinerU/blob/master/LICENSE.md) for your use case.</sub>
 
 <sub>\*\*Marker's code is GPL-3.0; its OCR engine (Surya) ships under a modified RAIL-M licence whose §2(c) prohibits use by entities that "provide … any product or service that competes with … Licensor." Datalab's own README says Marker is free for "startups under $2M funding/revenue" — that carveout doesn't appear in the literal licence text, so the two read differently. Verify the current licence against your own usage with counsel before depending on Marker for a competing service. Datalab ships [Chandra](https://github.com/datalab-to/chandra) (the model behind their hosted API) under the same modified RAIL-M licence. See [Surya MODEL_LICENSE](https://github.com/datalab-to/surya/blob/master/MODEL_LICENSE) and [Chandra MODEL_LICENSE](https://github.com/datalab-to/chandra/blob/master/MODEL_LICENSE).</sub>
 
-The license row matters most for production SaaS. Marker pairs GPL-3.0 code with modified RAIL-M weights whose competitor clause is at least ambiguous about commercial reach; Datalab's marketing and the literal license text say different things, so plan for legal review. Nougat's model weights are CC-BY-NC 4.0 — Creative Commons' definition of non-commercial use is fuzzy at the edges, and deploying Nougat as part of a paid service is plainly outside it. GROBID is cleanly Apache 2.0 but is English-only and equations-blind. MinerU is the only one of the four with both production-grade accuracy AND a license whose commercial reach is documented in clear, quantitative terms (100M MAU and $20M monthly revenue thresholds).
+The license row matters for production use. Marker pairs GPL-3.0 code with modified RAIL-M weights whose competitor clause warrants review. Nougat's model weights are CC-BY-NC 4.0. GROBID is Apache 2.0. MinerU uses its own Apache-based license with additional terms, so evaluate the current upstream text rather than treating any of these projects as interchangeable on licensing.
 
 ## Documentation
 
@@ -122,7 +122,7 @@ Everything below the surface lives on the docs site:
 - **[Overview](https://mineru.shmakov.tools/getting-started/overview/)** — what it is, who it's for, architecture
 - **[Deploy](https://mineru.shmakov.tools/getting-started/deploy/)** — Hub one-click, fork-and-build, or BYO image
 - **[Clients](https://mineru.shmakov.tools/getting-started/clients/)** — Python `MineruClient` vs. direct RunPod SDK
-- **[Migrate from the MinerU API](https://mineru.shmakov.tools/getting-started/migrate-from-mineru-api/)** — drop-in-shaped `MineruApiClient` for moving off the cloud API
+- **[Migrate from the MinerU API](https://mineru.shmakov.tools/getting-started/migrate-from-mineru-api/)** — compatibility facade for evaluating a move from the cloud API
 - **[Choosing a GPU](https://mineru.shmakov.tools/guides/choosing-gpu/)** — workload-to-pool map, when to bump VRAM
 - **[API reference](https://mineru.shmakov.tools/reference/api/)** — JSON payload contract, response shapes, validation rules
 - **[Blog](https://mineru.shmakov.tools/blog/)** — launch posts and project notes
@@ -137,4 +137,4 @@ If this saves you time, the cheapest way to support development is to **[sign up
 
 ## License
 
-[MIT](LICENSE). The underlying [MinerU](https://github.com/opendatalab/MinerU) is Apache-2.0; the [RunPod SDK](https://github.com/runpod/runpod-python) is MIT.
+The wrapper code is [MIT](LICENSE). The underlying [MinerU](https://github.com/opendatalab/MinerU) and its model retain the [MinerU Open Source License](https://github.com/opendatalab/MinerU/blob/master/LICENSE.md); the [RunPod SDK](https://github.com/runpod/runpod-python) is MIT.

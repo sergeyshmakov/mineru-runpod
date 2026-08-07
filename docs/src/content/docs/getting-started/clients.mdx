@@ -1,11 +1,19 @@
 ---
 title: Clients
-description: Two ways to call your mineru-runpod endpoint. The Python MineruClient for quick starts, and the direct RunPod SDK / HTTP API for production.
+description: Call mineru-runpod with the Python client, the RunPod SDK, or direct HTTP, with current request and response examples.
 ---
 
 import { Tabs, TabItem } from "@astrojs/starlight/components";
 
 The worker template ships a Python wrapper (`mineru_client`) for convenience, but the actual API is the JSON payload contract that the handler accepts. You can hit the endpoint from any language. This page covers the two main paths and when to pick each.
+
+Before you start, you need a [deployed endpoint](/getting-started/deploy/), its
+endpoint id, and a RunPod API key. For the Python examples, keep the key out of
+source control:
+
+```powershell
+$env:RUNPOD_API_KEY = "<your-runpod-api-key>"
+```
 
 :::tip[Coming from the MinerU cloud API?]
 If you already call the official MinerU API (`mineru.net/api/v4/...`), the `MineruApiClient` facade lets you evaluate and migrate to a self-hosted endpoint with a near-identical code path. See [Migrate from the MinerU API](/getting-started/migrate-from-mineru-api/).
@@ -50,7 +58,7 @@ The response wraps each parsed file in a `results: [...]` list — for a single-
 ### What `MineruClient` gives you
 
 - Boilerplate reduction (~30 lines of payload-building collapsed to one call)
-- XOR validation on the three input transports (`file_url` / `file_b64` / `volume_path`)
+- XOR validation on the three input sources (`file_url` / `file_b64` / `volume_path`)
 - Typed exception (`MineruClientError`) for handler-side errors
 - Helpers for unpacking tarball or inline responses to disk
 
@@ -60,6 +68,7 @@ The response wraps each parsed file in a `results: [...]` list — for a single-
 - **No retries or backoff.** Cold-start jobs can fail; the wrapper does not retry. Add your own retry logic with `tenacity` or similar if you need it.
 - **No streaming progress.** The handler emits `progress_update` events during a parse; the client ignores them.
 - **No typed response models.** Returns a raw `dict`. If you want a `ParsedDocument` Pydantic model, write your own adapter (see [the adapter example](https://github.com/sergeyshmakov/mineru-runpod/blob/main/examples/parser_adapter_example.py)).
+- **Not every raw field is wrapped.** Use the direct SDK or HTTP contract for fields such as hybrid `effort` or `archive_format`.
 
 This is a deliberate scope choice. The wrapper is a starter, not a production framework.
 
@@ -71,7 +80,9 @@ For high-throughput pipelines, async submission, language-agnostic callers, or a
 
 ```python
 import runpod
-runpod.api_key = "..."
+import os
+
+runpod.api_key = os.environ["RUNPOD_API_KEY"]
 
 endpoint = runpod.Endpoint("<endpoint-id>")
 result = endpoint.run_sync({
@@ -82,10 +93,20 @@ result = endpoint.run_sync({
         "transport": "tarball_b64",
     }
 })
-# result["output"]["results"][0]["tarball_b64"] is the base64 .tar.gz
+# run_sync returns the handler output directly
+archive_b64 = result["results"][0]["tarball_b64"]
 ```
 
-Four lines. The RunPod SDK supports async (`run`), streaming (`stream`), batching, and connection pooling. See the [RunPod Python SDK docs](https://docs.runpod.io/sdks/python/endpoints) for the full surface.
+For asynchronous work, `endpoint.run(...)` returns a job object. Streaming is
+on that job, not on the endpoint:
+
+```python
+job = endpoint.run({"input": {"file_url": "https://example.com/report.pdf"}})
+for update in job.stream():
+    print(update)
+```
+
+See the [RunPod Python SDK docs](https://docs.runpod.io/sdks/python/endpoints) for the full surface.
 
 ### Any language with HTTP
 
@@ -100,6 +121,10 @@ r = httpx.post(
 )
 result = r.json()["output"]
 ```
+
+The raw `/runsync` HTTP response is a RunPod envelope, so the handler result is
+under `output`. The Python SDK unwraps that envelope and returns the handler
+result directly.
 
 Works in TypeScript, Go, Rust, curl, anything with an HTTP client. The endpoints are:
 
@@ -119,7 +144,7 @@ Full job-input shape is in [API reference](/reference/api/).
 | Production ingest pipeline, > 10 concurrent parses | **B — RunPod SDK direct** |
 | Non-Python caller (TypeScript backend, Go service) | **B — HTTP direct** |
 | You already use `runpod.Endpoint` elsewhere | **B — SDK direct** |
-| You need streaming progress for long parses | **B — SDK `stream()`** |
+| You need streaming progress for long parses | **B — SDK `Job.stream()`** |
 | You're wrapping into your own typed domain model | **B**, then implement your own adapter |
 
 Rough rule: prototype with A, switch to B when you outgrow it. Outgrowing happens at roughly: needing async, needing retries beyond what your job-scheduler does, or hitting throughput where the client becomes a bottleneck.
@@ -132,7 +157,7 @@ Either path returns the same handler response. Job-scoped metadata sits at the t
 {
   "ok": true,
   "elapsed_seconds": 18.4,
-  "mineru_version": "3.2.x",
+  "mineru_version": "3.4.x",
   "results": [
     {
       "basename": "doc",
@@ -151,7 +176,7 @@ Or with `transport: "inline"`:
 {
   "ok": true,
   "elapsed_seconds": 18.4,
-  "mineru_version": "3.2.x",
+  "mineru_version": "3.4.x",
   "results": [
     {
       "basename": "doc",

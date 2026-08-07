@@ -202,9 +202,29 @@
       {
         "key": "OTEL_EXPORTER_OTLP_HEADERS",
         "input": {
-          "name": "OTLP headers for traces+logs",
+          "name": "Default OTLP headers",
           "type": "string",
-          "description": "Headers sent with traces+logs requests. CSV of key=value pairs. Example for Axiom: Authorization=Bearer xat-...,X-AXIOM-DATASET=my-events",
+          "description": "Default headers sent with OTLP requests. CSV of key=value pairs. Per-signal values below override this setting.",
+          "default": "",
+          "advanced": true
+        }
+      },
+      {
+        "key": "OTEL_EXPORTER_OTLP_TRACES_HEADERS",
+        "input": {
+          "name": "OTLP headers for traces",
+          "type": "string",
+          "description": "Override headers for trace export. Axiom requires a dedicated Events dataset for traces.",
+          "default": "",
+          "advanced": true
+        }
+      },
+      {
+        "key": "OTEL_EXPORTER_OTLP_LOGS_HEADERS",
+        "input": {
+          "name": "OTLP headers for logs",
+          "type": "string",
+          "description": "Override headers for log export. Axiom requires a dedicated Events dataset for logs.",
           "default": "",
           "advanced": true
         }
@@ -216,20 +236,6 @@
           "type": "string",
           "description": "Override headers for metrics export only. Set when your backend uses a separate metrics dataset (e.g. Axiom's x-axiom-metrics-dataset).",
           "default": "",
-          "advanced": true
-        }
-      },
-      {
-        "key": "OTEL_EXPORTER_OTLP_PROTOCOL",
-        "input": {
-          "name": "OTLP transport",
-          "type": "string",
-          "description": "OTLP transport. http/protobuf is widely supported and required by Axiom metrics. Use http/json only if your backend lacks protobuf.",
-          "default": "http/protobuf",
-          "options": [
-            { "label": "http/protobuf (default)", "value": "http/protobuf" },
-            { "label": "http/json", "value": "http/json" }
-          ],
           "advanced": true
         }
       },

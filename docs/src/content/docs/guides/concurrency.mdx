@@ -1,6 +1,6 @@
 ---
 title: Concurrency
-description: The two concurrency levers on a mineru-runpod endpoint — horizontal workers_max and in-worker MINERU_MAX_CONCURRENCY — how they multiply, how the RunPod queue dispatches jobs, and which one to reach for.
+description: Understand workers_max, MINERU_MAX_CONCURRENCY, and vLLM batching, including how the two user-controlled concurrency settings multiply.
 ---
 
 "Concurrency" on a serverless MinerU endpoint happens at three levels. Two are yours to set; the third is automatic. Conflating them is the most common source of "why isn't my endpoint going faster?" confusion — including the trap of firing more requests and watching them queue.
