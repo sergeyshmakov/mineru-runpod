@@ -3,7 +3,11 @@ title: Troubleshooting
 description: Diagnose mineru-runpod build, GPU, OOM, timeout, input-format, and cold-start failures from the response debug block and worker logs.
 ---
 
-When something doesn't work, start with the `debug` block. Success and failure responses include the requested backend, detected input format, GPU, a best-effort cached model path, and per-phase timings.
+When something doesn't work, start with the top-level `error`, then inspect the
+`debug` block. Successful parse responses include the requested backend and
+detected input format. Failure responses still include GPU details, a
+best-effort cached model path, and completed phase timings, but fields that were
+not reached before the error can be absent.
 
 ## How to read the `debug` block
 
@@ -32,8 +36,8 @@ What to look at:
 
 | Field | What's wrong if it's surprising |
 |---|---|
-| `backend` | The string passed to MinerU. If you set `pipeline` but see `vlm-auto-engine`, your caller isn't sending what you think it is |
-| `input_format` | Auto-detected from bytes. If you supplied a PDF URL and see `unknown`, the URL likely returned an error page (HTML), not the file body |
+| `backend` | Present after a successful parse. This is the string passed to MinerU. If you set `pipeline` but see `vlm-auto-engine`, your caller isn't sending what you think it is. |
+| `input_format` | Present after a successful parse and auto-detected from bytes. The worker does not return `unknown`: it fails with `input bytes do not match any supported format`. If a PDF URL triggers that error, it likely returned HTML instead of the file; see [the matching troubleshooting section](#worker-returns-valueerror-input-bytes-do-not-match-any-supported-format). |
 | `model_dir` | Best-effort path to a cached MinerU VLM snapshot. It confirms that a matching cache directory exists, but does not prove which model the selected backend loaded. Pipeline models are baked separately. |
 | `gpu.compute_capability` | 8.6 = Ampere (3090, A5000, A6000), 8.9 = Ada (4090, RTX 6000 Ada), 9.0 = Hopper (H100), 12.0 = **Blackwell — VLM will crash** |
 | `phase_ms.fetch_input` | If hundreds of seconds on a `file_url` job, the source URL is slow / failing |
