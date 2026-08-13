@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import re
 from typing import Any
 
@@ -81,6 +82,21 @@ INPUT_SCHEMA: dict[str, dict[str, Any]] = {
 
 def _fail(msg: str) -> None:
     raise ValueError(f"input validation failed: {msg}")
+
+
+def _max_pages_per_job() -> int:
+    """Largest page range a single job may ask for; 0 means no ceiling.
+
+    Read per job (like the refresh thresholds in handler.py) so an operator
+    can tune it without a redeploy. Off by default: the endpoint's execution
+    timeout is the backstop that has always applied, and a ceiling here is
+    for operators who would rather a too-large request be turned away up
+    front than spend GPU minutes on it.
+    """
+    try:
+        return max(0, int(os.environ.get("MINERU_MAX_PAGES_PER_JOB", "0")))
+    except ValueError:
+        return 0
 
 
 def _normalize_formats(raw: Any) -> list[str]:
@@ -190,11 +206,24 @@ def validate_input(job_input: dict) -> dict:
     # range that ends before it starts is a caller mistake — MinerU would
     # return an empty parse and the caller would have nothing to go on.
     end_page = cleaned.get("end_page")
-    if end_page is not None and end_page >= 0 and end_page < start_page:
-        _fail(
-            f"end_page must be >= start_page when set; "
-            f"got start_page={start_page}, end_page={end_page}"
-        )
+    if end_page is not None and end_page >= 0:
+        if end_page < start_page:
+            _fail(
+                f"end_page must be >= start_page when set; "
+                f"got start_page={start_page}, end_page={end_page}"
+            )
+        # Only an explicit range has a page count at this point — an
+        # open-ended one isn't known until MinerU opens the document, so the
+        # ceiling can't speak to it. Operators who set it are expected to pair
+        # it with callers that request ranges (see the scaling guide).
+        ceiling = _max_pages_per_job()
+        requested = end_page - start_page + 1
+        if ceiling and requested > ceiling:
+            _fail(
+                f"requested page range is {requested} pages; this endpoint "
+                f"allows at most {ceiling} per job "
+                f"(MINERU_MAX_PAGES_PER_JOB)"
+            )
 
     # XOR over the three transports. The handler also relies on this — only
     # one of file_url/file_b64/volume_path may be set per job.

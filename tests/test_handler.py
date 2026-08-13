@@ -243,6 +243,42 @@ def test_validate_input_keeps_the_open_ended_range():
     assert cleaned["end_page"] == -1
 
 
+def test_page_ceiling_is_off_by_default(monkeypatch):
+    monkeypatch.delenv("MINERU_MAX_PAGES_PER_JOB", raising=False)
+    cleaned = handler._validate_input(
+        {"file_b64": "AA==", "start_page": 0, "end_page": 4999}
+    )
+    assert cleaned["end_page"] == 4999
+
+
+def test_page_ceiling_rejects_a_larger_range(monkeypatch):
+    monkeypatch.setenv("MINERU_MAX_PAGES_PER_JOB", "50")
+    with pytest.raises(ValueError, match="allows at most 50"):
+        handler._validate_input({"file_b64": "AA==", "start_page": 0, "end_page": 50})
+
+
+def test_page_ceiling_allows_a_range_at_the_limit(monkeypatch):
+    monkeypatch.setenv("MINERU_MAX_PAGES_PER_JOB", "50")
+    cleaned = handler._validate_input(
+        {"file_b64": "AA==", "start_page": 10, "end_page": 59}
+    )
+    assert cleaned["end_page"] == 59
+
+
+def test_page_ceiling_does_not_apply_to_an_open_ended_range(monkeypatch):
+    monkeypatch.setenv("MINERU_MAX_PAGES_PER_JOB", "5")
+    cleaned = handler._validate_input({"file_b64": "AA=="})
+    assert cleaned["end_page"] == -1
+
+
+def test_page_ceiling_ignores_a_malformed_value(monkeypatch):
+    monkeypatch.setenv("MINERU_MAX_PAGES_PER_JOB", "fifty")
+    cleaned = handler._validate_input(
+        {"file_b64": "AA==", "start_page": 0, "end_page": 999}
+    )
+    assert cleaned["end_page"] == 999
+
+
 def test_resolve_b64_rejects_oversized_encoded_payload():
     # Rejected on the encoded length, before the decoded copy is allocated.
     too_big = "A" * (worker_io.MAX_INLINE_B64_CHARS + 1)
