@@ -13,6 +13,8 @@ from pathlib import Path
 
 import httpx
 
+from worker import net as _net
+
 
 # RunPod's gateway caps payloads at 10 MB (/run) and 20 MB (/runsync). The
 # 20 MB ceiling is the largest a caller can realistically send inline; the
@@ -150,7 +152,13 @@ async def resolve_input_bytes(job_input: dict) -> tuple[bytes, str]:
 
     if file_url := job_input.get("file_url"):
         max_bytes = MAX_URL_FILE_MB * 1024 * 1024
-        async with httpx.AsyncClient(timeout=URL_FETCH_TIMEOUT_SECONDS) as client:
+        # worker.net.request_hook runs per outgoing request — the caller's URL
+        # and every redirect httpx follows on its own — so the target check
+        # applies uniformly across the chain.
+        async with httpx.AsyncClient(
+            timeout=URL_FETCH_TIMEOUT_SECONDS,
+            event_hooks={"request": [_net.request_hook]},
+        ) as client:
             async with client.stream("GET", file_url, follow_redirects=True) as resp:
                 resp.raise_for_status()
                 # Pre-check Content-Length when the server provided one so we

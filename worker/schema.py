@@ -6,6 +6,8 @@ from typing import Any
 
 from runpod.serverless.utils.rp_validator import validate
 
+from worker import net as _net
+
 
 VALID_TRANSPORTS = {"tarball_b64", "inline", "s3"}
 
@@ -169,5 +171,21 @@ def validate_input(job_input: dict) -> dict:
             f"backend={backend!r} requires `server_url` pointing at an "
             f"external vLLM OpenAI-compatible server"
         )
+
+    # Shape-check server_url at the boundary so a malformed value reports the
+    # field name here instead of failing inside MinerU's HTTP client. Only the
+    # shape: which host an operator runs their own model server on is their
+    # call, including one that isn't reachable from the public internet.
+    if server_url := cleaned.get("server_url"):
+        try:
+            _net.require_http_url(server_url, field="server_url")
+        except ValueError as e:
+            _fail(str(e))
+
+    if file_url := cleaned.get("file_url"):
+        try:
+            _net.require_http_url(file_url, field="file_url")
+        except ValueError as e:
+            _fail(str(e))
 
     return cleaned

@@ -200,6 +200,30 @@ def test_validate_input_http_client_requires_server_url():
         handler._validate_input({"file_b64": "AA==", "backend": "vlm-http-client"})
 
 
+def test_validate_input_rejects_non_http_file_url():
+    with pytest.raises(ValueError, match="file_url must be an http"):
+        handler._validate_input({"file_url": "file:///etc/hosts"})
+
+
+def test_validate_input_rejects_non_http_server_url():
+    with pytest.raises(ValueError, match="server_url must be an http"):
+        handler._validate_input({
+            "file_b64": "AA==",
+            "backend": "vlm-http-client",
+            "server_url": "vllm.internal:8000",
+        })
+
+
+def test_validate_input_accepts_a_private_server_url():
+    # An operator's own model server may well live on a private address.
+    cleaned = handler._validate_input({
+        "file_b64": "AA==",
+        "backend": "vlm-http-client",
+        "server_url": "http://10.1.2.3:8000",
+    })
+    assert cleaned["server_url"] == "http://10.1.2.3:8000"
+
+
 def test_validate_input_defaults_effort_to_none():
     cleaned = handler._validate_input({"file_b64": "AA=="})
     assert cleaned["effort"] is None
