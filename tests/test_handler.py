@@ -469,6 +469,44 @@ def test_presign_ttl_resolution(monkeypatch, env_value, expected):
     assert worker_package.presign_ttl_seconds() == expected
 
 
+def test_package_s3_signs_with_the_configured_lifetime(tmp_path, monkeypatch):
+    """The knob has to reach the signing call and the reported value, not just
+    resolve correctly on its own."""
+    # package_s3 imports boto3 lazily, so the patch goes on the module itself.
+    import boto3  # noqa: PLC0415
+
+    recorded = {}
+
+    class _FakeS3:
+        def put_object(self, **kwargs):
+            recorded["key"] = kwargs["Key"]
+
+        def generate_presigned_url(self, op, Params, ExpiresIn):  # noqa: N803
+            recorded["op"] = op
+            recorded["expires_in"] = ExpiresIn
+            return f"https://bucket.example/{Params['Key']}?signature=x"
+
+    monkeypatch.setattr(boto3, "client", lambda *a, **k: _FakeS3())
+    for var, val in (
+        ("BUCKET_ENDPOINT_URL", "https://bucket.example"),
+        ("BUCKET_NAME", "parses"),
+        ("BUCKET_ACCESS_KEY_ID", "id"),
+        ("BUCKET_SECRET_ACCESS_KEY", "secret"),
+        ("BUCKET_PRESIGN_TTL_SECONDS", "900"),
+    ):
+        monkeypatch.setenv(var, val)
+
+    out = tmp_path / "out"
+    out.mkdir()
+    _seed_mineru_output(out, "doc")
+    result = handler._package_s3(out, "doc")
+
+    assert recorded["expires_in"] == 900
+    assert result["tarball_url_expires_in"] == 900
+    assert result["bucket_key"] == recorded["key"]
+    assert result["bucket_bytes"] > 0
+
+
 def test_build_tarball_bytes_roundtrip(tmp_path):
     out = tmp_path / "out"
     out.mkdir()

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import socket
+from pathlib import Path
 
 import pytest
 
@@ -28,6 +29,37 @@ def test_volume_roots_default_when_env_unset(monkeypatch):
     assert [str(p) for p in worker_io.volume_roots()] == [
         str(worker_io.Path(r)) for r in worker_io.DEFAULT_VOLUME_ROOTS
     ]
+
+
+def test_default_roots_cover_the_documented_locations():
+    """Each default root is promised by the network-volumes guide, so dropping
+    one is a contract change rather than a tidy-up."""
+    assert set(worker_io.DEFAULT_VOLUME_ROOTS) >= {
+        "/runpod-volume", "/workspace", "/worker", "/tmp",
+    }
+
+
+def test_hub_validator_input_sits_under_a_default_root():
+    """.runpod/tests.json is the only job the Hub validator runs on a release
+    build, and it arrives as a volume_path. Compared with PurePosixPath because
+    the roots are container paths regardless of the machine running the test."""
+    import json
+    from pathlib import PurePosixPath
+
+    spec = json.loads(
+        (Path(__file__).resolve().parent.parent / ".runpod" / "tests.json")
+        .read_text(encoding="utf-8")
+    )
+    roots = [PurePosixPath(r) for r in worker_io.DEFAULT_VOLUME_ROOTS]
+    for case in spec["tests"]:
+        volume_path = case["input"].get("volume_path")
+        if not volume_path:
+            continue
+        target = PurePosixPath(volume_path)
+        assert any(r == target or r in target.parents for r in roots), (
+            f"{volume_path!r} from .runpod/tests.json is outside the default "
+            f"input roots — the Hub validator would reject it"
+        )
 
 
 def test_volume_roots_env_replaces_defaults(monkeypatch, tmp_path):
