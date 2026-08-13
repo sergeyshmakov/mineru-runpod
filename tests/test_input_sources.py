@@ -282,114 +282,139 @@ def test_url_check_follows_the_same_chain_the_client_does(monkeypatch):
     assert handled == ["cdn.example.com"]
 
 
-def test_connection_goes_to_the_address_that_was_checked(monkeypatch):
-    """The address the check approved is the address the request reaches.
+# -----------------------------------------------------------------------------
+# Where the socket actually goes.
+#
+# These drive CheckedAddressBackend directly: it is the seam where a resolved
+# address becomes a connection, so it is the honest place to assert what the
+# connection connects to. httpcore's own backend is stubbed underneath.
+# -----------------------------------------------------------------------------
 
-    A name is only as stable as the answer behind it: if the connection
-    resolved the host again on its own, it could land somewhere the check never
-    saw. Here the resolver hands back one address and the request must arrive
-    at that one, with the caller's host preserved for virtual hosting and for
-    the TLS handshake.
-    """
-    import httpx
+def _stub_socket_backend(monkeypatch, on_connect):
+    """Answer connect_tcp below CheckedAddressBackend, recording the address."""
+    import httpcore
 
+    async def fake_connect_tcp(self, host, port, timeout=None, local_address=None,
+                               socket_options=None):
+        return on_connect(host, port)
+
+    monkeypatch.setattr(httpcore.AnyIOBackend, "connect_tcp", fake_connect_tcp)
+
+
+def test_socket_opens_against_the_address_that_was_checked(monkeypatch):
+    """A name is only as stable as the answer behind it — so the lookup and the
+    connection happen in one place, and the socket goes where the check looked."""
     monkeypatch.delenv("MINERU_ALLOW_LOCAL_FETCH", raising=False)
     _stub_resolver(monkeypatch, {"files.example.com": ["93.184.216.34"]})
+    opened = []
+    _stub_socket_backend(monkeypatch, lambda host, port: opened.append((host, port)))
 
-    seen = {}
+    backend = worker_net.CheckedAddressBackend("file_url")
+    asyncio.run(backend.connect_tcp("files.example.com", 443))
+    assert opened == [("93.184.216.34", 443)]
 
-    async def respond(request):
-        seen["connected_host"] = request.url.host
-        seen["host_header"] = request.headers["host"]
-        seen["sni"] = request.extensions.get("sni_hostname")
-        return httpx.Response(200, content=b"%PDF-1.4 pinned")
 
-    _patch_socket_layer(monkeypatch, respond)
+def test_socket_is_not_opened_when_the_address_is_rejected(monkeypatch):
+    monkeypatch.delenv("MINERU_ALLOW_LOCAL_FETCH", raising=False)
+    _stub_resolver(monkeypatch, {"internal.example": ["10.0.0.7"]})
+    opened = []
+    _stub_socket_backend(monkeypatch, lambda host, port: opened.append((host, port)))
 
-    raw, _ = _resolve({"file_url": "https://files.example.com/a.pdf"})
-    assert raw == b"%PDF-1.4 pinned"
-    assert seen["connected_host"] == "93.184.216.34"
-    assert seen["host_header"] == "files.example.com"
-    assert seen["sni"] == "files.example.com"
+    backend = worker_net.CheckedAddressBackend("file_url")
+    with pytest.raises(ValueError, match="publicly routable"):
+        asyncio.run(backend.connect_tcp("internal.example", 443))
+    assert opened == []
 
 
 def test_all_checked_addresses_are_tried_before_giving_up(monkeypatch):
     """A host with several records expects a client to work down the list.
 
-    Pinning to the first answer alone would strand a dual-stack name whose
-    first record this worker cannot reach — the common case being an AAAA
-    record on a container with no IPv6 route.
+    Using the first answer alone would strand a dual-stack name whose leading
+    record this worker cannot reach — an AAAA record on a container with no
+    IPv6 route being the everyday case.
     """
-    import httpx
+    import httpcore
 
     monkeypatch.delenv("MINERU_ALLOW_LOCAL_FETCH", raising=False)
     _stub_resolver(monkeypatch, {
         "dual.example.com": ["2606:2800:220:1:248:1893:25c8:1946", "93.184.216.34"],
     })
-
     attempts = []
 
-    async def respond(request):
-        # httpx stores an IPv6 host unbracketed, so ":" is what identifies it.
-        attempts.append(request.url.host)
-        if ":" in request.url.host:
-            raise httpx.ConnectError("no route to host")
-        return httpx.Response(200, content=b"%PDF-1.4 second address")
+    def on_connect(host, port):
+        attempts.append(host)
+        if ":" in host:
+            raise httpcore.ConnectError("no route to host")
+        return "stream"
 
-    _patch_socket_layer(monkeypatch, respond)
+    _stub_socket_backend(monkeypatch, on_connect)
 
-    raw, _ = _resolve({"file_url": "https://dual.example.com/a.pdf"})
-    assert raw == b"%PDF-1.4 second address"
+    backend = worker_net.CheckedAddressBackend("file_url")
+    assert asyncio.run(backend.connect_tcp("dual.example.com", 443)) == "stream"
     assert attempts == ["2606:2800:220:1:248:1893:25c8:1946", "93.184.216.34"]
 
 
 def test_a_connect_failure_on_every_address_surfaces(monkeypatch):
-    import httpx
+    import httpcore
 
     monkeypatch.delenv("MINERU_ALLOW_LOCAL_FETCH", raising=False)
     _stub_resolver(monkeypatch, {"down.example.com": ["93.184.216.34", "93.184.216.35"]})
 
-    async def respond(request):
-        raise httpx.ConnectError("no route to host")
+    def on_connect(host, port):
+        raise httpcore.ConnectError("no route to host")
 
-    _patch_socket_layer(monkeypatch, respond)
+    _stub_socket_backend(monkeypatch, on_connect)
 
-    with pytest.raises(httpx.ConnectError):
-        _resolve({"file_url": "https://down.example.com/a.pdf"})
+    backend = worker_net.CheckedAddressBackend("file_url")
+    with pytest.raises(httpcore.ConnectError):
+        asyncio.run(backend.connect_tcp("down.example.com", 443))
 
 
-def test_checked_address_is_used_even_if_the_name_answers_differently_later(
-    monkeypatch,
-):
-    """A host whose answer changes between lookups cannot move the connection.
+def test_url_host_is_left_alone_so_pooling_stays_per_hostname(monkeypatch):
+    """Two hostnames sharing an address must not share a connection.
 
-    The resolver below returns a routable address the first time it is asked
-    and a private one afterwards. Whichever lookup the check used, the request
-    must arrive at an address the check accepted.
+    Connections are pooled by URL origin and the TLS handshake is performed
+    against the host in it. Substituting the address into the URL would collapse
+    two hostnames into one origin, and the second would be served over the
+    first one's connection without a handshake of its own.
     """
+    transport = worker_net.CheckedTargetTransport(field="file_url")
+    try:
+        assert isinstance(
+            transport._pool._network_backend, worker_net.CheckedAddressBackend
+        )
+        # The transport does not touch requests, so httpx keeps building origins
+        # from the caller's hostname.
+        assert not hasattr(transport, "_pin")
+        assert "handle_async_request" not in vars(worker_net.CheckedTargetTransport)
+    finally:
+        asyncio.run(transport.aclose())
+
+
+def test_httpx_internals_this_transport_depends_on(monkeypatch):
+    """Guard: the two names CheckedTargetTransport reaches into.
+
+    httpx exposes no way to supply a network backend, so the pool's backend is
+    swapped after construction. If an upgrade moves either name, fail here
+    rather than silently connecting without the check.
+    """
+    import httpcore
     import httpx
 
-    monkeypatch.delenv("MINERU_ALLOW_LOCAL_FETCH", raising=False)
-    answers = ["93.184.216.34", "127.0.0.1", "127.0.0.1"]
-    calls = {"n": 0}
+    plain = httpx.AsyncHTTPTransport()
+    try:
+        assert hasattr(plain, "_pool"), "httpx.AsyncHTTPTransport._pool is gone"
+        assert hasattr(plain._pool, "_network_backend"), (
+            "httpcore pool no longer holds _network_backend"
+        )
+    finally:
+        asyncio.run(plain.aclose())
 
-    def fake_getaddrinfo(host, port, *args, **kwargs):
-        addr = answers[min(calls["n"], len(answers) - 1)]
-        calls["n"] += 1
-        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (addr, port or 80))]
+    import inspect
 
-    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
-
-    reached = []
-
-    async def respond(request):
-        reached.append(request.url.host)
-        return httpx.Response(200, content=b"%PDF-1.4 ok")
-
-    _patch_socket_layer(monkeypatch, respond)
-
-    raw, _ = _resolve({"file_url": "https://shifting.example/a.pdf"})
-    assert raw == b"%PDF-1.4 ok"
-    assert reached == ["93.184.216.34"], (
-        f"connected to {reached!r} — must be the address the check accepted"
+    params = list(
+        inspect.signature(httpcore.AnyIOBackend.connect_tcp).parameters
     )
+    assert params == [
+        "self", "host", "port", "timeout", "local_address", "socket_options",
+    ], f"AnyIOBackend.connect_tcp signature changed: {params}"

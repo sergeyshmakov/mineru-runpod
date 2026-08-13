@@ -17,9 +17,9 @@ immediately with a message naming the field:
   serverless worker is in practice. ``MINERU_ALLOW_LOCAL_FETCH=1`` lifts that
   requirement for local development and for operators serving documents from a
   host inside their own network.
-* ``CheckedTargetTransport`` — an httpx transport that opens the connection to
-  the address ``resolve_checked`` just returned, so the address described by
-  the check is the address the request actually reaches.
+* ``CheckedTargetTransport`` — an httpx transport whose sockets are opened
+  against a checked address, so the address described by the check is the
+  address the request actually reaches.
 """
 
 from __future__ import annotations
@@ -31,6 +31,7 @@ import socket
 from typing import Any
 from urllib.parse import urlsplit
 
+import httpcore
 import httpx
 
 
@@ -92,27 +93,16 @@ def _is_routable(addr: str) -> bool:
     return ip.is_global
 
 
-def resolve_checked(url: str, *, field: str) -> list[str]:
-    """Check ``url`` and return the addresses a connection may use.
+def resolve_checked_host(host: str, port: int | None, *, field: str) -> list[str]:
+    """Return the addresses ``host`` may be connected to, in resolver order.
 
-    Handing back the addresses, rather than just approving the URL, is the
-    point: a name is only as stable as the answer behind it, and a second
-    lookup at connect time can return something the check never saw — leaving
-    the check describing a connection that didn't happen. The caller connects
-    to one of these. See :class:`CheckedTargetTransport`.
-
-    All of them are returned, in resolver order, because a host with several
-    records expects a client to work down the list — pinning to the first alone
-    would strand a dual-stack name whose first record the worker can't reach.
+    Every address is returned, not just the first, because a host with several
+    records expects a client to work down the list — using one answer alone
+    would strand a dual-stack name whose leading record this worker has no
+    route to.
 
     Blocking: resolution is a synchronous DNS call.
     """
-    host = require_http_url(url, field=field)
-    parts = urlsplit(url)
-    try:
-        port = parts.port
-    except ValueError as e:
-        raise ValueError(f"{field} has an invalid port: {url!r}") from e
     addresses = list(dict.fromkeys(_addresses_for(host, port)))
     if not addresses:
         raise ValueError(f"host {host!r} could not be resolved: no addresses returned")
@@ -127,6 +117,17 @@ def resolve_checked(url: str, *, field: str) -> list[str]:
     return addresses
 
 
+def resolve_checked(url: str, *, field: str) -> list[str]:
+    """Check ``url`` and return the addresses a connection may use."""
+    host = require_http_url(url, field=field)
+    parts = urlsplit(url)
+    try:
+        port = parts.port
+    except ValueError as e:
+        raise ValueError(f"{field} has an invalid port: {url!r}") from e
+    return resolve_checked_host(host, port, field=field)
+
+
 def check_target(url: str, *, field: str) -> None:
     """Check the shape of ``url`` and where it resolves to, discarding the
     address. Equivalent to :func:`resolve_checked` for callers that only want
@@ -134,62 +135,91 @@ def check_target(url: str, *, field: str) -> None:
     resolve_checked(url, field=field)
 
 
-class CheckedTargetTransport(httpx.AsyncHTTPTransport):
-    """Connect to the address the check approved.
+class CheckedAddressBackend(httpcore.AnyIOBackend):
+    """Open sockets only to addresses the check accepted.
 
-    Resolution happens here, immediately before the connection is opened, and
-    the connection goes to that exact address. The request keeps the caller's
-    host in both the ``Host`` header and the TLS handshake, so virtual hosting
-    and certificate verification behave exactly as they do without pinning.
+    Resolving inside the call that opens the socket is what ties the verdict to
+    the connection: there is no second lookup in between for the two to
+    disagree about.
 
-    httpx calls a transport for every request it makes, including the ones it
-    generates while following redirects, so each hop is resolved and connected
-    the same way.
+    The URL is deliberately left alone. Connections are pooled and reused by
+    URL origin, and the TLS handshake is performed against the host in that
+    origin — so substituting an address into the URL instead would make two
+    different hostnames that share an address look like one origin, and the
+    second one would be served over the first one's connection without a
+    handshake of its own. Directing the socket keeps hostname-level pooling and
+    certificate verification exactly as they are without any of this.
+
+    ``AnyIOBackend`` rather than httpcore's private ``AutoBackend``: the worker
+    always runs under asyncio, which is the backend ``AutoBackend`` would pick,
+    and this one is public API.
     """
 
-    def __init__(self, *, field: str = "file_url", **kwargs: Any) -> None:
-        super().__init__(**kwargs)
+    def __init__(self, field: str) -> None:
         self._field = field
 
-    def _pin(self, request: httpx.Request, addr: str) -> httpx.Request:
-        """Copy ``request`` so it opens against ``addr``, host details intact."""
-        url = request.url
-        # An IPv6 address has to go back into the URL bracketed.
-        literal = f"[{addr}]" if ":" in addr else addr
-        headers = httpx.Headers(request.headers)
-        headers["Host"] = url.netloc.decode("ascii")
-        return httpx.Request(
-            request.method,
-            url.copy_with(host=literal),
-            headers=headers,
-            stream=request.stream,
-            extensions={**request.extensions, "sni_hostname": url.host},
-        )
-
-    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+    async def connect_tcp(  # noqa: PLR0913 — signature mirrors the base class
+        self,
+        host: str,
+        port: int,
+        timeout: float | None = None,
+        local_address: str | None = None,
+        socket_options: Any = None,
+    ) -> Any:
         addresses = await asyncio.to_thread(
-            resolve_checked, str(request.url), field=self._field
+            resolve_checked_host, host, port, field=self._field
         )
         # Work down the checked answers the way the socket layer would, so a
-        # host whose first record is unreachable from this worker still gets
-        # fetched. Only a failure to establish the connection moves on; once a
-        # connection is up, its errors belong to the caller.
+        # host whose leading record is unreachable from this worker still gets
+        # fetched. Only a failure to open the socket moves on; anything that
+        # happens after that belongs to the caller.
         last_error: Exception | None = None
         for addr in addresses:
             try:
-                return await super().handle_async_request(self._pin(request, addr))
-            except (httpx.ConnectError, httpx.ConnectTimeout) as e:
+                return await super().connect_tcp(
+                    addr,
+                    port,
+                    timeout=timeout,
+                    local_address=local_address,
+                    socket_options=socket_options,
+                )
+            except (httpcore.ConnectError, httpcore.ConnectTimeout, OSError) as e:
                 last_error = e
         raise last_error  # type: ignore[misc]  — addresses is never empty here
 
 
-async def request_hook(request) -> None:  # noqa: ANN001 — httpx.Request
-    """httpx event hook: shape-check each outgoing request's URL.
+class CheckedTargetTransport(httpx.AsyncHTTPTransport):
+    """An httpx transport whose sockets are opened against checked addresses.
 
-    The hook runs for every request httpx makes, redirects included, so a hop
-    that lands on a scheme the worker doesn't speak is reported with the field
-    name rather than as a protocol error from a library the caller never
-    called. Where the request actually connects is settled by
-    :class:`CheckedTargetTransport`.
+    httpx builds its connection pool itself and takes no network backend, so
+    the pool's backend is swapped after construction. The pool creates
+    connections lazily and hands each one whichever backend it holds at that
+    moment, so this covers every connection the transport opens — including the
+    ones opened for redirects.
+
+    ``_pool._network_backend`` is not public API. A guard test asserts both
+    names still exist and that the backend's ``connect_tcp`` still has the
+    signature this subclass overrides, so an httpx or httpcore upgrade that
+    moves them fails in CI rather than quietly connecting unchecked.
     """
-    require_http_url(str(request.url), field="file_url")
+
+    def __init__(self, *, field: str = "file_url", **kwargs: Any) -> None:
+        super().__init__(**kwargs)
+        self._pool._network_backend = CheckedAddressBackend(field)
+
+
+async def request_hook(request) -> None:  # noqa: ANN001 — httpx.Request
+    """httpx event hook: check each outgoing request's target.
+
+    Runs for every request httpx makes, redirects included, and is what reports
+    an unacceptable hop against the field name the caller wrote — rather than
+    letting it surface as a connection error from a library they never called.
+    A hop that reuses a pooled connection opens no socket, so this is also the
+    check that sees such a hop at all.
+
+    The lookup here and the one in :class:`CheckedAddressBackend` are separate,
+    which costs a second resolution per new connection. That buys the division
+    of labour: this one produces the caller-facing message, and the backend's
+    guarantees what the socket connects to.
+    """
+    await asyncio.to_thread(check_target, str(request.url), field="file_url")
