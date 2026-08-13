@@ -113,6 +113,31 @@ def package_inline(
 # leaked URL stops working before it's interesting.
 S3_PRESIGN_TTL_SECONDS = 3600
 
+# Bounds for the BUCKET_PRESIGN_TTL_SECONDS override. The floor leaves a
+# caller time to actually fetch the object; the ceiling is SigV4's own
+# seven-day maximum, past which providers reject the signature.
+MIN_PRESIGN_TTL_SECONDS = 60
+MAX_PRESIGN_TTL_SECONDS = 604800
+
+
+def presign_ttl_seconds() -> int:
+    """Lifetime to sign output URLs with.
+
+    BUCKET_PRESIGN_TTL_SECONDS overrides the default for callers who fetch
+    promptly and would rather the URL not outlive that, or who need a longer
+    window for a slow downstream job. Out-of-range and unparseable values
+    clamp rather than fail: a bad value here would otherwise turn every
+    successful parse into a failed job.
+    """
+    raw = os.environ.get("BUCKET_PRESIGN_TTL_SECONDS", "").strip()
+    if not raw:
+        return S3_PRESIGN_TTL_SECONDS
+    try:
+        ttl = int(raw)
+    except ValueError:
+        return S3_PRESIGN_TTL_SECONDS
+    return max(MIN_PRESIGN_TTL_SECONDS, min(MAX_PRESIGN_TTL_SECONDS, ttl))
+
 
 def package_s3(output_dir: Path, basename: str, archive_format: str = "tar.gz") -> dict[str, Any]:
     """Upload the output archive to an S3-compatible bucket and return a
@@ -177,14 +202,15 @@ def package_s3(output_dir: Path, basename: str, archive_format: str = "tar.gz") 
         Body=archive_bytes,
         ContentType=content_type,
     )
+    ttl = presign_ttl_seconds()
     url = client.generate_presigned_url(
         "get_object",
         Params={"Bucket": bucket, "Key": key},
-        ExpiresIn=S3_PRESIGN_TTL_SECONDS,
+        ExpiresIn=ttl,
     )
     return {
         "tarball_url": url,
-        "tarball_url_expires_in": S3_PRESIGN_TTL_SECONDS,
+        "tarball_url_expires_in": ttl,
         "bucket_key": key,
         "bucket_bytes": len(archive_bytes),
     }

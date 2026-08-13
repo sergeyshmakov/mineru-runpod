@@ -436,6 +436,11 @@ async def handler(job: dict) -> dict:
             # Probe mode bypasses schema validation: a probe has no file source
             # and the operator may want to send arbitrary debug flags through.
             if raw_input.get("probe") is True:
+                if not _debug.probe_enabled():
+                    raise ValueError(
+                        "probe is disabled on this endpoint "
+                        "(MINERU_DISABLE_PROBE)"
+                    )
                 return await _handle_probe(started, gpu_info, phase_ms)
 
             cleaned = _schema.validate_input(raw_input)

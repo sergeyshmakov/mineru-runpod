@@ -14,6 +14,20 @@ from pathlib import Path
 from typing import Any
 
 
+def probe_enabled() -> bool:
+    """Whether this worker answers ``probe: true`` jobs.
+
+    On by default — the probe payload is how the troubleshooting guide has
+    callers diagnose a model-cache problem without shelling into a worker.
+    Operators running an endpoint whose callers have no business seeing its
+    disk layout set MINERU_DISABLE_PROBE=1 and get the normal error envelope
+    instead.
+    """
+    return os.environ.get("MINERU_DISABLE_PROBE", "").strip().lower() not in (
+        "1", "true", "yes", "on",
+    )
+
+
 def collect_gpu_info() -> dict[str, Any]:
     """Best-effort GPU inventory for the response's `debug` block.
 

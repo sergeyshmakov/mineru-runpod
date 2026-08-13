@@ -340,6 +340,20 @@ def test_validate_input_rejects_effort_on_non_hybrid_backend():
 # probe mode — bypasses MinerU and dumps filesystem layout.
 # -----------------------------------------------------------------------------
 
+def test_handler_probe_mode_can_be_turned_off(monkeypatch):
+    monkeypatch.setenv("MINERU_DISABLE_PROBE", "1")
+    result = asyncio.run(handler.handler({"input": {"probe": True}}))
+    assert result["ok"] is False
+    assert "probe is disabled" in result["error"]
+    assert "probe" not in result
+
+
+def test_handler_probe_mode_enabled_by_default(monkeypatch):
+    monkeypatch.delenv("MINERU_DISABLE_PROBE", raising=False)
+    result = asyncio.run(handler.handler({"input": {"probe": True}}))
+    assert result["ok"] is True
+
+
 def test_handler_probe_mode_returns_filesystem_dump():
     result = asyncio.run(handler.handler({"input": {"probe": True}}))
     assert result["ok"] is True
@@ -432,6 +446,27 @@ def test_package_s3_complains_about_each_missing_env_var(tmp_path, monkeypatch):
     assert "BUCKET_NAME" in msg
     assert "BUCKET_ACCESS_KEY_ID" in msg
     assert "BUCKET_SECRET_ACCESS_KEY" in msg
+
+
+@pytest.mark.parametrize(
+    ("env_value", "expected"),
+    [
+        (None, 3600),        # unset → the default hour
+        ("", 3600),          # blank → the default hour
+        ("900", 900),
+        ("30", 60),          # below the floor → clamped up
+        ("999999999", 604800),  # above the signing maximum → clamped down
+        ("soon", 3600),      # unparseable → the default, not a failed job
+    ],
+)
+def test_presign_ttl_resolution(monkeypatch, env_value, expected):
+    from worker import package as worker_package
+
+    if env_value is None:
+        monkeypatch.delenv("BUCKET_PRESIGN_TTL_SECONDS", raising=False)
+    else:
+        monkeypatch.setenv("BUCKET_PRESIGN_TTL_SECONDS", env_value)
+    assert worker_package.presign_ttl_seconds() == expected
 
 
 def test_build_tarball_bytes_roundtrip(tmp_path):
