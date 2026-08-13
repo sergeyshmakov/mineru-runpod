@@ -158,11 +158,13 @@ async def resolve_input_bytes(job_input: dict) -> tuple[bytes, str]:
 
     if file_url := job_input.get("file_url"):
         max_bytes = MAX_URL_FILE_MB * 1024 * 1024
-        # worker.net.request_hook runs per outgoing request — the caller's URL
-        # and every redirect httpx follows on its own — so the target check
-        # applies uniformly across the chain.
+        # The transport resolves each request's host and connects to that
+        # answer, so the address that was checked is the address reached; the
+        # event hook shape-checks each URL first. Both run per request, which
+        # includes every redirect httpx follows on its own.
         async with httpx.AsyncClient(
             timeout=URL_FETCH_TIMEOUT_SECONDS,
+            transport=_net.CheckedTargetTransport(field="file_url"),
             event_hooks={"request": [_net.request_hook]},
         ) as client:
             async with client.stream("GET", file_url, follow_redirects=True) as resp:

@@ -236,10 +236,23 @@ def test_resolve_input_bytes_rejects_a_non_http_url():
         _resolve({"file_url": "file:///etc/hosts"})
 
 
+def _patch_socket_layer(monkeypatch, respond):
+    """Answer requests below CheckedTargetTransport, so its own resolve-and-pin
+    logic still runs. Replacing the transport itself would skip the code under
+    test."""
+    import httpx
+
+    monkeypatch.setattr(
+        httpx.AsyncHTTPTransport,
+        "handle_async_request",
+        lambda self, request: respond(request),
+    )
+
+
 def test_url_check_follows_the_same_chain_the_client_does(monkeypatch):
-    """The check is an httpx event hook so it applies to each request the client
-    makes, including the ones it generates while following redirects — the first
-    hop passing says nothing about where the chain ends up."""
+    """Each request the client makes is checked and connected the same way,
+    including the ones it generates while following redirects — the first hop
+    passing says nothing about where the chain ends up."""
     import httpx
 
     monkeypatch.delenv("MINERU_ALLOW_LOCAL_FETCH", raising=False)
@@ -250,25 +263,133 @@ def test_url_check_follows_the_same_chain_the_client_does(monkeypatch):
 
     handled: list[str] = []
 
-    def respond(request: httpx.Request) -> httpx.Response:
-        handled.append(str(request.url))
-        if request.url.host == "cdn.example.com":
+    async def respond(request):
+        # The transport rewrote the URL host to the checked address, so the
+        # caller's host is read back off the Host header.
+        handled.append(request.headers["host"])
+        if request.headers["host"].startswith("cdn."):
             return httpx.Response(
                 302, headers={"location": "http://second.example/r.pdf"}
             )
         return httpx.Response(200, content=b"%PDF-1.4 second hop")
 
-    transport = httpx.MockTransport(respond)
-    real_client = httpx.AsyncClient
-
-    def with_mock_transport(*args, **kwargs):
-        kwargs["transport"] = transport
-        return real_client(*args, **kwargs)
-
-    monkeypatch.setattr(worker_io.httpx, "AsyncClient", with_mock_transport)
+    _patch_socket_layer(monkeypatch, respond)
 
     with pytest.raises(ValueError, match="publicly routable"):
         _resolve({"file_url": "https://cdn.example.com/r.pdf"})
 
-    # First hop was fetched; the redirect target never reached the transport.
-    assert handled == ["https://cdn.example.com/r.pdf"]
+    # First hop was fetched; the redirect target never opened a connection.
+    assert handled == ["cdn.example.com"]
+
+
+def test_connection_goes_to_the_address_that_was_checked(monkeypatch):
+    """The address the check approved is the address the request reaches.
+
+    A name is only as stable as the answer behind it: if the connection
+    resolved the host again on its own, it could land somewhere the check never
+    saw. Here the resolver hands back one address and the request must arrive
+    at that one, with the caller's host preserved for virtual hosting and for
+    the TLS handshake.
+    """
+    import httpx
+
+    monkeypatch.delenv("MINERU_ALLOW_LOCAL_FETCH", raising=False)
+    _stub_resolver(monkeypatch, {"files.example.com": ["93.184.216.34"]})
+
+    seen = {}
+
+    async def respond(request):
+        seen["connected_host"] = request.url.host
+        seen["host_header"] = request.headers["host"]
+        seen["sni"] = request.extensions.get("sni_hostname")
+        return httpx.Response(200, content=b"%PDF-1.4 pinned")
+
+    _patch_socket_layer(monkeypatch, respond)
+
+    raw, _ = _resolve({"file_url": "https://files.example.com/a.pdf"})
+    assert raw == b"%PDF-1.4 pinned"
+    assert seen["connected_host"] == "93.184.216.34"
+    assert seen["host_header"] == "files.example.com"
+    assert seen["sni"] == "files.example.com"
+
+
+def test_all_checked_addresses_are_tried_before_giving_up(monkeypatch):
+    """A host with several records expects a client to work down the list.
+
+    Pinning to the first answer alone would strand a dual-stack name whose
+    first record this worker cannot reach — the common case being an AAAA
+    record on a container with no IPv6 route.
+    """
+    import httpx
+
+    monkeypatch.delenv("MINERU_ALLOW_LOCAL_FETCH", raising=False)
+    _stub_resolver(monkeypatch, {
+        "dual.example.com": ["2606:2800:220:1:248:1893:25c8:1946", "93.184.216.34"],
+    })
+
+    attempts = []
+
+    async def respond(request):
+        # httpx stores an IPv6 host unbracketed, so ":" is what identifies it.
+        attempts.append(request.url.host)
+        if ":" in request.url.host:
+            raise httpx.ConnectError("no route to host")
+        return httpx.Response(200, content=b"%PDF-1.4 second address")
+
+    _patch_socket_layer(monkeypatch, respond)
+
+    raw, _ = _resolve({"file_url": "https://dual.example.com/a.pdf"})
+    assert raw == b"%PDF-1.4 second address"
+    assert attempts == ["2606:2800:220:1:248:1893:25c8:1946", "93.184.216.34"]
+
+
+def test_a_connect_failure_on_every_address_surfaces(monkeypatch):
+    import httpx
+
+    monkeypatch.delenv("MINERU_ALLOW_LOCAL_FETCH", raising=False)
+    _stub_resolver(monkeypatch, {"down.example.com": ["93.184.216.34", "93.184.216.35"]})
+
+    async def respond(request):
+        raise httpx.ConnectError("no route to host")
+
+    _patch_socket_layer(monkeypatch, respond)
+
+    with pytest.raises(httpx.ConnectError):
+        _resolve({"file_url": "https://down.example.com/a.pdf"})
+
+
+def test_checked_address_is_used_even_if_the_name_answers_differently_later(
+    monkeypatch,
+):
+    """A host whose answer changes between lookups cannot move the connection.
+
+    The resolver below returns a routable address the first time it is asked
+    and a private one afterwards. Whichever lookup the check used, the request
+    must arrive at an address the check accepted.
+    """
+    import httpx
+
+    monkeypatch.delenv("MINERU_ALLOW_LOCAL_FETCH", raising=False)
+    answers = ["93.184.216.34", "127.0.0.1", "127.0.0.1"]
+    calls = {"n": 0}
+
+    def fake_getaddrinfo(host, port, *args, **kwargs):
+        addr = answers[min(calls["n"], len(answers) - 1)]
+        calls["n"] += 1
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (addr, port or 80))]
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+
+    reached = []
+
+    async def respond(request):
+        reached.append(request.url.host)
+        return httpx.Response(200, content=b"%PDF-1.4 ok")
+
+    _patch_socket_layer(monkeypatch, respond)
+
+    raw, _ = _resolve({"file_url": "https://shifting.example/a.pdf"})
+    assert raw == b"%PDF-1.4 ok"
+    assert reached == ["93.184.216.34"], (
+        f"connected to {reached!r} — must be the address the check accepted"
+    )
