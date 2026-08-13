@@ -156,7 +156,7 @@ def test_check_target_accepts_a_routable_host(monkeypatch):
     "addr",
     [
         "127.0.0.1",
-        "169.254.169.254",
+        "169.254.1.5",
         "10.0.0.5",
         "192.168.1.10",
         "172.16.4.4",
@@ -194,11 +194,49 @@ def test_check_target_reports_resolution_failure(monkeypatch):
 
 def test_resolve_input_bytes_checks_the_url_before_connecting(monkeypatch):
     monkeypatch.delenv("MINERU_ALLOW_LOCAL_FETCH", raising=False)
-    _stub_resolver(monkeypatch, {"metadata.example": ["169.254.169.254"]})
+    _stub_resolver(monkeypatch, {"docs.internal": ["10.0.0.7"]})
     with pytest.raises(ValueError, match="publicly routable"):
-        _resolve({"file_url": "http://metadata.example/latest/meta-data/"})
+        _resolve({"file_url": "http://docs.internal/report.pdf"})
 
 
 def test_resolve_input_bytes_rejects_a_non_http_url():
     with pytest.raises(ValueError, match="must be an http"):
         _resolve({"file_url": "file:///etc/hosts"})
+
+
+def test_url_check_follows_the_same_chain_the_client_does(monkeypatch):
+    """The check is an httpx event hook so it applies to each request the client
+    makes, including the ones it generates while following redirects — the first
+    hop passing says nothing about where the chain ends up."""
+    import httpx
+
+    monkeypatch.delenv("MINERU_ALLOW_LOCAL_FETCH", raising=False)
+    _stub_resolver(monkeypatch, {
+        "cdn.example.com": ["93.184.216.34"],
+        "second.example": ["10.0.0.7"],
+    })
+
+    handled: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        handled.append(str(request.url))
+        if request.url.host == "cdn.example.com":
+            return httpx.Response(
+                302, headers={"location": "http://second.example/r.pdf"}
+            )
+        return httpx.Response(200, content=b"%PDF-1.4 second hop")
+
+    transport = httpx.MockTransport(respond)
+    real_client = httpx.AsyncClient
+
+    def with_mock_transport(*args, **kwargs):
+        kwargs["transport"] = transport
+        return real_client(*args, **kwargs)
+
+    monkeypatch.setattr(worker_io.httpx, "AsyncClient", with_mock_transport)
+
+    with pytest.raises(ValueError, match="publicly routable"):
+        _resolve({"file_url": "https://cdn.example.com/r.pdf"})
+
+    # First hop was fetched; the redirect target never reached the transport.
+    assert handled == ["https://cdn.example.com/r.pdf"]
