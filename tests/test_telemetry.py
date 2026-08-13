@@ -483,6 +483,41 @@ def test_record_exception_sets_span_status_error(monkeypatch):
         assert sp.status.status_code == StatusCode.ERROR
 
 
+def test_record_exception_adds_the_semantic_convention_event(monkeypatch):
+    from worker import telemetry
+
+    _enable(monkeypatch)
+    with telemetry.span("test.failing.op") as sp:
+        try:
+            raise ValueError("simulated")
+        except ValueError as exc:
+            telemetry.record_exception(exc)
+        events = {e.name: e for e in sp.events}
+        assert "exception" in events
+        attrs = events["exception"].attributes
+        assert attrs["exception.type"] == "ValueError"
+        assert attrs["exception.message"] == "simulated"
+        assert "ValueError: simulated" in attrs["exception.stacktrace"]
+
+
+def test_record_exception_exports_compacted_text(monkeypatch):
+    from worker import telemetry
+
+    _enable(monkeypatch)
+    with telemetry.span("test.failing.op") as sp:
+        try:
+            raise RuntimeError(
+                "GET https://files.example.com/a.pdf?sig=abcdef failed"
+            )
+        except RuntimeError as exc:
+            telemetry.record_exception(exc)
+        attrs = {e.name: e.attributes for e in sp.events}["exception"]
+        assert "sig=" not in attrs["exception.message"]
+        assert "sig=" not in attrs["exception.stacktrace"]
+        assert "https://files.example.com/a.pdf" in attrs["exception.message"]
+        assert "sig=" not in sp.status.description
+
+
 # -----------------------------------------------------------------------------
 # CRITICAL / FATAL severity mapping
 # -----------------------------------------------------------------------------

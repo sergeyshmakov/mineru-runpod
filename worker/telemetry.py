@@ -455,17 +455,41 @@ def set_span_attrs(**attrs: Any) -> None:
 def record_exception(exc: BaseException) -> None:
     """Attach an exception to the current span AND mark its status ERROR.
 
-    OTel semantic conventions require both: record_exception captures
-    the stack trace as a span event, set_status flips the span's
-    top-level status so trace dashboards filter it as a failure.
+    OTel semantic conventions require both: an ``exception`` span event
+    carrying the type / message / stack trace, and a span status of
+    ERROR so trace dashboards filter it as a failure.
+
+    The event is built here rather than via ``Span.record_exception``
+    so the text goes through :func:`worker.redact.compact` first — the
+    exported record then reads the same as the job response and the
+    stdout log line for the same failure, instead of being a longer
+    variant of it.
     """
     if not _enabled or _trace_api is None:
         return
     try:
+        import traceback  # noqa: PLC0415
+
+        from worker import redact as _redact  # noqa: PLC0415
+
+        message = _redact.compact(str(exc))
+        stack = _redact.compact(
+            "".join(
+                traceback.format_exception(type(exc), exc, exc.__traceback__)
+            ),
+            limit=4000,
+        )
         sp = _trace_api.get_current_span()
-        sp.record_exception(exc)
+        sp.add_event(
+            "exception",
+            {
+                "exception.type": type(exc).__name__,
+                "exception.message": message,
+                "exception.stacktrace": stack,
+            },
+        )
         if _status_cls is not None and _status_code is not None:
-            sp.set_status(_status_cls(_status_code.ERROR, str(exc)))
+            sp.set_status(_status_cls(_status_code.ERROR, message))
     except Exception:  # noqa: BLE001
         pass
 
