@@ -254,9 +254,9 @@ When the handler raises or returns an error, the response sets `ok: false` and i
 | `elapsed_seconds` | float | Time before the error |
 | `mineru_version` | string | Version that was running |
 | `traceback` | string | Last 5 frames of the Python traceback; useful for debugging |
+| `debug` | object | Same shape as the success response — `gpu`, `model_dir`, and whatever `phase_ms` was collected before the failure |
 
 `error` and `traceback` are normalized before they are returned: URLs inside them keep their scheme, host and path but drop credentials, query and fragment, and very long text is truncated. The same text goes to the worker's logs and, when [OpenTelemetry export](/guides/observability/) is configured, to the collector — so one failure reads the same in all three places.
-| `debug` | object | Same shape as the success response — `gpu`, `model_dir`, and whatever `phase_ms` was collected before the failure |
 
 ## Progress updates (streaming)
 
