@@ -200,6 +200,56 @@ def test_validate_input_http_client_requires_server_url():
         handler._validate_input({"file_b64": "AA==", "backend": "vlm-http-client"})
 
 
+def test_validate_input_rejects_overlong_basename():
+    with pytest.raises(ValueError, match="basename must be at most"):
+        handler._validate_input({"file_b64": "AA==", "basename": "d" * 129})
+
+
+def test_validate_input_accepts_basename_at_the_limit():
+    cleaned = handler._validate_input({"file_b64": "AA==", "basename": "d" * 128})
+    assert cleaned["basename"] == "d" * 128
+
+
+def test_validate_input_backfills_an_empty_basename():
+    cleaned = handler._validate_input({"file_b64": "AA==", "basename": ""})
+    assert cleaned["basename"] == "doc"
+
+
+@pytest.mark.parametrize("lang", ["en", "ch", "east_slavic", "zh-Hans"])
+def test_validate_input_accepts_real_lang_codes(lang):
+    assert handler._validate_input({"file_b64": "AA==", "lang": lang})["lang"] == lang
+
+
+@pytest.mark.parametrize("lang", ["en us", "../en", "e" * 33, "en/ch"])
+def test_validate_input_rejects_malformed_lang(lang):
+    with pytest.raises(ValueError, match="lang must be a short"):
+        handler._validate_input({"file_b64": "AA==", "lang": lang})
+
+
+def test_validate_input_rejects_end_page_before_start_page():
+    with pytest.raises(ValueError, match="end_page must be >= start_page"):
+        handler._validate_input({"file_b64": "AA==", "start_page": 10, "end_page": 4})
+
+
+def test_validate_input_allows_a_single_page_range():
+    cleaned = handler._validate_input(
+        {"file_b64": "AA==", "start_page": 4, "end_page": 4}
+    )
+    assert (cleaned["start_page"], cleaned["end_page"]) == (4, 4)
+
+
+def test_validate_input_keeps_the_open_ended_range():
+    cleaned = handler._validate_input({"file_b64": "AA==", "start_page": 10})
+    assert cleaned["end_page"] == -1
+
+
+def test_resolve_b64_rejects_oversized_encoded_payload():
+    # Rejected on the encoded length, before the decoded copy is allocated.
+    too_big = "A" * (worker_io.MAX_INLINE_B64_CHARS + 1)
+    with pytest.raises(ValueError, match="inline file too large"):
+        asyncio.run(handler._resolve_input_bytes({"file_b64": too_big}))
+
+
 def test_validate_input_rejects_non_http_file_url():
     with pytest.raises(ValueError, match="file_url must be an http"):
         handler._validate_input({"file_url": "file:///etc/hosts"})

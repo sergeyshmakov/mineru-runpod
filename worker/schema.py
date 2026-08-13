@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from runpod.serverless.utils.rp_validator import validate
@@ -30,6 +31,19 @@ VALID_BACKENDS = {
 # meaningful for the hybrid-* backends — rejected on the others in
 # validate_input. `None` means "let MinerU decide" and is not forwarded.
 VALID_EFFORTS = {"medium", "high"}
+
+# `basename` becomes the stem of every artefact MinerU writes and of the
+# archive entries built from them. 128 characters is far above any real
+# document name and keeps the longest generated name (basename +
+# "_content_list_v2.json") inside the 255-byte limit every filesystem the
+# worker might write to shares.
+MAX_BASENAME_LEN = 128
+
+# `lang` is a MinerU script/language code (e.g. "en", "ch", "east_slavic").
+# All of them are short ASCII identifiers, so anything else is a caller
+# mistake worth reporting here rather than passing down for MinerU to
+# rediscover several imports later.
+LANG_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
 
 # Archive container for the archive transports (tarball_b64, s3). The default
 # preserves historical behavior (.tar.gz); "zip" exists for callers that need a
@@ -113,6 +127,20 @@ def validate_input(job_input: dict) -> dict:
     basename = cleaned.get("basename") or "doc"
     if not basename or not all(c.isalnum() or c in "-_" for c in basename):
         _fail(f"basename must be alphanumeric (with - or _); got {basename!r}")
+    if len(basename) > MAX_BASENAME_LEN:
+        _fail(
+            f"basename must be at most {MAX_BASENAME_LEN} characters; "
+            f"got {len(basename)}"
+        )
+    cleaned["basename"] = basename
+
+    lang = cleaned.get("lang") or "en"
+    if not LANG_PATTERN.match(lang):
+        _fail(
+            f"lang must be a short script/language code (letters, digits, "
+            f"- or _); got {lang!r}"
+        )
+    cleaned["lang"] = lang
 
     # Write `transport` and `backend` back so downstream code can read them
     # with `cleaned[...]` (rather than `.get(...) or default`) regardless of
@@ -156,6 +184,17 @@ def validate_input(job_input: dict) -> dict:
     start_page = cleaned.get("start_page", 0) or 0
     if start_page < 0:
         _fail(f"start_page must be >= 0; got {start_page!r}")
+
+    # end_page is 0-based and inclusive; any negative value is the "to the end
+    # of the document" sentinel (-1 is the documented spelling). A bounded
+    # range that ends before it starts is a caller mistake — MinerU would
+    # return an empty parse and the caller would have nothing to go on.
+    end_page = cleaned.get("end_page")
+    if end_page is not None and end_page >= 0 and end_page < start_page:
+        _fail(
+            f"end_page must be >= start_page when set; "
+            f"got start_page={start_page}, end_page={end_page}"
+        )
 
     # XOR over the three transports. The handler also relies on this — only
     # one of file_url/file_b64/volume_path may be set per job.

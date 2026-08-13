@@ -23,6 +23,12 @@ from worker import net as _net
 # file_url or volume_path.
 MAX_INLINE_FILE_MB = 20
 
+# Same ceiling expressed in encoded characters, so an oversized payload is
+# rejected by measuring the string we were handed instead of after allocating
+# the decoded copy of it. Base64 costs 4 characters per 3 bytes; the 5%
+# headroom absorbs padding and the line breaks some encoders insert.
+MAX_INLINE_B64_CHARS = int((MAX_INLINE_FILE_MB * 1024 * 1024) / 3 * 4 * 1.05)
+
 # Cap on file_url downloads. Larger than MAX_INLINE_FILE_MB because URL
 # fetches aren't constrained by RunPod's gateway, but still bounded so a
 # hostile or misconfigured URL can't OOM the worker.
@@ -180,6 +186,11 @@ async def resolve_input_bytes(job_input: dict) -> tuple[bytes, str]:
                 return bytes(buf), f"url:{file_url}"
 
     if file_b64 := job_input.get("file_b64"):
+        if len(file_b64) > MAX_INLINE_B64_CHARS:
+            raise ValueError(
+                f"inline file too large (encoded length {len(file_b64)} chars); "
+                f"use file_url or volume_path for files > {MAX_INLINE_FILE_MB} MB"
+            )
         raw = base64.b64decode(file_b64)
         if len(raw) > MAX_INLINE_FILE_MB * 1024 * 1024:
             raise ValueError(
