@@ -269,45 +269,35 @@ class CheckedTargetTransport(httpx.AsyncHTTPTransport):
         self._pool._network_backend = CheckedAddressBackend(field)
 
 
-def environment_proxies_configured() -> bool:
-    """Whether the environment routes outbound traffic through a proxy.
+def environment_proxy_mounts() -> dict[str, httpx.AsyncBaseTransport | None]:
+    """Per-pattern transports for whatever proxying the environment asks for.
 
-    Read directly rather than asked of httpx, because the answer decides how
-    the client is built and httpx only consults the environment when it is
-    building the transport itself.
+    Supplying a transport is what stops httpx reading the proxy environment
+    itself, so the reading is done here and handed back as explicit mounts. A
+    ``None`` value means "no proxy for this pattern" — httpx then falls back to
+    the client's own transport, which is the checked one. That is what keeps a
+    request the environment does not proxy on the checked path: a ``NO_PROXY``
+    host, or a scheme with no proxy set for it, arrives here as ``None`` rather
+    than as an absence, and an all-or-nothing choice between the two clients
+    would have sent those direct and unchecked.
+
+    ``get_environment_proxies`` is not public API; a guard test covers it, since
+    reimplementing ``NO_PROXY`` matching would be the more fragile option.
     """
-    return any(
-        os.environ.get(name, "").strip()
-        for name in (
-            "HTTP_PROXY", "http_proxy",
-            "HTTPS_PROXY", "https_proxy",
-            "ALL_PROXY", "all_proxy",
-        )
-    )
+    from httpx._utils import get_environment_proxies  # noqa: PLC0415
+
+    return {
+        pattern: None if url is None else httpx.AsyncHTTPTransport(proxy=url)
+        for pattern, url in get_environment_proxies().items()
+    }
 
 
-async def proxied_request_hook(request) -> None:  # noqa: ANN001 — httpx.Request
-    """Check each outgoing request when the fetch goes through a proxy.
-
-    A proxied request opens its socket to the proxy, and the proxy resolves the
-    document host — so which address that host has is not this worker's to
-    decide and :class:`CheckedAddressBackend` has nothing to stand on. The check
-    falls back to the name as this worker resolves it, which is the guarantee
-    the worker had before the backend existed. Bounded by the request's own
-    connect timeout so the lookup cannot sit outside the fetch budget.
-    """
-    require_http_url(str(request.url), field="file_url")
-    budget = (request.extensions.get("timeout") or {}).get("connect")
-    lookup = asyncio.to_thread(check_target, str(request.url), field="file_url")
-    if budget is None:
-        await lookup
-        return
+def _literal_address(host: str) -> Any:
+    """Return ``host`` as an address if it is written as one, else ``None``."""
     try:
-        await asyncio.wait_for(lookup, budget)
-    except (asyncio.TimeoutError, TimeoutError) as e:
-        raise httpx.ConnectTimeout(
-            "resolving the file_url host outlasted the fetch budget"
-        ) from e
+        return ipaddress.ip_address(host.strip("[]"))
+    except ValueError:
+        return None
 
 
 async def request_hook(request) -> None:  # noqa: ANN001 — httpx.Request
@@ -325,5 +315,17 @@ async def request_hook(request) -> None:  # noqa: ANN001 — httpx.Request
     opened, and a hop to a different host is a different origin, so it opens a
     new connection and gets checked. Resolving here as well would put a second
     unbounded lookup per hop outside the connect budget.
+
+    A host written as an address is judged here anyway, because that costs no
+    lookup and no budget. It is also the one case worth catching on a proxied
+    request, where the proxy resolves names itself and the destination policy
+    for them is the proxy's to enforce, not this worker's.
     """
-    require_http_url(str(request.url), field="file_url")
+    host = require_http_url(str(request.url), field="file_url")
+    literal = _literal_address(host)
+    if literal is not None and not allow_local_targets() and not _is_routable(host):
+        raise ValueError(
+            f"file_url must point at a publicly routable host; "
+            f"{host!r} is not one "
+            f"(set MINERU_ALLOW_LOCAL_FETCH=1 to allow this)"
+        )

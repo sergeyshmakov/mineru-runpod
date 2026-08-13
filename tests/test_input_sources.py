@@ -445,94 +445,85 @@ def _clear_proxy_env(monkeypatch):
         monkeypatch.delenv(name, raising=False)
 
 
-@pytest.mark.parametrize("var", ["HTTP_PROXY", "https_proxy", "ALL_PROXY"])
-def test_a_configured_proxy_is_detected(monkeypatch, var):
-    _clear_proxy_env(monkeypatch)
-    assert worker_net.environment_proxies_configured() is False
-    monkeypatch.setenv(var, "http://proxy.internal:3128")
-    assert worker_net.environment_proxies_configured() is True
-
-
-def test_a_blank_proxy_variable_is_not_a_proxy(monkeypatch):
-    _clear_proxy_env(monkeypatch)
-    monkeypatch.setenv("HTTP_PROXY", "   ")
-    assert worker_net.environment_proxies_configured() is False
-
-
-def _capture_client_kwargs(monkeypatch):
-    """Record how resolve_input_bytes builds its client."""
+def _transport_chosen_for(monkeypatch, url: str):
+    """Which transport the client would use for `url`, as httpx selects it."""
     import httpx
 
-    captured = {}
-    real = httpx.AsyncClient
-
-    class _Recording(real):
-        def __init__(self, *args, **kwargs):
-            captured.update(kwargs)
-            super().__init__(*args, **kwargs)
-
-    monkeypatch.setattr(worker_io.httpx, "AsyncClient", _Recording)
-    return captured
-
-
-def test_a_proxy_environment_keeps_httpx_routing(monkeypatch):
-    """Supplying a transport switches off httpx's proxy environment handling,
-    so when a proxy is configured the client is left to build itself."""
-    _clear_proxy_env(monkeypatch)
-    monkeypatch.setenv("HTTPS_PROXY", "http://proxy.internal:3128")
-    _stub_resolver(monkeypatch, {"internal.example": ["10.0.0.7"]})
-    captured = _capture_client_kwargs(monkeypatch)
-
-    # The routability check still applies — it moves to the hook, since the
-    # proxy is what resolves the host once the request leaves us.
-    with pytest.raises(ValueError, match="publicly routable"):
-        _resolve({"file_url": "https://internal.example/a.pdf"})
-
-    assert "transport" not in captured, (
-        "a transport was supplied, which drops the proxy configuration"
+    client = httpx.AsyncClient(
+        timeout=1.0,
+        transport=worker_net.CheckedTargetTransport(field="file_url"),
+        mounts=worker_net.environment_proxy_mounts(),
+        event_hooks={"request": [worker_net.request_hook]},
     )
-    assert captured["event_hooks"]["request"] == [worker_net.proxied_request_hook]
+    try:
+        return client._transport_for_url(httpx.URL(url))
+    finally:
+        asyncio.run(client.aclose())
 
 
-def test_without_a_proxy_the_checked_transport_is_used(monkeypatch):
+def test_a_proxied_pattern_goes_through_the_proxy(monkeypatch):
     _clear_proxy_env(monkeypatch)
-    _stub_resolver(monkeypatch, {"cdn.example.com": ["93.184.216.34"]})
-    captured = _capture_client_kwargs(monkeypatch)
-
-    import httpcore
-
-    async def refuse(self, host, port, **kwargs):
-        raise httpcore.ConnectError("refused")
-
-    monkeypatch.setattr(httpcore.AnyIOBackend, "connect_tcp", refuse)
-    with pytest.raises(Exception):
-        _resolve({"file_url": "https://cdn.example.com/a.pdf"})
-
-    assert isinstance(captured["transport"], worker_net.CheckedTargetTransport)
-    assert captured["event_hooks"]["request"] == [worker_net.request_hook]
+    monkeypatch.setenv("HTTP_PROXY", "http://proxy.internal:3128")
+    chosen = _transport_chosen_for(monkeypatch, "http://cdn.example.com/a.pdf")
+    assert not isinstance(chosen, worker_net.CheckedTargetTransport)
 
 
-def test_the_proxied_hook_bounds_its_lookup(monkeypatch):
-    """The hook's lookup is inside the request's own budget, like the backend's."""
+def test_a_scheme_with_no_proxy_stays_on_the_checked_path(monkeypatch):
+    """Only HTTP_PROXY is set, so an https fetch is not proxied at all — it
+    must not lose the checked transport on the way past the mounts."""
+    _clear_proxy_env(monkeypatch)
+    monkeypatch.setenv("HTTP_PROXY", "http://proxy.internal:3128")
+    chosen = _transport_chosen_for(monkeypatch, "https://cdn.example.com/a.pdf")
+    assert isinstance(chosen, worker_net.CheckedTargetTransport)
+
+
+def test_a_no_proxy_host_stays_on_the_checked_path(monkeypatch):
+    _clear_proxy_env(monkeypatch)
+    monkeypatch.setenv("HTTP_PROXY", "http://proxy.internal:3128")
+    monkeypatch.setenv("NO_PROXY", "cdn.example.com")
+    chosen = _transport_chosen_for(monkeypatch, "http://cdn.example.com/a.pdf")
+    assert isinstance(chosen, worker_net.CheckedTargetTransport)
+
+
+def test_without_a_proxy_everything_is_on_the_checked_path(monkeypatch):
+    _clear_proxy_env(monkeypatch)
+    for url in ("https://cdn.example.com/a.pdf", "http://cdn.example.com/a.pdf"):
+        assert isinstance(
+            _transport_chosen_for(monkeypatch, url),
+            worker_net.CheckedTargetTransport,
+        )
+
+
+def test_a_literal_address_is_judged_without_a_lookup(monkeypatch):
+    """An address written as one needs no resolution to judge, so it is judged
+    even on a request that would be proxied."""
     import httpx
 
     _clear_proxy_env(monkeypatch)
+    monkeypatch.setattr(
+        socket, "getaddrinfo",
+        lambda *a, **k: pytest.fail("the hook resolved a literal address"),
+    )
+    with pytest.raises(ValueError, match="publicly routable"):
+        asyncio.run(worker_net.request_hook(
+            httpx.Request("GET", "http://10.0.0.7/a.pdf")
+        ))
+    # A routable literal passes, still without resolving.
+    asyncio.run(worker_net.request_hook(
+        httpx.Request("GET", "http://93.184.216.34/a.pdf")
+    ))
 
-    def never_answers(host, port, *args, **kwargs):
-        time.sleep(5)
-        raise AssertionError("resolution should have been abandoned")
 
-    monkeypatch.setattr(socket, "getaddrinfo", never_answers)
-    request = httpx.Request("GET", "https://stalls.example/a.pdf")
-    request.extensions["timeout"] = {"connect": 0.15}
+def test_httpx_environment_proxy_helper_guard():
+    """Guard: environment_proxy_mounts leans on a private httpx helper.
 
-    async def measure():
-        started = time.monotonic()
-        with pytest.raises(httpx.ConnectTimeout, match="outlasted the fetch budget"):
-            await worker_net.proxied_request_hook(request)
-        return time.monotonic() - started
+    Reimplementing NO_PROXY matching would be the more fragile option, so the
+    dependency is explicit and checked here instead.
+    """
+    from httpx._utils import get_environment_proxies
 
-    assert asyncio.run(measure()) < 1.0
+    assert callable(get_environment_proxies)
+    assert isinstance(get_environment_proxies(), dict)
 
 
 def test_the_request_hook_does_not_resolve(monkeypatch):

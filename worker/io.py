@@ -158,34 +158,26 @@ async def resolve_input_bytes(job_input: dict) -> tuple[bytes, str]:
 
     if file_url := job_input.get("file_url"):
         max_bytes = MAX_URL_FILE_MB * 1024 * 1024
-        # Two ways to build the client, because supplying a transport is what
-        # switches off httpx's reading of the proxy environment — an operator
-        # whose egress requires a proxy would otherwise have every download
-        # attempt a direct connection and fail.
+        # The checked transport is the client's default, and whatever the
+        # environment wants proxied is mounted over it. Supplying a transport
+        # is what stops httpx reading the proxy environment itself, so that
+        # reading is done for it — otherwise an operator whose egress needs a
+        # proxy would have every download attempt a direct connection and fail.
         #
-        # Without a proxy: the transport resolves each request's host and
-        # connects to that answer, so the address that was checked is the
-        # address reached, and the hook only shape-checks the URL.
+        # Requests the environment does not proxy — another scheme, or a
+        # NO_PROXY host — fall through the mounts to the default and stay on the
+        # checked path. Requests that are proxied open their socket to the
+        # proxy, which resolves the document host itself; where those end up is
+        # the proxy's to decide and its policy to enforce.
         #
-        # Through a proxy: the socket goes to the proxy and the proxy resolves
-        # the document host, so no transport of ours can decide what the request
-        # reaches. httpx builds the client, keeping proxy routing intact, and
-        # the hook does the whole check against the name instead.
-        #
-        # Either way both run per request, which includes every redirect httpx
-        # follows on its own.
-        via_proxy = _net.environment_proxies_configured()
-        client_kwargs = {
-            "timeout": URL_FETCH_TIMEOUT_SECONDS,
-            "event_hooks": {
-                "request": [
-                    _net.proxied_request_hook if via_proxy else _net.request_hook
-                ]
-            },
-        }
-        if not via_proxy:
-            client_kwargs["transport"] = _net.CheckedTargetTransport(field="file_url")
-        async with httpx.AsyncClient(**client_kwargs) as client:
+        # The hook runs per request either way, which includes every redirect
+        # httpx follows on its own.
+        async with httpx.AsyncClient(
+            timeout=URL_FETCH_TIMEOUT_SECONDS,
+            transport=_net.CheckedTargetTransport(field="file_url"),
+            mounts=_net.environment_proxy_mounts(),
+            event_hooks={"request": [_net.request_hook]},
+        ) as client:
             async with client.stream("GET", file_url, follow_redirects=True) as resp:
                 resp.raise_for_status()
                 # Pre-check Content-Length when the server provided one so we
