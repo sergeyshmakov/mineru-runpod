@@ -20,6 +20,19 @@ updates:
     commit-message:
       prefix: "build"
       include: "scope"
+    ignore:
+      # The changelog preset has to match the writer that
+      # @semantic-release/release-notes-generator bundles. v10 renders through
+      # @conventional-changelog/template and exports `template`, while the
+      # bundled conventional-changelog-writer v8 reads `mainTemplate` — so v10
+      # produces release notes with a heading and nothing under it, and nothing
+      # fails. v9 is the newest that still exports `mainTemplate`; lift this
+      # once release-notes-generator ships a writer that speaks the newer
+      # preset. Verified per major: 8 and 9 render, 10 comes out empty.
+      # @commitlint/config-conventional keeps its own nested v10 and is
+      # unaffected.
+      - dependency-name: "conventional-changelog-conventionalcommits"
+        update-types: ["version-update:semver-major"]
     groups:
       npm-development:
         dependency-type: "development"
