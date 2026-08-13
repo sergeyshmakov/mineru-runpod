@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from worker import redact
 
 
@@ -44,6 +46,11 @@ def test_compact_url_leaves_a_non_url_alone():
     assert redact.compact_url("not a url") == "not a url"
 
 
+def test_compact_url_keeps_a_bracketed_ipv6_host_together():
+    out = redact.compact_url("http://[2001:db8::1]:8000/v1/x?sig=SECRET")
+    assert out == "http://[2001:db8::1]:8000/v1/x"
+
+
 # -----------------------------------------------------------------------------
 # compact
 # -----------------------------------------------------------------------------
@@ -80,6 +87,61 @@ def test_compact_truncates_to_the_limit():
 
 def test_compact_handles_empty_text():
     assert redact.compact("") == ""
+
+
+# A URL's own characters overlap with the punctuation that wraps one in prose,
+# so each of these used to end the match early and leave the rest of the query
+# — the part worth dropping — outside it.
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        (
+            "GET https://h.example/p?a=1,2&sig=DEADBEEF failed",
+            "GET https://h.example/p failed",
+        ),
+        (
+            "for url 'https://b.example/Report%20(final).pdf?sig=SEC'",
+            "for url 'https://b.example/Report%20(final).pdf'",
+        ),
+        (
+            "connect to http://[2001:db8::1]:8000/v1/x?sig=SECRET failed",
+            "connect to http://[2001:db8::1]:8000/v1/x failed",
+        ),
+        (
+            "fetch (https://h.example/p?k=1) failed",
+            "fetch (https://h.example/p) failed",
+        ),
+        (
+            "see https://h.example/a/b.pdf?x=1.",
+            "see https://h.example/a/b.pdf.",
+        ),
+        (
+            "tried [https://h.example/a?k=1] and {https://i.example/b?k=2}",
+            "tried [https://h.example/a] and {https://i.example/b}",
+        ),
+    ],
+)
+def test_compact_reduces_urls_with_adjacent_punctuation(text, expected):
+    assert redact.compact(text) == expected
+
+
+def test_compact_stays_fast_on_a_long_caller_supplied_value():
+    """A rejected field's value is quoted back in the message, and the caller
+    picks its length. Reducing must not scale worse than the text does."""
+    import time
+
+    long_value = "A" * 400_000
+    start = time.perf_counter()
+    out = redact.compact(f"lang must be a short code; got {long_value!r}")
+    elapsed = time.perf_counter() - start
+    assert len(out) < redact.DEFAULT_LIMIT + 60
+    assert elapsed < 0.5, f"compact() took {elapsed:.2f}s on a 400k-char message"
+
+
+def test_compact_reports_the_original_length_when_it_skips_the_tail():
+    out = redact.compact("y" * 100_000, limit=1000)
+    assert out.startswith("y" * 1000)
+    assert "99000 more characters" in out
 
 
 # -----------------------------------------------------------------------------

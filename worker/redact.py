@@ -21,9 +21,24 @@ from __future__ import annotations
 import re
 
 
-# Anything URL-shaped inside a longer message. Stops at whitespace and at the
-# punctuation that usually wraps a URL quoted inside prose or a repr.
-_URL_RE = re.compile(r"""[a-zA-Z][a-zA-Z0-9+.\-]*://[^\s'"<>)\]},]+""")
+# Anything URL-shaped inside a longer message.
+#
+# The scheme is anchored with a lookbehind so a long run of ordinary characters
+# is examined once rather than once per offset — without it, every position in
+# such a run starts a fresh scan to the end of the string, which is quadratic in
+# the message length. Messages quote whatever value the caller sent, so the
+# length is theirs to choose.
+#
+# A URL runs to whitespace or a quote. Characters like `,` `)` `]` are part of a
+# query or a path as often as they are prose punctuation around a URL, so they
+# are consumed here and trimmed off the end afterwards; stopping the match at
+# them instead would leave the rest of a query string — the part worth
+# dropping — sitting outside the match.
+_URL_RE = re.compile(r"""(?<![a-zA-Z0-9+.\-])[a-zA-Z][a-zA-Z0-9+.\-]*://[^\s'"<>]+""")
+
+# Punctuation that ends a sentence or closes a bracket around a URL. Trimmed
+# from the match, reduced-URL emitted, then put back.
+_TRAILING_PUNCT = ".,;:!?)]}"
 
 # Default budget for a single message. Comfortably fits a real exception
 # message and its context while keeping one log line readable.
@@ -41,7 +56,12 @@ def compact_url(url: str) -> str:
     makes two reports of the same failure look different. The path is kept
     (truncated) because that is the part that identifies the document.
     """
-    m = re.match(r"^([a-zA-Z][a-zA-Z0-9+.\-]*)://([^/?#]*)([^?#]*)", url)
+    # The bracketed alternative keeps an IPv6 literal host together — `[^/?#]*`
+    # alone stops at the first `:` group separator inside the brackets and the
+    # match then fails to describe the authority at all.
+    m = re.match(
+        r"^([a-zA-Z][a-zA-Z0-9+.\-]*)://(\[[^\]]*\][^/?#]*|[^/?#]*)([^?#]*)", url
+    )
     if not m:
         return url
     scheme, authority, path = m.group(1), m.group(2), m.group(3)
@@ -51,11 +71,24 @@ def compact_url(url: str) -> str:
     return f"{scheme}://{host}{path}"
 
 
+def _reduce_match(m: "re.Match[str]") -> str:
+    """Reduce one matched URL, handing back any punctuation that followed it."""
+    token = m.group(0)
+    url = token.rstrip(_TRAILING_PUNCT)
+    return compact_url(url) + token[len(url):]
+
+
 def compact(text: str, *, limit: int = DEFAULT_LIMIT) -> str:
     """Return ``text`` with its URLs reduced and its length capped."""
     if not text:
         return text
-    out = _URL_RE.sub(lambda m: compact_url(m.group(0)), text)
-    if len(out) > limit:
-        out = out[:limit] + f"... ({len(out) - limit} more characters)"
+    original_len = len(text)
+    # Only the head can survive the cap, so that is all that gets scanned. An
+    # error message quotes whatever the caller sent — which can be as long as
+    # the request allows — and this runs on the failure path of a live job.
+    over_budget = original_len > limit * 4
+    head = text[: limit * 4] if over_budget else text
+    out = _URL_RE.sub(_reduce_match, head)
+    if over_budget or len(out) > limit:
+        out = out[:limit] + f"... ({original_len - limit} more characters)"
     return out
