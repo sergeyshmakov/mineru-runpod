@@ -55,7 +55,9 @@ MAX_OUTPUT_NAME_BYTES = 255
 # All of them are short ASCII identifiers, so anything else is a caller
 # mistake worth reporting here rather than passing down for MinerU to
 # rediscover several imports later.
-LANG_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,32}$")
+# Matched with fullmatch(), not match(): `$` also matches just before a final
+# newline, so "en\n" would otherwise pass and travel on to MinerU as a code.
+LANG_PATTERN = re.compile(r"[A-Za-z0-9_-]{1,32}")
 
 # Archive container for the archive transports (tarball_b64, s3). The default
 # preserves historical behavior (.tar.gz); "zip" exists for callers that need a
@@ -170,7 +172,7 @@ def validate_input(job_input: dict) -> dict:
     cleaned["basename"] = basename
 
     lang = cleaned.get("lang") or "en"
-    if not LANG_PATTERN.match(lang):
+    if not LANG_PATTERN.fullmatch(lang):
         _fail(
             f"lang must be a short script/language code (letters, digits, "
             f"- or _); got {lang!r}"

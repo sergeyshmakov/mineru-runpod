@@ -245,7 +245,15 @@ def test_validate_input_accepts_real_lang_codes(lang):
     assert handler._validate_input({"file_b64": "AA==", "lang": lang})["lang"] == lang
 
 
-@pytest.mark.parametrize("lang", ["en us", "../en", "e" * 33, "en/ch"])
+@pytest.mark.parametrize(
+    "lang",
+    [
+        "en us", "../en", "e" * 33, "en/ch",
+        # A `$` anchor also matches just before a final newline, so these have
+        # to be rejected by the anchoring rather than by the character class.
+        "en\n", "east_slavic\n", "en\r\n", "en\n\n",
+    ],
+)
 def test_validate_input_rejects_malformed_lang(lang):
     with pytest.raises(ValueError, match="lang must be a short"):
         handler._validate_input({"file_b64": "AA==", "lang": lang})

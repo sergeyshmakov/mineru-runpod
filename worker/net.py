@@ -219,17 +219,23 @@ class CheckedAddressBackend(httpcore.AnyIOBackend):
         # bounds a connect to a name with a single deadline covering every
         # address it tries; this keeps that property.
         last_error: Exception | None = None
-        for addr in addresses:
-            remaining: float | None = None
+        for index, addr in enumerate(addresses):
+            attempt_timeout: float | None = None
             if deadline is not None:
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     break
+                # Share what is left with the answers still to come. An address
+                # that accepts and then says nothing would otherwise spend the
+                # whole budget on itself and strand the reachable ones behind
+                # it — the case this walk exists for. Failing fast returns the
+                # unspent time to the next attempt, and the last gets the lot.
+                attempt_timeout = remaining / (len(addresses) - index)
             try:
                 return await super().connect_tcp(
                     addr,
                     port,
-                    timeout=remaining,
+                    timeout=attempt_timeout,
                     local_address=local_address,
                     socket_options=socket_options,
                 )

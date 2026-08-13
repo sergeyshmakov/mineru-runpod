@@ -506,6 +506,69 @@ def test_the_connect_timeout_is_one_budget_for_the_whole_address_list(monkeypatc
     )
 
 
+def test_a_stalling_address_does_not_strand_the_reachable_ones(monkeypatch):
+    """An address that accepts and then says nothing must not spend the budget.
+
+    Failing fast already fell through to the next answer; burning the whole
+    deadline did not, which stranded exactly the dual-stack case this walk
+    exists for.
+    """
+    import httpcore
+
+    monkeypatch.delenv("MINERU_ALLOW_LOCAL_FETCH", raising=False)
+    _stub_resolver(monkeypatch, {
+        "dual.example": ["93.184.216.34", "93.184.216.35"],
+    })
+    attempts = []
+
+    async def first_stalls(self, host, port, timeout=None, local_address=None,
+                           socket_options=None):
+        attempts.append(host)
+        if host == "93.184.216.34":
+            await asyncio.sleep(timeout)      # silently drops for its whole slice
+            raise httpcore.ConnectTimeout("timed out")
+        return "stream"
+
+    monkeypatch.setattr(httpcore.AnyIOBackend, "connect_tcp", first_stalls)
+
+    backend = worker_net.CheckedAddressBackend("file_url")
+
+    async def measure():
+        started = time.monotonic()
+        stream = await backend.connect_tcp("dual.example", 443, timeout=0.40)
+        return stream, time.monotonic() - started
+
+    stream, elapsed = asyncio.run(measure())
+    assert stream == "stream", "never reached the reachable address"
+    assert attempts == ["93.184.216.34", "93.184.216.35"]
+    assert elapsed < 0.40, f"used {elapsed:.2f}s of a 0.40s budget"
+
+
+def test_the_last_address_may_use_what_is_left(monkeypatch):
+    """Reserving time for later answers must not shortchange the final one."""
+    import httpcore
+
+    monkeypatch.delenv("MINERU_ALLOW_LOCAL_FETCH", raising=False)
+    _stub_resolver(monkeypatch, {"two.example": ["93.184.216.34", "93.184.216.35"]})
+    handed = []
+
+    async def first_fails_fast(self, host, port, timeout=None, local_address=None,
+                               socket_options=None):
+        handed.append(timeout)
+        if host == "93.184.216.34":
+            raise httpcore.ConnectError("connection refused")
+        return "stream"
+
+    monkeypatch.setattr(httpcore.AnyIOBackend, "connect_tcp", first_fails_fast)
+
+    backend = worker_net.CheckedAddressBackend("file_url")
+    assert asyncio.run(backend.connect_tcp("two.example", 443, timeout=1.0)) == "stream"
+    # First got a share; the second, once the first returned unspent time, got
+    # substantially more than that share.
+    assert handed[0] < 0.60
+    assert handed[1] > handed[0]
+
+
 def test_attempts_stop_once_the_budget_is_spent(monkeypatch):
     import httpcore
 
