@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import socket
+import time
 from pathlib import Path
 
 import pytest
@@ -352,6 +353,96 @@ def test_all_checked_addresses_are_tried_before_giving_up(monkeypatch):
     backend = worker_net.CheckedAddressBackend("file_url")
     assert asyncio.run(backend.connect_tcp("dual.example.com", 443)) == "stream"
     assert attempts == ["2606:2800:220:1:248:1893:25c8:1946", "93.184.216.34"]
+
+
+def test_the_connect_timeout_is_one_budget_for_the_whole_address_list(monkeypatch):
+    """Walking the address list must not multiply the caller's timeout.
+
+    The base backend bounds a connect to a name with a single deadline covering
+    every address it tries. Handing the full timeout to each attempt instead
+    would let a name with several records that accept and then say nothing hold
+    the fetch for len(addresses) times as long as promised.
+    """
+    import httpcore
+
+    monkeypatch.delenv("MINERU_ALLOW_LOCAL_FETCH", raising=False)
+    _stub_resolver(monkeypatch, {
+        "many.example": ["93.184.216.34", "93.184.216.35", "93.184.216.36"],
+    })
+
+    handed = []
+
+    async def stall(self, host, port, timeout=None, local_address=None,
+                    socket_options=None):
+        handed.append(timeout)
+        await asyncio.sleep(0.05)
+        raise httpcore.ConnectTimeout("timed out")
+
+    monkeypatch.setattr(httpcore.AnyIOBackend, "connect_tcp", stall)
+
+    backend = worker_net.CheckedAddressBackend("file_url")
+    started = time.monotonic()
+    with pytest.raises(httpcore.ConnectTimeout):
+        asyncio.run(backend.connect_tcp("many.example", 443, timeout=0.12))
+    elapsed = time.monotonic() - started
+
+    assert handed, "no attempt was made"
+    # Each attempt gets what is left, never the original budget again.
+    assert handed[0] <= 0.12
+    assert all(
+        later < earlier for earlier, later in zip(handed, handed[1:])
+    ), f"timeout was not shared across attempts: {handed}"
+    assert elapsed < 0.12 * len(handed), (
+        f"took {elapsed:.3f}s across {len(handed)} attempts on a 0.12s budget"
+    )
+
+
+def test_attempts_stop_once_the_budget_is_spent(monkeypatch):
+    import httpcore
+
+    monkeypatch.delenv("MINERU_ALLOW_LOCAL_FETCH", raising=False)
+    _stub_resolver(monkeypatch, {
+        "many.example": ["93.184.216.34", "93.184.216.35", "93.184.216.36"],
+    })
+
+    attempts = []
+
+    async def stall(self, host, port, timeout=None, local_address=None,
+                    socket_options=None):
+        attempts.append(host)
+        await asyncio.sleep(0.08)
+        raise httpcore.ConnectTimeout("timed out")
+
+    monkeypatch.setattr(httpcore.AnyIOBackend, "connect_tcp", stall)
+
+    backend = worker_net.CheckedAddressBackend("file_url")
+    with pytest.raises(httpcore.ConnectTimeout):
+        asyncio.run(backend.connect_tcp("many.example", 443, timeout=0.10))
+    assert len(attempts) < 3, (
+        f"kept trying after the budget was spent: {attempts}"
+    )
+
+
+def test_no_timeout_means_every_address_is_still_tried(monkeypatch):
+    """timeout=None is unbounded, as it is for the base backend."""
+    import httpcore
+
+    monkeypatch.delenv("MINERU_ALLOW_LOCAL_FETCH", raising=False)
+    _stub_resolver(monkeypatch, {"two.example": ["93.184.216.34", "93.184.216.35"]})
+    handed = []
+
+    async def fail_then_pass(self, host, port, timeout=None, local_address=None,
+                             socket_options=None):
+        handed.append(timeout)
+        if len(handed) == 1:
+            raise httpcore.ConnectError("no route")
+        return "stream"
+
+    monkeypatch.setattr(httpcore.AnyIOBackend, "connect_tcp", fail_then_pass)
+
+    backend = worker_net.CheckedAddressBackend("file_url")
+    assert asyncio.run(backend.connect_tcp("two.example", 443, timeout=None)) == "stream"
+    assert handed == [None, None]
 
 
 def test_a_connect_failure_on_every_address_surfaces(monkeypatch):

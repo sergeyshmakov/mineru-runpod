@@ -59,7 +59,7 @@ The worker accepts PDF, image (PNG/JPEG/GIF/BMP/TIFF/WebP), DOCX, PPTX, and XLSX
 | `table_enable` | bool | `true` | Extract structured HTML tables |
 | `transport` | string | `"tarball_b64"` | How the worker ships output. `"tarball_b64"` (default, base64-encoded .tar.gz inside the entry), `"inline"` (per-format keys inside the entry, filterable via `formats`), or `"s3"` (presigned URL — requires `BUCKET_*` env vars on the endpoint). See [Output modes](/guides/output-modes/). |
 | `formats` | array of string | all four | Subset of `["markdown", "content_list", "middle", "images"]`. Selects which artifacts the inline payload contains. Omit (or pass all four) to get everything. **No-op for `tarball_b64` and `s3`** — those transports always ship a self-contained archive with all four artifacts. Empty list is rejected. |
-| `basename` | string | `"doc"` | Filename stem for output files. Must be alphanumeric with `-` or `_`, at most 128 characters |
+| `basename` | string | `"doc"` | Filename stem for output files. Must be alphanumeric with `-` or `_`, at most 128 characters, and short enough that the longest generated filename stays within 255 **bytes** — non-ASCII characters cost more than one byte each, so a CJK stem is limited to 78 characters |
 | `archive_format` | string | `"tar.gz"` | Archive container for the `tarball_b64` and `s3` transports: `"tar.gz"` (default) or `"zip"`. No-op for `inline`. See [Output modes → archive format](/guides/output-modes/#archive-format-targz-or-zip). |
 | `probe` | bool | `false` | Diagnostic mode. `{"probe": true}` skips parsing and every field above, then returns the worker's filesystem layout plus the running MinerU version instead of a parse result — for checking baked model paths and volume mounts. Set `MINERU_DISABLE_PROBE=1` on the endpoint to turn it off. |
 
@@ -287,7 +287,7 @@ The handler validates input before doing any work:
 
 1. **Field types and bounds** via `runpod.serverless.utils.rp_validator`. Wrong type, missing required field, out-of-range value, or unknown field name raises `ValueError`.
 2. **XOR source rule.** Exactly one of `file_url`, `file_b64`, `volume_path` must be set. Zero or two raises `ValueError`.
-3. **Basename safety.** Every character in `basename` must be alphanumeric, `-`, or `_`, and the whole stem at most 128 characters. Unicode letters and digits are accepted.
+3. **Basename safety.** Every character in `basename` must be alphanumeric, `-`, or `_`, and the whole stem at most 128 characters. Unicode letters and digits are accepted — and because filesystems bound a filename in bytes rather than characters, the stem plus the longest suffix the worker appends (`_content_list_v2.json`) must also stay within 255 bytes. That is 234 characters' worth of headroom for ASCII, but only 78 for three-byte characters such as CJK.
 4. **Inline file size.** The worker rejects decoded `file_b64` data over 20 MB — measured first on the encoded string, then on the decoded bytes. RunPod's whole-request limits are reached earlier because base64 expands the raw file; use the practical thresholds above.
 5. **Format detection.** The first few bytes must match a known signature (PDF / image / OOXML); otherwise `ValueError`.
 6. **`formats` membership.** Each entry must be one of `["markdown", "content_list", "middle", "images"]`; empty list is rejected; duplicates are silently collapsed.

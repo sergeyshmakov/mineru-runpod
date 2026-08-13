@@ -210,6 +210,31 @@ def test_validate_input_accepts_basename_at_the_limit():
     assert cleaned["basename"] == "d" * 128
 
 
+# The charset rule accepts unicode alphanumerics, and a filesystem bounds a name
+# in bytes — so the character limit alone does not keep the generated filenames
+# legal. 78 CJK characters plus the longest suffix is exactly 255 bytes.
+def test_validate_input_accepts_a_multibyte_basename_that_fits():
+    basename = "文" * 78
+    cleaned = handler._validate_input({"file_b64": "AA==", "basename": basename})
+    assert cleaned["basename"] == basename
+    from worker import schema
+
+    assert len(
+        f"{basename}{schema.LONGEST_ARTEFACT_SUFFIX}".encode()
+    ) == schema.MAX_OUTPUT_NAME_BYTES
+
+
+def test_validate_input_rejects_a_multibyte_basename_that_overruns_the_name():
+    with pytest.raises(ValueError, match="too long for the filenames it produces"):
+        handler._validate_input({"file_b64": "AA==", "basename": "文" * 79})
+
+
+def test_validate_input_rejects_the_reported_cjk_basename():
+    # 80 CJK characters pass the 128-character rule and produce 261 bytes.
+    with pytest.raises(ValueError, match="261 bytes"):
+        handler._validate_input({"file_b64": "AA==", "basename": "文" * 80})
+
+
 def test_validate_input_backfills_an_empty_basename():
     cleaned = handler._validate_input({"file_b64": "AA==", "basename": ""})
     assert cleaned["basename"] == "doc"

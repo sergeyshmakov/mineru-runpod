@@ -36,9 +36,20 @@ VALID_EFFORTS = {"medium", "high"}
 # `basename` becomes the stem of every artefact MinerU writes and of the
 # archive entries built from them, so an unbounded one only fails once
 # something tries to create the file. 128 characters is far above any real
-# document name and leaves room for the longest suffix the worker appends
-# ("_content_list_v2.json").
+# document name.
 MAX_BASENAME_LEN = 128
+
+# The longest suffix the worker appends to `basename` when writing an artefact
+# — package_inline reads this one back, so it sets the longest filename a job
+# produces.
+LONGEST_ARTEFACT_SUFFIX = "_content_list_v2.json"
+
+# Filesystems bound a path component in bytes, not characters, and the charset
+# rule above accepts unicode alphanumerics: 80 CJK characters already pass the
+# character limit while producing a name over this once the suffix is added.
+# Checked here so an over-long name is reported against the field rather than
+# surfacing as ENAMETOOLONG partway through writing output.
+MAX_OUTPUT_NAME_BYTES = 255
 
 # `lang` is a MinerU script/language code (e.g. "en", "ch", "east_slavic").
 # All of them are short ASCII identifiers, so anything else is a caller
@@ -147,6 +158,14 @@ def validate_input(job_input: dict) -> dict:
         _fail(
             f"basename must be at most {MAX_BASENAME_LEN} characters; "
             f"got {len(basename)}"
+        )
+    longest_name = len(f"{basename}{LONGEST_ARTEFACT_SUFFIX}".encode())
+    if longest_name > MAX_OUTPUT_NAME_BYTES:
+        _fail(
+            f"basename is too long for the filenames it produces: with "
+            f"{LONGEST_ARTEFACT_SUFFIX!r} appended it is {longest_name} bytes, "
+            f"and the limit is {MAX_OUTPUT_NAME_BYTES}. Note the limit counts "
+            f"bytes, so non-ASCII characters cost more than one each"
         )
     cleaned["basename"] = basename
 

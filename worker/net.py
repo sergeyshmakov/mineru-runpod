@@ -28,6 +28,7 @@ import asyncio
 import ipaddress
 import os
 import socket
+import time
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -173,19 +174,38 @@ class CheckedAddressBackend(httpcore.AnyIOBackend):
         # host whose leading record is unreachable from this worker still gets
         # fetched. Only a failure to open the socket moves on; anything that
         # happens after that belongs to the caller.
+        #
+        # The timeout is one budget for the whole list, not one per address.
+        # Handing the full value to each attempt would multiply it by however
+        # many records a name happens to return, so a name whose addresses all
+        # accept and then say nothing could hold the fetch far past the timeout
+        # the caller was promised. The base backend bounds a connect to a name
+        # with a single deadline covering every address it tries; this keeps
+        # that property.
+        deadline = None if timeout is None else time.monotonic() + timeout
         last_error: Exception | None = None
         for addr in addresses:
+            remaining: float | None = None
+            if deadline is not None:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
             try:
                 return await super().connect_tcp(
                     addr,
                     port,
-                    timeout=timeout,
+                    timeout=remaining,
                     local_address=local_address,
                     socket_options=socket_options,
                 )
             except (httpcore.ConnectError, httpcore.ConnectTimeout, OSError) as e:
                 last_error = e
-        raise last_error  # type: ignore[misc]  — addresses is never empty here
+        if last_error is None:
+            # Only reachable with a budget that was already spent on arrival.
+            raise httpcore.ConnectTimeout(
+                f"no time left to connect to {host!r} within {timeout}s"
+            )
+        raise last_error
 
 
 class CheckedTargetTransport(httpx.AsyncHTTPTransport):
