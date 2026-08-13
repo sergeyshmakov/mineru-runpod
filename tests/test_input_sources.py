@@ -67,9 +67,9 @@ def test_volume_path_with_parent_segments_is_rejected(monkeypatch, tmp_path):
     outside = tmp_path / "elsewhere.pdf"
     outside.write_bytes(b"%PDF-1.4 elsewhere")
     monkeypatch.setenv("MINERU_VOLUME_ROOTS", str(root))
-    sneaky = root / ".." / "elsewhere.pdf"
+    with_parent_segment = root / ".." / "elsewhere.pdf"
     with pytest.raises(ValueError, match="outside the configured input roots"):
-        _resolve({"volume_path": str(sneaky)})
+        _resolve({"volume_path": str(with_parent_segment)})
 
 
 def test_volume_path_symlink_leaving_the_root_is_rejected(monkeypatch, tmp_path):

@@ -7,6 +7,8 @@ The pieces this orchestrates live in the worker/ package:
   worker.package  — tarball / inline / s3 response packaging
   worker.debug    — GPU info, model dir, /runpod-volume probe
   worker.logging  — JSON / text structured logging
+  worker.redact   — one shape for the text a failure reports
+  worker.net      — target checks for the URL job inputs (used by io/schema)
 
 The module surface (``handler.MAX_INLINE_FILE_MB``, ``handler._detect_format``,
 ``handler._validate_input``, ``handler._package_tarball``, etc.) is preserved

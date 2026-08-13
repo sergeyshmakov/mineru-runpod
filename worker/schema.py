@@ -34,10 +34,10 @@ VALID_BACKENDS = {
 VALID_EFFORTS = {"medium", "high"}
 
 # `basename` becomes the stem of every artefact MinerU writes and of the
-# archive entries built from them. 128 characters is far above any real
-# document name and keeps the longest generated name (basename +
-# "_content_list_v2.json") inside the 255-byte limit every filesystem the
-# worker might write to shares.
+# archive entries built from them, so an unbounded one only fails once
+# something tries to create the file. 128 characters is far above any real
+# document name and leaves room for the longest suffix the worker appends
+# ("_content_list_v2.json").
 MAX_BASENAME_LEN = 128
 
 # `lang` is a MinerU script/language code (e.g. "en", "ch", "east_slavic").
