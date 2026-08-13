@@ -20,7 +20,20 @@
 
 ## [1.8.4](https://github.com/sergeyshmakov/mineru-runpod/compare/v1.8.3...v1.8.4) (2026-08-01)
 
+### Bug Fixes
+
+* **worker:** drain in-flight jobs on SIGTERM instead of failing them ([#12](https://github.com/sergeyshmakov/mineru-runpod/issues/12)) ([23d8d02](https://github.com/sergeyshmakov/mineru-runpod/commit/23d8d0218fab36257af9ab2c025ace004376e37e))
+
 ## [1.8.0](https://github.com/sergeyshmakov/mineru-runpod/compare/v1.7.1...v1.8.0) (2026-07-12)
+
+### Features
+
+* **worker:** upgrade MinerU to 3.4 and add effort control ([#10](https://github.com/sergeyshmakov/mineru-runpod/issues/10)) ([af44cc6](https://github.com/sergeyshmakov/mineru-runpod/commit/af44cc6bfc3d05b066a2c1b518fb7f12fdfd5a5c))
+
+### Build / Deps
+
+* **deps-dev:** bump the npm-development group with 4 updates ([#6](https://github.com/sergeyshmakov/mineru-runpod/issues/6)) ([d1b800c](https://github.com/sergeyshmakov/mineru-runpod/commit/d1b800cc80209732e246f08feb67cb9ea3e5cd7a))
+* **deps:** bump the docs-deps group in /docs with 4 updates ([#7](https://github.com/sergeyshmakov/mineru-runpod/issues/7)) ([79b581e](https://github.com/sergeyshmakov/mineru-runpod/commit/79b581e4ac98270e286e703e982dddf3bb9d097f))
 
 ## [1.7.1](https://github.com/sergeyshmakov/mineru-runpod/compare/v1.7.0...v1.7.1) (2026-07-12)
 
