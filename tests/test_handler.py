@@ -45,7 +45,10 @@ def test_resolve_b64_rejects_oversized_payload():
         asyncio.run(handler._resolve_input_bytes({"file_b64": too_big}))
 
 
-def test_resolve_volume_path_reads_file(tmp_path):
+def test_resolve_volume_path_reads_file(tmp_path, monkeypatch):
+    # Point the input roots at the pytest tmp dir: its location differs by
+    # platform, so pinning it here keeps the test deterministic everywhere.
+    monkeypatch.setenv("MINERU_VOLUME_ROOTS", str(tmp_path))
     pdf = tmp_path / "doc.pdf"
     pdf.write_bytes(b"%PDF-1.4 volume")
     raw, src = asyncio.run(handler._resolve_input_bytes({"volume_path": str(pdf)}))
@@ -53,7 +56,8 @@ def test_resolve_volume_path_reads_file(tmp_path):
     assert src.startswith("volume:")
 
 
-def test_resolve_volume_path_missing_file(tmp_path):
+def test_resolve_volume_path_missing_file(tmp_path, monkeypatch):
+    monkeypatch.setenv("MINERU_VOLUME_ROOTS", str(tmp_path))
     missing = tmp_path / "nope.pdf"
     with pytest.raises(ValueError, match="volume_path not found"):
         asyncio.run(handler._resolve_input_bytes({"volume_path": str(missing)}))

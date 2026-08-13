@@ -8,6 +8,7 @@ image → PDF) lives next to MinerU in worker.parse.
 from __future__ import annotations
 
 import base64
+import os
 from pathlib import Path
 
 import httpx
@@ -28,6 +29,21 @@ MAX_URL_FILE_MB = 200
 # httpx timeout for the file_url GET. Long enough for slow CDNs / large
 # files; short enough that a dead URL doesn't pin a worker indefinitely.
 URL_FETCH_TIMEOUT_SECONDS = 120.0
+
+# Directories a `volume_path` input is expected to live under. The defaults
+# cover the places a document can actually come from on a deployed worker:
+# the network-volume mount (`/runpod-volume`, or `/workspace` when the
+# operator mounts it there), files baked into the image (the Hub validator's
+# fixture is at `/worker/test-fixture.pdf`), and the per-job temp tree.
+# Operators who pre-stage a corpus somewhere else — or who want to narrow the
+# worker to one subtree — set MINERU_VOLUME_ROOTS to a comma-separated list of
+# absolute paths, which replaces this list.
+DEFAULT_VOLUME_ROOTS: tuple[str, ...] = (
+    "/runpod-volume",
+    "/workspace",
+    "/worker",
+    "/tmp",
+)
 
 
 # Magic bytes for the input formats MinerU supports.
@@ -62,6 +78,53 @@ def detect_format(file_bytes: bytes) -> str:
     if file_bytes.startswith(_ZIP_MAGIC):
         return "ooxml"
     return "unknown"
+
+
+def volume_roots() -> list[Path]:
+    """Return the directories a `volume_path` may resolve inside.
+
+    MINERU_VOLUME_ROOTS (comma-separated absolute paths) replaces
+    DEFAULT_VOLUME_ROOTS when set; blank entries are ignored so a trailing
+    comma or an accidentally-empty value falls back to the defaults.
+    """
+    raw = os.environ.get("MINERU_VOLUME_ROOTS", "")
+    entries = [e.strip() for e in raw.split(",") if e.strip()]
+    return [Path(e) for e in (entries or DEFAULT_VOLUME_ROOTS)]
+
+
+def resolve_volume_file(volume_path: str) -> Path:
+    """Resolve a `volume_path` input to the file the worker will read.
+
+    Resolving first (rather than reading the string as given) means a path
+    that arrives with `..` segments, a trailing separator, or a symlink in the
+    middle is compared in its canonical form — so the path we check is the
+    path we open, and a mistyped input reports the root it landed outside of
+    instead of quietly reading some unrelated file. Relative paths are
+    rejected: `volume_path` has always been documented as absolute, and
+    resolving one against the worker's cwd would be a coin flip.
+    """
+    p = Path(volume_path)
+    if not p.is_absolute():
+        raise ValueError(f"volume_path must be an absolute path; got {volume_path!r}")
+
+    resolved = p.resolve()
+    roots = volume_roots()
+    for root in roots:
+        try:
+            r = root.resolve()
+        except OSError:
+            continue
+        if resolved == r or r in resolved.parents:
+            break
+    else:
+        raise ValueError(
+            f"volume_path is outside the configured input roots "
+            f"({', '.join(str(r) for r in roots)}): {volume_path}"
+        )
+
+    if not resolved.is_file():
+        raise ValueError(f"volume_path not found inside container: {volume_path}")
+    return resolved
 
 
 def telemetry_source_kind(source_label: str) -> str:
@@ -118,7 +181,7 @@ async def resolve_input_bytes(job_input: dict) -> tuple[bytes, str]:
         return raw, "b64"
 
     volume_path = job_input["volume_path"]
-    p = Path(volume_path)
-    if not p.is_file():
-        raise ValueError(f"volume_path not found inside container: {volume_path}")
-    return p.read_bytes(), f"volume:{volume_path}"
+    resolved = resolve_volume_file(volume_path)
+    # Label keeps the caller's own spelling of the path — it's what they sent
+    # and what they'll match against in their own logs.
+    return resolved.read_bytes(), f"volume:{volume_path}"
