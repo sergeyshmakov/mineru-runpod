@@ -43,7 +43,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: hadolint/hadolint-action@v3.3.0
+      - uses: hadolint/hadolint-action@v3.4.0
         with:
           dockerfile: Dockerfile
           # base image's vllm version is pinned by build arg — hadolint can't
