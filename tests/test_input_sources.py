@@ -237,24 +237,42 @@ def test_resolve_input_bytes_rejects_a_non_http_url():
         _resolve({"file_url": "file:///etc/hosts"})
 
 
-def _patch_socket_layer(monkeypatch, respond):
-    """Answer requests below CheckedTargetTransport, so its own resolve-and-pin
-    logic still runs. Replacing the transport itself would skip the code under
-    test."""
-    import httpx
+class _CannedStream:
+    """A network stream that replays canned response bytes.
 
-    monkeypatch.setattr(
-        httpx.AsyncHTTPTransport,
-        "handle_async_request",
-        lambda self, request: respond(request),
-    )
+    Enough of httpcore's stream surface for it to parse a real response, so a
+    redirect can be driven through the actual client stack — the transport, the
+    connection pool and CheckedAddressBackend — rather than around it.
+    """
+
+    def __init__(self, payload: bytes) -> None:
+        self._data = payload
+
+    async def read(self, max_bytes, timeout=None):
+        chunk, self._data = self._data[:max_bytes], self._data[max_bytes:]
+        return chunk
+
+    async def write(self, buffer, timeout=None):
+        return None
+
+    async def aclose(self):
+        return None
+
+    async def start_tls(self, ssl_context, server_hostname=None, timeout=None):
+        return self
+
+    def get_extra_info(self, info):
+        return None
 
 
-def test_url_check_follows_the_same_chain_the_client_does(monkeypatch):
-    """Each request the client makes is checked and connected the same way,
-    including the ones it generates while following redirects — the first hop
-    passing says nothing about where the chain ends up."""
-    import httpx
+def test_every_hop_is_checked_including_ones_the_client_generates(monkeypatch):
+    """A redirect to another host opens another connection, so it is checked too.
+
+    The first hop passing says nothing about where the chain ends up. Driven
+    through the real pool: only the socket layer underneath is canned, so the
+    backend's own resolve-and-check runs for both hops.
+    """
+    import httpcore
 
     monkeypatch.delenv("MINERU_ALLOW_LOCAL_FETCH", raising=False)
     _stub_resolver(monkeypatch, {
@@ -262,25 +280,25 @@ def test_url_check_follows_the_same_chain_the_client_does(monkeypatch):
         "second.example": ["10.0.0.7"],
     })
 
-    handled: list[str] = []
+    connected = []
 
-    async def respond(request):
-        # The transport rewrote the URL host to the checked address, so the
-        # caller's host is read back off the Host header.
-        handled.append(request.headers["host"])
-        if request.headers["host"].startswith("cdn."):
-            return httpx.Response(
-                302, headers={"location": "http://second.example/r.pdf"}
-            )
-        return httpx.Response(200, content=b"%PDF-1.4 second hop")
+    async def fake_connect(self, host, port, timeout=None, local_address=None,
+                           socket_options=None):
+        connected.append(host)
+        return _CannedStream(
+            b"HTTP/1.1 302 Found\r\n"
+            b"Location: http://second.example/r.pdf\r\n"
+            b"Content-Length: 0\r\n"
+            b"\r\n"
+        )
 
-    _patch_socket_layer(monkeypatch, respond)
+    monkeypatch.setattr(httpcore.AnyIOBackend, "connect_tcp", fake_connect)
 
     with pytest.raises(ValueError, match="publicly routable"):
         _resolve({"file_url": "https://cdn.example.com/r.pdf"})
 
-    # First hop was fetched; the redirect target never opened a connection.
-    assert handled == ["cdn.example.com"]
+    # The first hop connected; the redirect target never got a socket.
+    assert connected == ["93.184.216.34"]
 
 
 # -----------------------------------------------------------------------------
@@ -353,6 +371,97 @@ def test_all_checked_addresses_are_tried_before_giving_up(monkeypatch):
     backend = worker_net.CheckedAddressBackend("file_url")
     assert asyncio.run(backend.connect_tcp("dual.example.com", 443)) == "stream"
     assert attempts == ["2606:2800:220:1:248:1893:25c8:1946", "93.184.216.34"]
+
+
+def test_a_stalled_lookup_is_bounded_by_the_fetch_budget(monkeypatch):
+    """Resolution is inside the budget, not ahead of it.
+
+    A lookup runs before any connection and can block for as long as the
+    platform resolver allows, so leaving it outside would let a name that never
+    answers hold a fetch open past the timeout the caller was given.
+    """
+    import httpcore
+
+    monkeypatch.delenv("MINERU_ALLOW_LOCAL_FETCH", raising=False)
+
+    def never_answers(host, port, *args, **kwargs):
+        time.sleep(5)  # far past the budget below
+        raise AssertionError("resolution should have been abandoned")
+
+    monkeypatch.setattr(socket, "getaddrinfo", never_answers)
+
+    backend = worker_net.CheckedAddressBackend("file_url")
+
+    async def measure():
+        # Timed inside the loop on purpose: the abandoned lookup keeps running
+        # in its thread (getaddrinfo cannot be interrupted), and asyncio.run
+        # joins the executor on the way out. What has to be bounded is the time
+        # the job waits, which is what this measures.
+        started = time.monotonic()
+        with pytest.raises(httpcore.ConnectTimeout, match="outlasted the fetch budget"):
+            await backend.connect_tcp("stalls.example", 443, timeout=0.15)
+        return time.monotonic() - started
+
+    elapsed = asyncio.run(measure())
+    assert elapsed < 1.0, f"job waited {elapsed:.2f}s on a 0.15s budget"
+
+
+def test_the_lookup_shares_the_budget_with_the_connect_attempts(monkeypatch):
+    """What the lookup spends is taken off what the connects get."""
+    import httpcore
+
+    monkeypatch.delenv("MINERU_ALLOW_LOCAL_FETCH", raising=False)
+
+    def slow_resolver(host, port, *args, **kwargs):
+        time.sleep(0.10)
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", port))]
+
+    monkeypatch.setattr(socket, "getaddrinfo", slow_resolver)
+
+    handed = []
+
+    async def record(self, host, port, timeout=None, local_address=None,
+                    socket_options=None):
+        handed.append(timeout)
+        return "stream"
+
+    monkeypatch.setattr(httpcore.AnyIOBackend, "connect_tcp", record)
+
+    backend = worker_net.CheckedAddressBackend("file_url")
+    asyncio.run(backend.connect_tcp("slow.example", 443, timeout=0.50))
+    assert handed and handed[0] < 0.45, (
+        f"connect got {handed[0]!r} of a 0.50s budget after a 0.10s lookup"
+    )
+
+
+def test_the_request_hook_does_not_resolve(monkeypatch):
+    """The hook is shape-only, so a hop costs one lookup rather than two.
+
+    A second lookup here would sit outside the connect budget, which is what
+    put resolution beyond the documented timeout in the first place.
+    """
+    import httpx
+
+    calls = []
+    monkeypatch.setattr(
+        socket, "getaddrinfo",
+        lambda *a, **k: calls.append(a) or [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))
+        ],
+    )
+    asyncio.run(worker_net.request_hook(
+        httpx.Request("GET", "https://cdn.example.com/r.pdf")
+    ))
+    assert calls == [], "the hook resolved the host"
+
+
+def test_the_request_hook_still_rejects_a_bad_scheme():
+    import httpx
+
+    with pytest.raises(ValueError, match="file_url must be an http"):
+        asyncio.run(worker_net.request_hook(
+            httpx.Request("GET", "ftp://cdn.example.com/r.pdf")
+        ))
 
 
 def test_the_connect_timeout_is_one_budget_for_the_whole_address_list(monkeypatch):
