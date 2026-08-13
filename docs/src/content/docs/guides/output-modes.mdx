@@ -174,6 +174,7 @@ Optional:
 |---|---|---|
 | `BUCKET_REGION` | unset | Some providers (AWS) require this; R2 / B2 / MinIO don't |
 | `BUCKET_PREFIX` | `""` | Key prefix inside the bucket (e.g. `parses/2026/`); trailing `/` added if missing |
+| `BUCKET_PRESIGN_TTL_SECONDS` | `3600` | How long a returned URL stays valid — see [Presigned URL lifetime](#presigned-url-lifetime) |
 
 If a caller requests `transport: "s3"` without those env vars set, the worker raises:
 
@@ -191,7 +192,13 @@ Each upload uses key `{BUCKET_PREFIX}{basename}-{uuid}.tar.gz` — the UUID prev
 
 Default is **3600 seconds (1 hour)**. Long enough for any human or service to fetch the tarball but short enough that a leaked URL stops working before it's interesting.
 
-If you need a longer lifetime, fork the worker and change `S3_PRESIGN_TTL_SECONDS` in [`worker/package.py`](https://github.com/sergeyshmakov/mineru-runpod/blob/main/worker/package.py). It is not a per-job setting.
+`BUCKET_PRESIGN_TTL_SECONDS` changes it per endpoint — shorter when callers fetch immediately, longer when a slow downstream job picks results up later:
+
+```text
+BUCKET_PRESIGN_TTL_SECONDS=600
+```
+
+Accepted range is 60 to 604800 seconds (SigV4's own seven-day maximum); values outside it clamp, and an unparseable value falls back to the default rather than failing the job. Whatever is used is reported in the response's `tarball_url_expires_in`, so a caller reading that field stays accurate. It is not a per-job setting.
 
 ### Costs
 

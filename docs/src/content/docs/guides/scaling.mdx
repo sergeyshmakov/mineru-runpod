@@ -65,6 +65,27 @@ request lands on a fresh worker (with a cold-start cost; pair with
 - **Errors and probes**: don't increment either counter. Recycling is
   for memory hygiene, not error recovery.
 
+## Bounding the work per job
+
+The endpoint's execution timeout is the backstop on a single job: a request
+for more pages than the GPU can chew through inside it fails after spending
+those GPU minutes. `MINERU_MAX_PAGES_PER_JOB` turns such a request away
+instead, before any work starts:
+
+```text
+MINERU_MAX_PAGES_PER_JOB=200
+```
+
+A job asking for a larger range is rejected with the requested size and the
+ceiling in the message, so the caller can re-slice. Default `0` — no ceiling.
+
+This applies to **explicit ranges only**. An open-ended request
+(`end_page=-1`, the default) has no page count until MinerU opens the
+document, so set this only where callers send ranges — batching a large PDF
+into slices is the pattern it fits, and the shape
+[`MineruClient`](/getting-started/clients/) callers already use for long
+documents.
+
 ## FlashBoot
 
 Our measurements indicate that FlashBoot restores process state, including
@@ -146,6 +167,7 @@ See [Troubleshooting → reading worker logs](/guides/troubleshooting/#reading-w
 | `MINERU_MAX_CONCURRENCY` | `1` | Bump to `2-3` only on ≥24 GB GPUs |
 | `REFRESH_WORKER_AFTER_JOBS` | `0` (off) | Set to `100`+ if workers slow down over time |
 | `REFRESH_WORKER_AFTER_PAGES` | `0` (off) | Alternative to jobs threshold for mixed workloads |
+| `MINERU_MAX_PAGES_PER_JOB` | `0` (off) | Turn away over-large page ranges before they run |
 | `LOG_FORMAT` | `json` | Switch to `text` for local dev |
 | `MINERU_PROCESSING_WINDOW_SIZE` | MinerU default (`64`) | Lower if OOM on long docs (pipeline backend) |
 | `MINERU_PDF_RENDER_TIMEOUT` | MinerU default (`300` s) | Raise for very complex PDFs |

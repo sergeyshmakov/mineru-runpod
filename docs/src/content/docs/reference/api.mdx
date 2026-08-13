@@ -41,16 +41,16 @@ The worker accepts PDF, image (PNG/JPEG/GIF/BMP/TIFF/WebP), DOCX, PPTX, and XLSX
 
 | Field | Type | Notes |
 |---|---|---|
-| `file_url` | string | Public or presigned HTTP/HTTPS URL the worker can `GET`. Downloaded server-side with a 200 MB cap and a 120 s timeout |
+| `file_url` | string | HTTP/HTTPS URL the worker can `GET`, resolving to a publicly routable host. Downloaded server-side with a 200 MB cap and a 120 s timeout. See [`MINERU_ALLOW_LOCAL_FETCH`](#url-inputs) for serving documents from inside your own network |
 | `file_b64` | string | Base64-encoded file bytes. RunPod caps the whole JSON request at 10 MB on `/run` and 20 MB on `/runsync`. Base64 adds about 33%, so keep raw files below roughly 7.5 MB and 15 MB respectively; for larger inputs use `file_url` or `volume_path`. |
-| `volume_path` | string | Absolute path to a file inside the container. Useful for files mounted via a RunPod network volume or baked into the image |
+| `volume_path` | string | Absolute path to a file inside the container, under one of the worker's [input roots](/guides/network-volumes/#what-volume_path-accepts). Useful for files mounted via a RunPod network volume or baked into the image |
 
 ### Optional
 
 | Field | Type | Default | Notes |
 |---|---|---|---|
 | `start_page` | int | `0` | 0-based, inclusive |
-| `end_page` | int | `-1` | 0-based, inclusive. Any negative value or omission means "to end of document" |
+| `end_page` | int | `-1` | 0-based, inclusive. Any negative value or omission means "to end of document". When set, must be `>= start_page` |
 | `lang` | string | `"en"` | OCR model hint for the **pipeline backend**; VLM backends ignore it. MinerU 3.4's public choices are `ch`, `ch_server`, `korean`, `ta`, `te`, `ka`, `th`, `el`, `arabic`, `east_slavic`, `cyrillic`, and `devanagari`. The default `en` remains a compatibility alias that normalizes to `ch`. See [Input formats](/guides/input-formats/#the-lang-parameter-pipeline-backend-only). |
 | `backend` | string | `"vlm-auto-engine"` | One of `pipeline` \| `vlm-auto-engine` \| `vlm-http-client` \| `hybrid-auto-engine` \| `hybrid-http-client`. The `pipeline` and `hybrid-*` backends use MinerU's PP-OCRv6 OCR models. See [Choosing a GPU → Picking a backend](/guides/choosing-gpu/#picking-a-backend) |
 | `effort` | string | `null` | **Hybrid backends only** (`hybrid-auto-engine` / `hybrid-http-client`). `"medium"` (MinerU's default when omitted) or `"high"`: `"high"` enables image/chart analysis at a speed cost, `"medium"` skips it for throughput. Rejected on non-hybrid backends. |
@@ -59,9 +59,17 @@ The worker accepts PDF, image (PNG/JPEG/GIF/BMP/TIFF/WebP), DOCX, PPTX, and XLSX
 | `table_enable` | bool | `true` | Extract structured HTML tables |
 | `transport` | string | `"tarball_b64"` | How the worker ships output. `"tarball_b64"` (default, base64-encoded .tar.gz inside the entry), `"inline"` (per-format keys inside the entry, filterable via `formats`), or `"s3"` (presigned URL — requires `BUCKET_*` env vars on the endpoint). See [Output modes](/guides/output-modes/). |
 | `formats` | array of string | all four | Subset of `["markdown", "content_list", "middle", "images"]`. Selects which artifacts the inline payload contains. Omit (or pass all four) to get everything. **No-op for `tarball_b64` and `s3`** — those transports always ship a self-contained archive with all four artifacts. Empty list is rejected. |
-| `basename` | string | `"doc"` | Filename stem for output files. Must be alphanumeric with `-` or `_` |
+| `basename` | string | `"doc"` | Filename stem for output files. Must be alphanumeric with `-` or `_`, at most 128 characters |
 | `archive_format` | string | `"tar.gz"` | Archive container for the `tarball_b64` and `s3` transports: `"tar.gz"` (default) or `"zip"`. No-op for `inline`. See [Output modes → archive format](/guides/output-modes/#archive-format-targz-or-zip). |
-| `probe` | bool | `false` | Diagnostic mode. `{"probe": true}` skips parsing and every field above, then returns the worker's filesystem layout plus the running MinerU version instead of a parse result — for checking baked model paths and volume mounts. |
+| `probe` | bool | `false` | Diagnostic mode. `{"probe": true}` skips parsing and every field above, then returns the worker's filesystem layout plus the running MinerU version instead of a parse result — for checking baked model paths and volume mounts. Set `MINERU_DISABLE_PROBE=1` on the endpoint to turn it off. |
+
+### URL inputs
+
+`file_url` and `server_url` are checked before the worker acts on them:
+
+- Both must be `http://` or `https://` with a host. Anything else is rejected with the field name in the message.
+- `file_url` must additionally resolve to a publicly routable address — what a document URL handed to a serverless worker normally is. Set `MINERU_ALLOW_LOCAL_FETCH=1` on the endpoint when you serve documents from a host inside your own network, or when running the handler locally against `http://localhost`.
+- `server_url` gets the shape check only: where you run your own vLLM server is your call, private addresses included.
 
 ## I just want the Markdown — how do I get it?
 
@@ -246,6 +254,8 @@ When the handler raises or returns an error, the response sets `ok: false` and i
 | `elapsed_seconds` | float | Time before the error |
 | `mineru_version` | string | Version that was running |
 | `traceback` | string | Last 5 frames of the Python traceback; useful for debugging |
+
+`error` and `traceback` are normalized before they are returned: URLs inside them keep their scheme, host and path but drop credentials, query and fragment, and very long text is truncated. The same text goes to the worker's logs and, when [OpenTelemetry export](/guides/observability/) is configured, to the collector — so one failure reads the same in all three places.
 | `debug` | object | Same shape as the success response — `gpu`, `model_dir`, and whatever `phase_ms` was collected before the failure |
 
 ## Progress updates (streaming)
@@ -277,10 +287,14 @@ The handler validates input before doing any work:
 
 1. **Field types and bounds** via `runpod.serverless.utils.rp_validator`. Wrong type, missing required field, out-of-range value, or unknown field name raises `ValueError`.
 2. **XOR source rule.** Exactly one of `file_url`, `file_b64`, `volume_path` must be set. Zero or two raises `ValueError`.
-3. **Basename safety.** Every character in `basename` must be alphanumeric, `-`, or `_`. Unicode letters and digits are accepted.
-4. **Inline file size.** The worker rejects decoded `file_b64` data over 20 MB. RunPod's whole-request limits are reached earlier because base64 expands the raw file; use the practical thresholds above.
+3. **Basename safety.** Every character in `basename` must be alphanumeric, `-`, or `_`, and the whole stem at most 128 characters. Unicode letters and digits are accepted.
+4. **Inline file size.** The worker rejects decoded `file_b64` data over 20 MB — measured first on the encoded string, then on the decoded bytes. RunPod's whole-request limits are reached earlier because base64 expands the raw file; use the practical thresholds above.
 5. **Format detection.** The first few bytes must match a known signature (PDF / image / OOXML); otherwise `ValueError`.
 6. **`formats` membership.** Each entry must be one of `["markdown", "content_list", "middle", "images"]`; empty list is rejected; duplicates are silently collapsed.
+7. **URL fields.** `file_url` and `server_url` must be `http(s)` with a host; `file_url` must resolve to a publicly routable address unless `MINERU_ALLOW_LOCAL_FETCH=1`. See [URL inputs](#url-inputs).
+8. **`volume_path` roots.** The path must be absolute and, once resolved, sit under one of the worker's input roots. See [What `volume_path` accepts](/guides/network-volumes/#what-volume_path-accepts).
+9. **`lang` shape.** A short script/language code: letters, digits, `-` or `_`, up to 32 characters.
+10. **Page range.** `start_page` must be `>= 0`; an `end_page` of `0` or more must be `>= start_page`. If the endpoint sets `MINERU_MAX_PAGES_PER_JOB`, an explicit range larger than that is rejected — see [Scaling](/guides/scaling/).
 
 All validation errors produce a failure response with `error: "ValueError: ..."` and the job is marked FAILED.
 

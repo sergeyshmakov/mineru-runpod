@@ -74,13 +74,25 @@ The volume is read-write by default. Every worker in the endpoint sees the same 
 
 ## What `volume_path` accepts
 
-The `volume_path` field of the job input is **just a filesystem path inside the worker container**. It works for:
+The `volume_path` field of the job input is **an absolute filesystem path inside the worker container**, resolved against the worker's input roots. It works for:
 
-- Files on a mounted network volume (`/runpod-volume/<anything>`)
-- Files baked into the Docker image at build time (for example, the fixture used by the Hub validator)
-- Files written by an earlier handler step (advanced — only if you fork the handler)
+- Files on a mounted network volume (`/runpod-volume/<anything>`, or `/workspace/<anything>` if you mount it there)
+- Files baked into the Docker image at build time (for example, the fixture used by the Hub validator, under `/worker`)
+- Files written by an earlier handler step into `/tmp` (advanced — only if you fork the handler)
 
-The worker validates the path is a real file and raises `ValueError: volume_path not found inside container: <path>` if not.
+Those four directories — `/runpod-volume`, `/workspace`, `/worker`, `/tmp` — are the defaults. `MINERU_VOLUME_ROOTS` replaces the list with your own comma-separated absolute paths, either to add somewhere you stage a corpus or to narrow the endpoint to one subtree:
+
+```text
+MINERU_VOLUME_ROOTS=/runpod-volume/inputs
+```
+
+The path is resolved before it's read (parent segments collapsed, symlinks followed), so what gets checked is the file that gets opened. Three errors are possible:
+
+| Error | Meaning |
+|---|---|
+| `volume_path must be an absolute path` | A relative path was sent; there is no meaningful working directory to resolve it against |
+| `volume_path is outside the configured input roots` | The resolved path landed somewhere the endpoint doesn't serve documents from — check for a typo, or add the directory to `MINERU_VOLUME_ROOTS` |
+| `volume_path not found inside container` | The path is inside a root but no file is there — see [Picking a region](#picking-a-region) below, this is the usual symptom of a worker in the wrong region |
 
 ## Picking a region
 

@@ -116,6 +116,56 @@
         }
       },
       {
+        "key": "MINERU_MAX_PAGES_PER_JOB",
+        "input": {
+          "name": "Max pages per job",
+          "type": "string",
+          "description": "Largest page range one job may request. 0 (default) means no ceiling. Applies to explicit ranges only, not full-document parses.",
+          "default": "0",
+          "advanced": true
+        }
+      },
+      {
+        "key": "MINERU_VOLUME_ROOTS",
+        "input": {
+          "name": "Input roots for volume_path",
+          "type": "string",
+          "description": "Comma-separated absolute paths a volume_path input may live under. Empty uses /runpod-volume, /workspace, /worker and /tmp.",
+          "default": "",
+          "advanced": true
+        }
+      },
+      {
+        "key": "MINERU_ALLOW_LOCAL_FETCH",
+        "input": {
+          "name": "Allow non-routable file_url targets",
+          "type": "string",
+          "description": "Set to 1 when file_url points at a host inside your own network. Default requires a publicly routable address.",
+          "default": "",
+          "advanced": true
+        }
+      },
+      {
+        "key": "MINERU_DISABLE_PROBE",
+        "input": {
+          "name": "Disable the probe response",
+          "type": "string",
+          "description": "Set to 1 so probe:true jobs return an error instead of the worker's filesystem and model-cache layout. Enabled by default for troubleshooting.",
+          "default": "",
+          "advanced": true
+        }
+      },
+      {
+        "key": "BUCKET_PRESIGN_TTL_SECONDS",
+        "input": {
+          "name": "Presigned output URL lifetime",
+          "type": "string",
+          "description": "Seconds a transport='s3' output URL stays valid. Default 3600. Clamped to 60-604800; unparseable values fall back to the default.",
+          "default": "3600",
+          "advanced": true
+        }
+      },
+      {
         "key": "LOG_FORMAT",
         "input": {
           "name": "Worker log format",

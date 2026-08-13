@@ -83,7 +83,7 @@ Send `{"input": {...}}` to `/runsync` (or `/run`). The most-used fields:
 
 | Field | Required | Default | Notes |
 |---|---|---|---|
-| `file_url` / `file_b64` / `volume_path` | exactly one | — | Public URL, base64 bytes, or container path. Format auto-detected. |
+| `file_url` / `file_b64` / `volume_path` | exactly one | — | Public URL, base64 bytes, or an absolute container path under the worker's input roots. Format auto-detected. |
 | `end_page` | no | `-1` | 0-based inclusive; `-1` = end of doc |
 | `backend` | no | `"vlm-auto-engine"` | `pipeline` / `vlm-auto-engine` / `hybrid-*` / `*-http-client` |
 | `transport` | no | `"tarball_b64"` | `tarball_b64` / `inline` / `s3` — how output ships back |

@@ -314,6 +314,22 @@ Most common reasons:
 
 **Fix**: verify the bytes. Download from your `file_url` directly with `curl`, run `file` on the result, or check that `base64 -d < input.b64 | xxd | head` shows the right magic bytes.
 
+## Worker rejects an input source it used to accept
+
+**Symptom**: `ok: false` with one of the messages below and no parse attempted. Each names the field and what about it didn't fit.
+
+| Message | Cause | Fix |
+|---|---|---|
+| `volume_path must be an absolute path` | A relative path was sent | Send the full path, e.g. `/runpod-volume/inputs/doc.pdf` |
+| `volume_path is outside the configured input roots` | The resolved path isn't under a directory the endpoint serves documents from. Also fires when `..` segments or a symlink lead out of one | Check for a typo; otherwise add the directory to `MINERU_VOLUME_ROOTS` (see [Network volumes](/guides/network-volumes/#what-volume_path-accepts)) |
+| `file_url must be an http(s) URL` | A scheme the worker doesn't fetch, or a bare hostname with no scheme | Use `http://` or `https://` |
+| `file_url must point at a publicly routable host` | The URL resolves to a loopback, link-local or private address | Host the document somewhere the worker can reach; or set `MINERU_ALLOW_LOCAL_FETCH=1` if it really is inside your own network, or if you're running the handler locally |
+| `server_url must be an http(s) URL` | Same shape check on the `*-http-client` backend field — often a `host:port` with no scheme | Write it out: `http://10.1.2.3:8000/v1` |
+| `lang must be a short script/language code` | A phrase or path where a code belongs | Use one of the codes in [Input formats](/guides/input-formats/#the-lang-parameter-pipeline-backend-only) |
+| `end_page must be >= start_page when set` | An inverted range | Swap them, or drop `end_page` for a full-document parse |
+| `requested page range is N pages; this endpoint allows at most M` | The endpoint sets [`MINERU_MAX_PAGES_PER_JOB`](/guides/scaling/#bounding-the-work-per-job) | Split the document into slices of at most M pages |
+| `probe is disabled on this endpoint` | The endpoint sets `MINERU_DISABLE_PROBE=1` | Read the layout from a worker log line, or unset the variable on an endpoint you own |
+
 ## Job times out before the parse finishes
 
 **Symptom**: `MineruClientError: endpoint transport failed: timeout` after some number of seconds (default 900 s in the client, configurable via `timeout=`).
