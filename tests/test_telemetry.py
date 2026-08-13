@@ -18,6 +18,7 @@ import json
 import os
 from contextlib import redirect_stdout
 
+import httpx
 import pytest
 
 
@@ -498,6 +499,66 @@ def test_record_exception_adds_the_semantic_convention_event(monkeypatch):
         assert attrs["exception.type"] == "ValueError"
         assert attrs["exception.message"] == "simulated"
         assert "ValueError: simulated" in attrs["exception.stacktrace"]
+
+
+def test_exception_leaving_a_span_is_recorded_once_and_compacted(monkeypatch):
+    """A failure passing through a phase span must be described there the same
+    way as everywhere else.
+
+    The SDK records exceptions on a span by default, which would put a second,
+    unreduced copy of the text on every span the failure passes through.
+    """
+    from worker import telemetry
+
+    _enable(monkeypatch)
+    child = None
+    with telemetry.span("test.job") as parent:
+        try:
+            with telemetry.span("test.phase") as sp:
+                child = sp
+                raise RuntimeError("GET https://f.example/a.pdf?sig=SECRETSIG failed")
+        except RuntimeError as exc:
+            telemetry.record_exception(exc)
+
+    from opentelemetry.trace import StatusCode
+
+    for span_under_test in (child, parent):
+        events = [e for e in span_under_test.events if e.name == "exception"]
+        assert len(events) == 1, f"expected one exception event, got {len(events)}"
+        attrs = events[0].attributes
+        assert "sig=" not in attrs["exception.message"]
+        assert "sig=" not in attrs["exception.stacktrace"]
+        assert "https://f.example/a.pdf" in attrs["exception.message"]
+        assert "sig=" not in str(span_under_test.status.description)
+        assert span_under_test.status.status_code == StatusCode.ERROR
+
+
+def test_record_exception_reports_a_qualified_type(monkeypatch):
+    """Third-party exception types keep their module, as the SDK's own
+    recorder emitted — dashboards group on this attribute."""
+    from worker import telemetry
+
+    _enable(monkeypatch)
+    with telemetry.span("test.op") as sp:
+        try:
+            raise httpx.ConnectTimeout("timed out")
+        except httpx.ConnectTimeout as exc:
+            telemetry.record_exception(exc)
+    attrs = {e.name: e.attributes for e in sp.events}["exception"]
+    assert attrs["exception.type"] == "httpx.ConnectTimeout"
+
+
+def test_record_exception_leaves_builtins_unqualified(monkeypatch):
+    from worker import telemetry
+
+    _enable(monkeypatch)
+    with telemetry.span("test.op") as sp:
+        try:
+            raise ValueError("plain")
+        except ValueError as exc:
+            telemetry.record_exception(exc)
+    attrs = {e.name: e.attributes for e in sp.events}["exception"]
+    assert attrs["exception.type"] == "ValueError"
 
 
 def test_record_exception_exports_compacted_text(monkeypatch):
