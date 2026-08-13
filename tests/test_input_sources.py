@@ -412,9 +412,19 @@ def test_httpx_internals_this_transport_depends_on(monkeypatch):
 
     import inspect
 
-    params = list(
-        inspect.signature(httpcore.AnyIOBackend.connect_tcp).parameters
-    )
+    signature = inspect.signature(httpcore.AnyIOBackend.connect_tcp)
+    params = list(signature.parameters)
     assert params == [
         "self", "host", "port", "timeout", "local_address", "socket_options",
     ], f"AnyIOBackend.connect_tcp signature changed: {params}"
+
+    # The override hands `host` a str, which is what socket.getaddrinfo returns
+    # and what this backend takes. Passing bytes instead makes anyio treat them
+    # as a name to resolve, so the connection fails. Pin the parameter type: if
+    # a future version takes bytes, that has to fail here rather than on a
+    # caller's first real fetch.
+    host_annotation = signature.parameters["host"].annotation
+    assert host_annotation in (str, "str"), (
+        f"AnyIOBackend.connect_tcp host parameter is now {host_annotation!r}; "
+        f"CheckedAddressBackend passes a str"
+    )
