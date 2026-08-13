@@ -21,6 +21,31 @@ class MineruClientError(RuntimeError):
     """Raised when the remote handler returns ok=false, or transport fails."""
 
 
+def _within(dest: Path, name: str) -> bool:
+    """Whether archive member ``name`` lands inside ``dest`` once resolved."""
+    target = (dest / name).resolve()
+    return target == dest or dest in target.parents
+
+
+def _safe_output_name(name: str, *, what: str) -> str:
+    """Return ``name`` if it is usable as a single output filename.
+
+    Result dicts name the files this module writes — the entry's ``basename``
+    becomes the markdown/JSON stem, and each key of ``images`` becomes a file
+    under ``images/``. Both are only ever plain filenames coming from a
+    worker, so anything carrying a directory component means the caller is
+    holding a result this module didn't produce, and guessing what they meant
+    is worse than saying so.
+    """
+    if not name or name in (".", ".."):
+        raise MineruClientError(f"refusing {what} {name!r}: not a usable filename")
+    if name != Path(name).name or "/" in name or "\\" in name:
+        raise MineruClientError(
+            f"refusing {what} {name!r}: expected a plain filename"
+        )
+    return name
+
+
 def _safe_tar_extractall(tar, dest: Path) -> None:
     """Extract a tar, rejecting members that escape ``dest`` or aren't regular
     files/dirs — guards against path-traversal / absolute-path / symlink / device
@@ -35,8 +60,7 @@ def _safe_tar_extractall(tar, dest: Path) -> None:
             raise MineruClientError(
                 f"refusing unsafe tar member {member.name!r} (not a regular file or dir)"
             )
-        target = (dest / member.name).resolve()
-        if target != dest and dest not in target.parents:
+        if not _within(dest, member.name):
             raise MineruClientError(
                 f"refusing tar member {member.name!r}: path escapes the destination"
             )
@@ -71,14 +95,24 @@ def _extract_archive_bytes(data: bytes, dest_dir: str | Path) -> Path:
 
     The worker ships either container depending on ``archive_format`` (default
     ``tar.gz``; ``zip`` when requested), under the same ``tarball_b64`` /
-    ``tarball_url`` keys — so callers can't assume the format. Zip members are
-    sanitized by the stdlib; tar members go through ``_safe_tar_extractall``
-    (CVE-2007-4559 guard). Returns the destination dir.
+    ``tarball_url`` keys — so callers can't assume the format. Both containers
+    are checked the same way before anything is written: members must land
+    inside ``dest_dir``. Tar additionally requires regular files/dirs
+    (``_safe_tar_extractall``, CVE-2007-4559 guard); the stdlib zip reader
+    already rewrites out-of-tree names, and the check here reports such an
+    archive instead of silently relocating its contents. Returns the
+    destination dir.
     """
     dest = Path(dest_dir)
     dest.mkdir(parents=True, exist_ok=True)
     if data[:4] == b"PK\x03\x04":  # zip local-file-header magic
         with zipfile.ZipFile(io.BytesIO(data)) as zf:
+            resolved_dest = dest.resolve()
+            for name in zf.namelist():
+                if not _within(resolved_dest, name):
+                    raise MineruClientError(
+                        f"refusing zip member {name!r}: path escapes the destination"
+                    )
             zf.extractall(dest)
     else:
         with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
@@ -341,6 +375,9 @@ class MineruClient:
             )
         if basename is None:
             basename = entry.get("basename") or "doc"
+        # Both the stem and the image keys come from the result dict, and both
+        # become filenames below — check them before opening anything.
+        basename = _safe_output_name(basename, what="basename")
         dest = Path(dest_dir)
         dest.mkdir(parents=True, exist_ok=True)
         (dest / f"{basename}.md").write_text(entry["markdown"], encoding="utf-8")
@@ -358,5 +395,6 @@ class MineruClient:
         if images:
             (dest / "images").mkdir(parents=True, exist_ok=True)
             for name, b64 in images.items():
-                (dest / "images" / name).write_bytes(base64.b64decode(b64))
+                safe_name = _safe_output_name(name, what="image name")
+                (dest / "images" / safe_name).write_bytes(base64.b64decode(b64))
         return dest

@@ -367,6 +367,48 @@ def test_save_s3_tarball_handles_zip(tmp_path, monkeypatch):
     assert (Path(dest) / "doc.md").read_text() == "# zip\n"
 
 
+# -----------------------------------------------------------------------------
+# Output naming — the result dict names the files these helpers write, so both
+# containers and the inline path agree on what counts as a usable name.
+# -----------------------------------------------------------------------------
+
+@pytest.mark.parametrize("name", ["../out.md", "sub/dir.md", "..", ""])
+def test_save_inline_rejects_a_non_filename_basename(tmp_path, name):
+    entry = {"basename": name, "markdown": "# md\n"}
+    with pytest.raises(MineruClientError, match="refusing basename"):
+        MineruClient.save_inline(entry, tmp_path / "out", basename=name)
+
+
+def test_save_inline_rejects_a_non_filename_image_key(tmp_path):
+    entry = {
+        "basename": "x",
+        "markdown": "# md\n",
+        "images": {"../escaped.png": base64.b64encode(b"\x89PNG").decode("ascii")},
+    }
+    with pytest.raises(MineruClientError, match="refusing image name"):
+        MineruClient.save_inline(entry, tmp_path / "out", basename="x")
+    assert not (tmp_path / "escaped.png").exists()
+
+
+def test_save_inline_empty_entry_basename_still_defaults(tmp_path):
+    # An entry that carries no usable basename keeps falling back to "doc".
+    entry = {"basename": "", "markdown": "# md\n"}
+    dest = MineruClient.save_inline(entry, tmp_path / "out")
+    assert (dest / "doc.md").read_text() == "# md\n"
+
+
+def test_save_tarball_rejects_a_zip_member_outside_the_destination(tmp_path):
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, mode="w") as zf:
+        # zipfile writes the name verbatim; the stdlib reader would rewrite it
+        # on extract, and we'd rather the caller hear about it.
+        zf.writestr("../escaped.md", "# nope\n")
+    encoded = base64.b64encode(buf.getvalue()).decode("ascii")
+    with pytest.raises(MineruClientError, match="refusing zip member"):
+        MineruClient.save_tarball({"tarball_b64": encoded}, tmp_path / "out")
+    assert not (tmp_path / "escaped.md").exists()
+
+
 def test_save_s3_tarball_passes_a_timeout(tmp_path, monkeypatch):
     """urlopen must be called with a timeout so a stalled download can't hang forever."""
     captured = {}

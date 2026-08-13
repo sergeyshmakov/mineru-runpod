@@ -492,17 +492,24 @@ def test_download_results_rejects_tar_symlink_member(fake_endpoint, tmp_path, mo
         client.download_results(response, tmp_path / "out")
 
 
-def test_download_results_zip_traversal_is_contained(fake_endpoint, tmp_path, monkeypatch):
-    """A zip member with a traversal name must not land outside dest (stdlib
-    zipfile sanitizes; this locks the guarantee in for the primary .zip path)."""
+def test_download_results_zip_member_outside_dest_is_reported(
+    fake_endpoint, tmp_path, monkeypatch
+):
+    """A zip member naming a path outside dest is reported, not relocated.
+
+    The stdlib reader would rewrite such a name and extract it somewhere else;
+    an archive from a worker never contains one, so the caller hears about it
+    instead of finding files where they didn't ask for them.
+    """
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, mode="w") as zf:
-        zf.writestr("../escape.txt", "pwned\n")
+        zf.writestr("../escape.txt", "unexpected\n")
     _serve(monkeypatch, buf.getvalue())
 
     client = MineruApiClient(endpoint_id="ep-1", api_key="x")
-    response = {"data": {"state": "done", "full_zip_url": "https://bucket.example/evil.zip"}}
-    client.download_results(response, tmp_path / "out")
+    response = {"data": {"state": "done", "full_zip_url": "https://bucket.example/out.zip"}}
+    with pytest.raises(MineruClientError, match="refusing zip member"):
+        client.download_results(response, tmp_path / "out")
     assert not (tmp_path / "escape.txt").exists()
 
 
