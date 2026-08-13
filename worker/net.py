@@ -269,6 +269,47 @@ class CheckedTargetTransport(httpx.AsyncHTTPTransport):
         self._pool._network_backend = CheckedAddressBackend(field)
 
 
+def environment_proxies_configured() -> bool:
+    """Whether the environment routes outbound traffic through a proxy.
+
+    Read directly rather than asked of httpx, because the answer decides how
+    the client is built and httpx only consults the environment when it is
+    building the transport itself.
+    """
+    return any(
+        os.environ.get(name, "").strip()
+        for name in (
+            "HTTP_PROXY", "http_proxy",
+            "HTTPS_PROXY", "https_proxy",
+            "ALL_PROXY", "all_proxy",
+        )
+    )
+
+
+async def proxied_request_hook(request) -> None:  # noqa: ANN001 — httpx.Request
+    """Check each outgoing request when the fetch goes through a proxy.
+
+    A proxied request opens its socket to the proxy, and the proxy resolves the
+    document host — so which address that host has is not this worker's to
+    decide and :class:`CheckedAddressBackend` has nothing to stand on. The check
+    falls back to the name as this worker resolves it, which is the guarantee
+    the worker had before the backend existed. Bounded by the request's own
+    connect timeout so the lookup cannot sit outside the fetch budget.
+    """
+    require_http_url(str(request.url), field="file_url")
+    budget = (request.extensions.get("timeout") or {}).get("connect")
+    lookup = asyncio.to_thread(check_target, str(request.url), field="file_url")
+    if budget is None:
+        await lookup
+        return
+    try:
+        await asyncio.wait_for(lookup, budget)
+    except (asyncio.TimeoutError, TimeoutError) as e:
+        raise httpx.ConnectTimeout(
+            "resolving the file_url host outlasted the fetch budget"
+        ) from e
+
+
 async def request_hook(request) -> None:  # noqa: ANN001 — httpx.Request
     """httpx event hook: shape-check each outgoing request's URL.
 

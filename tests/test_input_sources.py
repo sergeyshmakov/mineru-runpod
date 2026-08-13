@@ -434,6 +434,107 @@ def test_the_lookup_shares_the_budget_with_the_connect_attempts(monkeypatch):
     )
 
 
+_PROXY_VARS = (
+    "HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy",
+    "ALL_PROXY", "all_proxy",
+)
+
+
+def _clear_proxy_env(monkeypatch):
+    for name in _PROXY_VARS:
+        monkeypatch.delenv(name, raising=False)
+
+
+@pytest.mark.parametrize("var", ["HTTP_PROXY", "https_proxy", "ALL_PROXY"])
+def test_a_configured_proxy_is_detected(monkeypatch, var):
+    _clear_proxy_env(monkeypatch)
+    assert worker_net.environment_proxies_configured() is False
+    monkeypatch.setenv(var, "http://proxy.internal:3128")
+    assert worker_net.environment_proxies_configured() is True
+
+
+def test_a_blank_proxy_variable_is_not_a_proxy(monkeypatch):
+    _clear_proxy_env(monkeypatch)
+    monkeypatch.setenv("HTTP_PROXY", "   ")
+    assert worker_net.environment_proxies_configured() is False
+
+
+def _capture_client_kwargs(monkeypatch):
+    """Record how resolve_input_bytes builds its client."""
+    import httpx
+
+    captured = {}
+    real = httpx.AsyncClient
+
+    class _Recording(real):
+        def __init__(self, *args, **kwargs):
+            captured.update(kwargs)
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(worker_io.httpx, "AsyncClient", _Recording)
+    return captured
+
+
+def test_a_proxy_environment_keeps_httpx_routing(monkeypatch):
+    """Supplying a transport switches off httpx's proxy environment handling,
+    so when a proxy is configured the client is left to build itself."""
+    _clear_proxy_env(monkeypatch)
+    monkeypatch.setenv("HTTPS_PROXY", "http://proxy.internal:3128")
+    _stub_resolver(monkeypatch, {"internal.example": ["10.0.0.7"]})
+    captured = _capture_client_kwargs(monkeypatch)
+
+    # The routability check still applies — it moves to the hook, since the
+    # proxy is what resolves the host once the request leaves us.
+    with pytest.raises(ValueError, match="publicly routable"):
+        _resolve({"file_url": "https://internal.example/a.pdf"})
+
+    assert "transport" not in captured, (
+        "a transport was supplied, which drops the proxy configuration"
+    )
+    assert captured["event_hooks"]["request"] == [worker_net.proxied_request_hook]
+
+
+def test_without_a_proxy_the_checked_transport_is_used(monkeypatch):
+    _clear_proxy_env(monkeypatch)
+    _stub_resolver(monkeypatch, {"cdn.example.com": ["93.184.216.34"]})
+    captured = _capture_client_kwargs(monkeypatch)
+
+    import httpcore
+
+    async def refuse(self, host, port, **kwargs):
+        raise httpcore.ConnectError("refused")
+
+    monkeypatch.setattr(httpcore.AnyIOBackend, "connect_tcp", refuse)
+    with pytest.raises(Exception):
+        _resolve({"file_url": "https://cdn.example.com/a.pdf"})
+
+    assert isinstance(captured["transport"], worker_net.CheckedTargetTransport)
+    assert captured["event_hooks"]["request"] == [worker_net.request_hook]
+
+
+def test_the_proxied_hook_bounds_its_lookup(monkeypatch):
+    """The hook's lookup is inside the request's own budget, like the backend's."""
+    import httpx
+
+    _clear_proxy_env(monkeypatch)
+
+    def never_answers(host, port, *args, **kwargs):
+        time.sleep(5)
+        raise AssertionError("resolution should have been abandoned")
+
+    monkeypatch.setattr(socket, "getaddrinfo", never_answers)
+    request = httpx.Request("GET", "https://stalls.example/a.pdf")
+    request.extensions["timeout"] = {"connect": 0.15}
+
+    async def measure():
+        started = time.monotonic()
+        with pytest.raises(httpx.ConnectTimeout, match="outlasted the fetch budget"):
+            await worker_net.proxied_request_hook(request)
+        return time.monotonic() - started
+
+    assert asyncio.run(measure()) < 1.0
+
+
 def test_the_request_hook_does_not_resolve(monkeypatch):
     """The hook is shape-only, so a hop costs one lookup rather than two.
 
