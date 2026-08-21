@@ -17,8 +17,9 @@ from pathlib import Path
 
 import pytest
 
+from runpod_doc_worker.transport import io as worker_io
+
 import handler
-from worker import io as worker_io
 
 
 # -----------------------------------------------------------------------------
@@ -338,7 +339,9 @@ def test_page_ceiling_ignores_a_malformed_value(monkeypatch):
 
 def test_resolve_b64_rejects_oversized_encoded_payload():
     # Rejected on the encoded length, before the decoded copy is allocated.
-    too_big = "A" * (worker_io.MAX_INLINE_B64_CHARS + 1)
+    # Derived from the megabyte ceiling the same way the check is, with a
+    # margin for the base64 headroom it allows.
+    too_big = "A" * int(handler.MAX_INLINE_FILE_MB * 1024 * 1024 / 3 * 4 * 1.1)
     with pytest.raises(ValueError, match="inline file too large"):
         asyncio.run(handler._resolve_input_bytes({"file_b64": too_big}))
 

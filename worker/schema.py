@@ -8,7 +8,7 @@ from typing import Any
 
 from runpod.serverless.utils.rp_validator import validate
 
-from worker import net as _net
+from runpod_doc_worker.transport import net as _net
 
 
 VALID_TRANSPORTS = {"tarball_b64", "inline", "s3"}
