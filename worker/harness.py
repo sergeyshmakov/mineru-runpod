@@ -81,8 +81,14 @@ config.configure(
 # current name first, the older one as a fallback, and the first that matches
 # wins. Its default is a list rather than the {} the kind would derive,
 # because callers index it.
+#
+# markdown is required: it is what a caller asked for, and an empty string in
+# its place is worth less to them than a failed job they can retry. The other
+# three are worth shipping without — a corrupt content_list still leaves a
+# usable document, and one unreadable image should not cost a caller the other
+# forty. Those degrade instead, and say so in the response.
 MANIFEST = (
-    Artifact("markdown", ("{basename}.md",), kind="text"),
+    Artifact("markdown", ("{basename}.md",), kind="text", required=True),
     Artifact(
         "content_list",
         ("{basename}_content_list.json", "{basename}_content_list_v2.json"),

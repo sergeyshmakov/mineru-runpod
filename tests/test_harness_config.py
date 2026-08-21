@@ -9,6 +9,7 @@ log records. These tests watch the declaration, not the mechanics.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -18,6 +19,7 @@ from runpod_doc_worker import config
 from runpod_doc_worker.contract import artifacts
 from runpod_doc_worker.obs import logging as harness_logging
 
+import handler
 from worker import schema
 from worker.harness import MANIFEST
 
@@ -147,14 +149,24 @@ def test_the_current_content_list_name_wins(tmp_path):
     assert out["content_list"] == ["current"]
 
 
-def test_absent_artifacts_keep_their_declared_defaults(tmp_path):
-    """A page that produced no text must come back as an empty value of the
-    right type, not a missing key a caller would KeyError on."""
-    out = artifacts.resolve(MANIFEST, tmp_path, "doc")
-    assert out["markdown"] == ""
+def test_absent_optional_artifacts_keep_their_declared_defaults(tmp_path):
+    """A document with no tables must come back as an empty value of the right
+    type, not a missing key a caller would KeyError on."""
+    out = artifacts.resolve(
+        MANIFEST, tmp_path, "doc", keys=["content_list", "middle", "images"]
+    )
     assert out["content_list"] == []
     assert out["middle"] == {}
     assert out["images"] == {}
+
+
+def test_an_absent_markdown_has_no_default_to_fall_back_on(tmp_path):
+    """Being required is exactly this: there is no value that would stand in
+    for the document's text. worker.parse refuses first — it looks for the .md
+    before packaging is reached — so this is the second of two checks, not the
+    only one."""
+    with pytest.raises(artifacts.ArtifactError, match="markdown"):
+        artifacts.resolve(MANIFEST, tmp_path, "doc", keys=["markdown"])
 
 
 def test_the_longest_artefact_suffix_is_the_longest_one_declared():
@@ -168,3 +180,89 @@ def test_the_longest_artefact_suffix_is_the_longest_one_declared():
         if "*" not in pattern
     ]
     assert schema.LONGEST_ARTEFACT_SUFFIX == max(suffixes, key=len)
+
+
+# -----------------------------------------------------------------------------
+# What this worker will and will not ship a response without
+# -----------------------------------------------------------------------------
+
+def test_markdown_is_the_one_required_artifact():
+    """The document's text is what a caller asked for; an empty string in its
+    place is worth less to them than a failed job they can retry. The other
+    three are worth shipping without, so they degrade and say so."""
+    required = {a.key for a in MANIFEST if a.required}
+    assert required == {"markdown"}
+
+
+def test_an_unreadable_markdown_fails_the_job(monkeypatch, capsys):
+    """End-to-end: the response says ok=false rather than carrying an empty
+    string that reads like a document with no text on it."""
+    async def fake_run(file_bytes, *, basename, work_dir, **kwargs):
+        out = work_dir / "out"
+        out.mkdir()
+        # Written, then unreadable — a disk that filled mid-write, or bytes
+        # that are not the UTF-8 the artifact is declared as.
+        (out / f"{basename}.md").write_bytes(b"\xff\xfe\x00bad")
+        return out
+
+    monkeypatch.setattr("worker.parse.run_mineru", fake_run)
+    result = asyncio.run(handler.handler({
+        "id": "required-markdown",
+        "input": {"file_b64": "JVBERi0xLjQK", "basename": "doc"},
+    }))
+    capsys.readouterr()
+
+    assert result["ok"] is False
+    assert "markdown" in result["error"]
+
+
+def test_an_unreadable_secondary_artifact_still_returns_a_response(monkeypatch, capsys):
+    """A corrupt content_list leaves a usable document, so the job succeeds —
+    and the response says which artifact it lost, so a caller can requeue that
+    document instead of finding out downstream."""
+    async def fake_run(file_bytes, *, basename, work_dir, **kwargs):
+        out = work_dir / "out"
+        out.mkdir()
+        (out / f"{basename}.md").write_text("# real text\n", encoding="utf-8")
+        (out / f"{basename}_content_list.json").write_bytes(b"{truncated")
+        return out
+
+    monkeypatch.setattr("worker.parse.run_mineru", fake_run)
+    result = asyncio.run(handler.handler({
+        "id": "degraded-content-list",
+        "input": {
+            "file_b64": "JVBERi0xLjQK",
+            "basename": "doc",
+            "transport": "inline",
+        },
+    }))
+    capsys.readouterr()
+
+    assert result["ok"] is True
+    entry = result["results"][0]
+    assert entry["markdown"] == "# real text\n"
+    assert entry["content_list"] == []
+    assert entry["degraded"]["count"] == 1
+    (item,) = entry["degraded"]["items"]
+    assert item["artifact"] == "content_list"
+    assert item["reason"] == "unreadable"
+
+
+def test_an_intact_job_carries_no_degraded_key(monkeypatch, capsys):
+    """The field appears only when something was lost, so a caller can treat
+    its presence as the signal."""
+    async def fake_run(file_bytes, *, basename, work_dir, **kwargs):
+        out = work_dir / "out"
+        out.mkdir()
+        (out / f"{basename}.md").write_text("# fine\n", encoding="utf-8")
+        return out
+
+    monkeypatch.setattr("worker.parse.run_mineru", fake_run)
+    result = asyncio.run(handler.handler({
+        "input": {"file_b64": "JVBERi0xLjQK", "basename": "doc",
+                  "transport": "inline", "formats": ["markdown"]},
+    }))
+    capsys.readouterr()
+
+    assert result["ok"] is True
+    assert "degraded" not in result["results"][0]
