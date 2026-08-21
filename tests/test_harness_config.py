@@ -36,7 +36,6 @@ HUB_JSON = Path(__file__).resolve().parents[1] / ".runpod" / "hub.json"
     [
         ("VOLUME_ROOTS", "MINERU_VOLUME_ROOTS"),
         ("ALLOW_LOCAL_FETCH", "MINERU_ALLOW_LOCAL_FETCH"),
-        ("ENABLE_PROBE", "MINERU_ENABLE_PROBE"),
     ],
 )
 def test_env_names_keep_their_documented_spelling(knob, expected):
@@ -55,16 +54,21 @@ def test_every_declared_env_var_is_documented_in_hub_json():
         for entry in json.loads(HUB_JSON.read_text(encoding="utf-8"))["config"]["env"]
     }
     cfg = config.active()
-    for knob in ("VOLUME_ROOTS", "ALLOW_LOCAL_FETCH", "ENABLE_PROBE"):
+    for knob in ("VOLUME_ROOTS", "ALLOW_LOCAL_FETCH"):
         assert cfg.env_name(knob) in documented
 
 
-def test_the_probe_stays_available_unless_an_operator_says_otherwise():
-    """The harness leaves this policy to the worker and defaults it off, so
-    saying nothing would take the probe away from every deployed endpoint at
-    its next rebuild — and a refusal is an ordinary response, not an error
-    anyone would notice."""
-    assert config.active().probe_default is True
+def test_the_probe_knob_is_this_repos_and_is_documented():
+    """The harness reads no probe variable, so this name cannot be moved by a
+    dependency release — which is the whole reason the gate lives here. It has
+    to stay on the deploy form, since it is how an operator turns the probe
+    off."""
+    documented = {
+        entry["key"]
+        for entry in json.loads(HUB_JSON.read_text(encoding="utf-8"))["config"]["env"]
+    }
+    assert "MINERU_DISABLE_PROBE" in documented
+    assert not hasattr(config.active(), "probe_default")
 
 
 def test_logger_name_is_the_one_log_filters_match():

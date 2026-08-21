@@ -401,42 +401,48 @@ def test_validate_input_rejects_effort_on_non_hybrid_backend():
 # -----------------------------------------------------------------------------
 
 def test_handler_probe_mode_can_be_turned_off(monkeypatch):
-    monkeypatch.setenv("MINERU_ENABLE_PROBE", "0")
+    monkeypatch.setenv("MINERU_DISABLE_PROBE", "1")
     result = asyncio.run(handler.handler({"input": {"probe": True}}))
     assert result["ok"] is False
     assert "probe is disabled" in result["error"]
     assert "probe" not in result
 
 
-def test_the_refusal_names_the_knob_that_lifts_it(monkeypatch):
+def test_the_refusal_names_the_knob(monkeypatch):
     """A caller reading this is usually the operator who can act on it."""
-    monkeypatch.setenv("MINERU_ENABLE_PROBE", "0")
-    result = asyncio.run(handler.handler({"input": {"probe": True}}))
-    assert "MINERU_ENABLE_PROBE" in result["error"]
-
-
-def test_the_previous_knob_still_turns_it_off(monkeypatch):
-    """MINERU_DISABLE_PROBE is what deployed endpoints already have set. It is
-    a deprecated spelling upstream, not a dead one, and an operator's stated
-    intent must not stop being honoured because the canonical name changed."""
-    monkeypatch.delenv("MINERU_ENABLE_PROBE", raising=False)
     monkeypatch.setenv("MINERU_DISABLE_PROBE", "1")
     result = asyncio.run(handler.handler({"input": {"probe": True}}))
-    assert result["ok"] is False
-    assert "probe is disabled" in result["error"]
+    assert "MINERU_DISABLE_PROBE" in result["error"]
 
 
-def test_the_canonical_knob_wins_over_the_previous_one(monkeypatch):
-    monkeypatch.setenv("MINERU_DISABLE_PROBE", "1")
-    monkeypatch.setenv("MINERU_ENABLE_PROBE", "1")
-    result = asyncio.run(handler.handler({"input": {"probe": True}}))
-    assert result["ok"] is True
+@pytest.mark.parametrize("value", ["1", "true", "yes", "on", "TRUE", " 1 "])
+def test_every_affirmative_spelling_turns_the_probe_off(monkeypatch, value):
+    monkeypatch.setenv("MINERU_DISABLE_PROBE", value)
+    assert handler._probe_allowed() is False
+
+
+@pytest.mark.parametrize("value", ["0", "false", "no", "off", "OFF"])
+def test_an_explicit_negative_leaves_the_probe_on(monkeypatch, value):
+    monkeypatch.setenv("MINERU_DISABLE_PROBE", value)
+    assert handler._probe_allowed() is True
+
+
+@pytest.mark.parametrize("value", ["maybe", "typo", "disabled", "2"])
+def test_an_unrecognised_value_denies(monkeypatch, value):
+    """An operator who typed something into this variable meant to turn the
+    probe off. A typo must not be what publishes a filesystem dump."""
+    monkeypatch.setenv("MINERU_DISABLE_PROBE", value)
+    assert handler._probe_allowed() is False
+
+
+@pytest.mark.parametrize("value", ["", "   "])
+def test_a_blank_value_is_not_a_setting(monkeypatch, value):
+    monkeypatch.setenv("MINERU_DISABLE_PROBE", value)
+    assert handler._probe_allowed() is True
 
 
 def test_handler_probe_mode_enabled_by_default(monkeypatch):
-    """This worker declares probe_default=True, so an endpoint that sets
-    neither knob keeps the diagnostic it has always had."""
-    monkeypatch.delenv("MINERU_ENABLE_PROBE", raising=False)
+    """Unset means available, which is what this endpoint has always done."""
     monkeypatch.delenv("MINERU_DISABLE_PROBE", raising=False)
     result = asyncio.run(handler.handler({"input": {"probe": True}}))
     assert result["ok"] is True

@@ -329,7 +329,7 @@ Most common reasons:
 | `basename is too long for the filenames it produces` | The stem is within 128 characters but the generated filename exceeds 255 bytes. Filesystems count bytes, so a non-ASCII stem hits this well before 128 characters — a CJK stem is limited to 78 | Shorten `basename`; the message reports the byte count it produced |
 | `end_page must be >= start_page when set` | An inverted range | Swap them, or drop `end_page` for a full-document parse |
 | `requested page range is N pages; this endpoint allows at most M` | The endpoint sets [`MINERU_MAX_PAGES_PER_JOB`](/guides/scaling/#bounding-the-work-per-job) | Split the document into slices of at most M pages |
-| `probe is disabled on this endpoint` | The endpoint sets `MINERU_ENABLE_PROBE=0` (or the older `MINERU_DISABLE_PROBE=1`) | Read the layout from a worker log line, or set `MINERU_ENABLE_PROBE=1` on an endpoint you own |
+| `probe is disabled on this endpoint` | The endpoint sets `MINERU_DISABLE_PROBE` to anything other than `0`/`false`/`no`/`off` | Read the layout from a worker log line, or unset the variable on an endpoint you own |
 
 ## Job times out before the parse finishes
 

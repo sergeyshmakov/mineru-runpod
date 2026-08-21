@@ -183,6 +183,36 @@ def _record_degradation(lost: _degraded.Report) -> None:
 
 
 # -----------------------------------------------------------------------------
+# Probe policy
+# -----------------------------------------------------------------------------
+#
+# Who may ask this endpoint for its filesystem layout is this worker's call.
+# The payload names container paths and the model-source env values, and only a
+# worker knows whether its callers are its own operators. The harness supplies
+# the dump and reads no variable of its own, so this name belongs to this repo
+# and cannot be renamed by a dependency release.
+
+_PROBE_NOT_DISABLED = ("0", "false", "no", "off")
+
+
+def _probe_allowed() -> bool:
+    """Whether `probe: true` is answered on this endpoint.
+
+    On unless MINERU_DISABLE_PROBE says otherwise, which is what this endpoint
+    has always done and what the troubleshooting guide points someone to when
+    a Cached Models setup is not being found.
+
+    An unrecognised value denies rather than allows. An operator who typed
+    something into this variable meant to turn the probe off, and a typo should
+    not be what publishes a filesystem dump.
+    """
+    value = os.environ.get("MINERU_DISABLE_PROBE", "").strip().lower()
+    if not value:
+        return True
+    return value in _PROBE_NOT_DISABLED
+
+
+# -----------------------------------------------------------------------------
 # Concurrency
 # -----------------------------------------------------------------------------
 #
@@ -487,10 +517,10 @@ async def handler(job: dict) -> dict:
             # Probe mode bypasses schema validation: a probe has no file source
             # and the operator may want to send arbitrary debug flags through.
             if raw_input.get("probe") is True:
-                if not _debug.probe_enabled():
+                if not _probe_allowed():
                     raise ValueError(
                         "probe is disabled on this endpoint "
-                        "(set MINERU_ENABLE_PROBE=1 to enable it)"
+                        "(MINERU_DISABLE_PROBE)"
                     )
                 return await _handle_probe(started, gpu_info, phase_ms)
 
