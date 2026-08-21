@@ -520,7 +520,7 @@ def test_package_s3_complains_about_each_missing_env_var(tmp_path, monkeypatch):
     ],
 )
 def test_presign_ttl_resolution(monkeypatch, env_value, expected):
-    from worker import package as worker_package
+    from runpod_doc_worker.transport import package as worker_package
 
     if env_value is None:
         monkeypatch.delenv("BUCKET_PRESIGN_TTL_SECONDS", raising=False)

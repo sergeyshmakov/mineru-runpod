@@ -4,14 +4,14 @@ The MinerU-specific pieces this orchestrates live in the worker/ package:
   worker.harness   — what this worker declares about itself to the harness
   worker.schema    — input validation
   worker.parse     — MinerU lazy import + async parse call
-  worker.package   — tarball / inline / s3 response packaging
   worker.debug     — GPU info, model dir, /runpod-volume probe
 
 The engine-agnostic ones come from the runpod_doc_worker package:
-  transport.io     — fetch raw bytes from URL / b64 / volume + format detection
-  transport.net    — target checks for the URL job inputs (used by io/schema)
-  obs.logging      — JSON / text structured logging
-  obs.redact       — one shape for the text a failure reports
+  transport.io      — fetch raw bytes from URL / b64 / volume + format detection
+  transport.net     — target checks for the URL job inputs (used by io/schema)
+  transport.package — tarball / inline / s3 response packaging
+  obs.logging       — JSON / text structured logging
+  obs.redact        — one shape for the text a failure reports
 
 The module surface (``handler.MAX_INLINE_FILE_MB``, ``handler._detect_format``,
 ``handler._validate_input``, ``handler._package_tarball``, etc.) is preserved
@@ -34,13 +34,13 @@ import runpod
 from runpod_doc_worker.obs import logging as _logging
 from runpod_doc_worker.obs import redact as _redact
 from runpod_doc_worker.transport import io as _io
+from runpod_doc_worker.transport import package as _package
 
 # Installs this worker's harness config. Imported first among the worker
 # modules so the declaration is visible here rather than arriving as a side
 # effect of importing one of the others.
 from worker import harness as _harness  # noqa: F401
 from worker import debug as _debug
-from worker import package as _package
 from worker import parse as _parse
 from worker import schema as _schema
 from worker import telemetry as _telemetry
@@ -353,7 +353,8 @@ async def _handle_parse(
                 output_dir=output_dir,
                 basename=cleaned["basename"],
                 source=source,
-                pages_requested=pages_requested,
+                manifest=_harness.MANIFEST,
+                metadata={"pages_requested": pages_requested},
                 archive_format=cleaned["archive_format"],
             )
         response: dict[str, Any] = {
@@ -486,7 +487,8 @@ async def handler(job: dict) -> dict:
 
 # -----------------------------------------------------------------------------
 # Back-compat surface for tests and any out-of-tree callers that imported
-# helpers from this module directly. New code should import from worker.*.
+# helpers from this module directly. New code should import from worker.* or
+# from the harness.
 # -----------------------------------------------------------------------------
 
 MAX_INLINE_FILE_MB = _io.MAX_INLINE_FILE_MB
@@ -497,7 +499,6 @@ _resolve_input_bytes = _io.resolve_input_bytes
 _detect_format = _io.detect_format
 _validate_input = _schema.validate_input
 _package_tarball = _package.package_tarball
-_package_inline = _package.package_inline
 _package_s3 = _package.package_s3
 _build_tarball_bytes = _package._build_tarball_bytes
 _build_zip_bytes = _package._build_zip_bytes
@@ -505,6 +506,20 @@ _run_mineru = _parse.run_mineru
 _collect_gpu_info = _debug.collect_gpu_info
 _find_model_dir = _debug.find_model_dir
 _probe_filesystem = _debug.probe_filesystem
+
+
+def _package_inline(
+    output_dir: Path, basename: str, formats: Any = None
+) -> dict[str, Any]:
+    """Inline packaging with this worker's manifest bound.
+
+    The harness reads whatever manifest it is handed; which files MinerU
+    writes is this repo's to declare, so the binding happens here rather
+    than at each call site. See :mod:`worker.harness`.
+    """
+    return _package.package_inline(
+        output_dir, basename, _harness.MANIFEST, formats=formats
+    )
 
 
 def _bootstrap_main() -> None:

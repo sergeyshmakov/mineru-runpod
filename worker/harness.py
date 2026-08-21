@@ -24,6 +24,7 @@ from typing import Any
 
 from runpod_doc_worker import config
 from runpod_doc_worker.config import DEFAULT_VOLUME_ROOTS
+from runpod_doc_worker.contract.artifacts import Artifact
 
 
 def _telemetry_mirror(level: str, msg: str, fields: dict[str, Any]) -> None:
@@ -68,4 +69,26 @@ config.configure(
         probe_env_keys=("MINERU_MODEL_SOURCE", "MINERU_VL_MODEL_NAME"),
         log_mirror=_telemetry_mirror,
     )
+)
+
+
+# What MinerU writes into the output directory, and what each file becomes in
+# an inline response. Declaration order is the canonical output order: it is
+# what `formats` defaults to and what worker.schema validates against, so a
+# key added here reaches the input contract with it.
+#
+# content_list carries two patterns because MinerU renamed the file: the
+# current name first, the older one as a fallback, and the first that matches
+# wins. Its default is a list rather than the {} the kind would derive,
+# because callers index it.
+MANIFEST = (
+    Artifact("markdown", ("{basename}.md",), kind="text"),
+    Artifact(
+        "content_list",
+        ("{basename}_content_list.json", "{basename}_content_list_v2.json"),
+        kind="json",
+        default=[],
+    ),
+    Artifact("middle", ("{basename}_middle.json",), kind="json"),
+    Artifact("images", ("images/*",), kind="b64map"),
 )
