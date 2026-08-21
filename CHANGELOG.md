@@ -1,3 +1,41 @@
+## [1.10.0](https://github.com/sergeyshmakov/mineru-runpod/compare/v1.9.0...v1.10.0) (2026-08-21)
+
+### Features
+
+* count what a successful response could not carry ([25b86fa](https://github.com/sergeyshmakov/mineru-runpod/commit/25b86fa9ca4c100f0a2a9581afff3b9271737fe1))
+
+### Bug Fixes
+
+* require the artifact a response exists for ([8542c36](https://github.com/sergeyshmakov/mineru-runpod/commit/8542c3664deef012b4bfb4d061a72e8567a7e3d5))
+
+### Refactoring
+
+* own the probe gate instead of tracking the harness ([c6eaa55](https://github.com/sergeyshmakov/mineru-runpod/commit/c6eaa55c154710ed8703363ef1dd32af3203e84f))
+* source GPU and cache diagnostics from the harness ([dd14de1](https://github.com/sergeyshmakov/mineru-runpod/commit/dd14de146a54863c68224a8341a1930391a75f0c))
+* source input transport and target checks from the harness ([9f9aac0](https://github.com/sergeyshmakov/mineru-runpod/commit/9f9aac0ec399de146e9ca9102cda14fd3b85a54a))
+* source result packaging from the harness ([9a89dc4](https://github.com/sergeyshmakov/mineru-runpod/commit/9a89dc448b99a9859f8461b8343fd91b93bbc94b))
+* source structured logging and redaction from the harness ([aab37b7](https://github.com/sergeyshmakov/mineru-runpod/commit/aab37b7221d64c720ee5d1ebca139cbf322b9f2e))
+
+### Documentation
+
+* correct the image layout comment ([b22f5a5](https://github.com/sergeyshmakov/mineru-runpod/commit/b22f5a54a01ce287d09e638c00346c28b175b397))
+* describe an incomplete response ([85b26fe](https://github.com/sergeyshmakov/mineru-runpod/commit/85b26febbcff71c373ba256ebb95b0c1a1a478fc))
+* describe the worker harness ([21d3a19](https://github.com/sergeyshmakov/mineru-runpod/commit/21d3a1972b09826e17d1fcd12e209a36b29bb691))
+* make the degraded example parse and name its overflow labels ([011f7e7](https://github.com/sergeyshmakov/mineru-runpod/commit/011f7e759bda1289f2e5048abba9d32109b1db3e))
+
+### Build / Deps
+
+* **deps-dev:** bump semantic-release from 25.0.8 to 25.0.9 in the npm-development group ([#22](https://github.com/sergeyshmakov/mineru-runpod/issues/22)) ([c331a41](https://github.com/sergeyshmakov/mineru-runpod/commit/c331a419bc50016a5d4db468e6e22f0a7d440452))
+* **deps:** bump the docs-deps group in /docs with 2 updates ([#23](https://github.com/sergeyshmakov/mineru-runpod/issues/23)) ([0256269](https://github.com/sergeyshmakov/mineru-runpod/commit/0256269977b62b36532d8f1c15b0a2f8c363f1dd))
+* **deps:** consolidate Dependabot updates ([bf231d7](https://github.com/sergeyshmakov/mineru-runpod/commit/bf231d759122e8f2313a9ca6a2ba03dd00e25ef5))
+* **deps:** correct Dependabot group limit ([baf721f](https://github.com/sergeyshmakov/mineru-runpod/commit/baf721f3704f47fc44ed42ab40d5405f3faf33d3))
+* **deps:** move the worker harness pin to v0.2.0 ([22cab34](https://github.com/sergeyshmakov/mineru-runpod/commit/22cab346de7ebf191c83ee8cfcfe854dc374b499))
+* **deps:** move the worker harness pin to v0.3.0 ([9bcb9d5](https://github.com/sergeyshmakov/mineru-runpod/commit/9bcb9d50da3511a43e3a7908b4d5610cb5f694c8))
+* **deps:** move the worker harness pin to v0.4.0 ([ccf6627](https://github.com/sergeyshmakov/mineru-runpod/commit/ccf66271a5d82b034335782d79e688e289b9bc31))
+* **deps:** pin the worker harness package ([842a206](https://github.com/sergeyshmakov/mineru-runpod/commit/842a20662c19dbac72c5d8eafc966e90f4d7d4e3))
+* **deps:** restore release notes by pinning the changelog preset ([#20](https://github.com/sergeyshmakov/mineru-runpod/issues/20)) ([5160306](https://github.com/sergeyshmakov/mineru-runpod/commit/51603060b01dba6370e34440d672a478c6e676e2))
+* let hatchling accept the pinned harness reference ([27b0fd5](https://github.com/sergeyshmakov/mineru-runpod/commit/27b0fd5f4214e03f42824f70d544e6dca2941c42)), closes [#5](https://github.com/sergeyshmakov/mineru-runpod/issues/5)
+
 ## [1.9.0](https://github.com/sergeyshmakov/mineru-runpod/compare/v1.8.4...v1.9.0) (2026-08-13)
 
 ### Features
