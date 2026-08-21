@@ -339,9 +339,9 @@ def test_page_ceiling_ignores_a_malformed_value(monkeypatch):
 
 def test_resolve_b64_rejects_oversized_encoded_payload():
     # Rejected on the encoded length, before the decoded copy is allocated.
-    # Derived from the megabyte ceiling the same way the check is, with a
-    # margin for the base64 headroom it allows.
-    too_big = "A" * int(handler.MAX_INLINE_FILE_MB * 1024 * 1024 / 3 * 4 * 1.1)
+    # One character past the harness's own bound, rather than a copy of its
+    # arithmetic that would stop describing it the moment the headroom moved.
+    too_big = "A" * (worker_io.max_inline_b64_chars() + 1)
     with pytest.raises(ValueError, match="inline file too large"):
         asyncio.run(handler._resolve_input_bytes({"file_b64": too_big}))
 
