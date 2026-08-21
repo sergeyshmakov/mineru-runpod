@@ -4,7 +4,8 @@ Thanks for considering a contribution. This project is intentionally a thin wrap
 
 ## What this repo is responsible for
 
-- The RunPod serverless worker (`handler.py`)
+- The RunPod serverless worker (`handler.py`) — the job envelope, the input schema, the MinerU call
+- What this worker declares to the harness: env prefix, input roots, output manifest (`worker/harness.py`)
 - The Python client (`mineru_client/`)
 - Deploy / destroy scripts
 - The Dockerfile + dependency pinning
@@ -12,6 +13,7 @@ Thanks for considering a contribution. This project is intentionally a thin wrap
 ## What this repo is *not* responsible for
 
 - **Parsing accuracy / quality** of MinerU's output → file at [opendatalab/MinerU](https://github.com/opendatalab/MinerU/issues).
+- **Input transport, outbound target checks, response packaging, structured logging, the model-cache probe** → these come from [`runpod-doc-worker`](https://github.com/sergeyshmakov/runpod-doc-worker) ([docs](https://rdw.shmakov.tools)), the engine-agnostic harness extracted from this worker. A bug in how a URL is fetched or a tarball is built belongs there; a bug in *which* files go into it belongs here, in the manifest.
 - **RunPod platform behaviour** (endpoint won't scale, FlashBoot misbehaves, cold start too long) → RunPod support.
 - **vLLM / CUDA issues** → vLLM upstream.
 
