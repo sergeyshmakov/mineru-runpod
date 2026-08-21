@@ -1,14 +1,17 @@
 """RunPod serverless entry point for the MinerU worker.
 
-The pieces this orchestrates live in the worker/ package:
-  worker.schema   — input validation
-  worker.io       — fetch raw bytes from URL / b64 / volume + format detection
-  worker.parse    — MinerU lazy import + async parse call
-  worker.package  — tarball / inline / s3 response packaging
-  worker.debug    — GPU info, model dir, /runpod-volume probe
-  worker.logging  — JSON / text structured logging
-  worker.redact   — one shape for the text a failure reports
-  worker.net      — target checks for the URL job inputs (used by io/schema)
+The MinerU-specific pieces this orchestrates live in the worker/ package:
+  worker.harness   — what this worker declares about itself to the harness
+  worker.schema    — input validation
+  worker.io        — fetch raw bytes from URL / b64 / volume + format detection
+  worker.parse     — MinerU lazy import + async parse call
+  worker.package   — tarball / inline / s3 response packaging
+  worker.debug     — GPU info, model dir, /runpod-volume probe
+  worker.net       — target checks for the URL job inputs (used by io/schema)
+
+The engine-agnostic ones come from the runpod_doc_worker package:
+  obs.logging      — JSON / text structured logging
+  obs.redact       — one shape for the text a failure reports
 
 The module surface (``handler.MAX_INLINE_FILE_MB``, ``handler._detect_format``,
 ``handler._validate_input``, ``handler._package_tarball``, etc.) is preserved
@@ -28,12 +31,17 @@ from typing import Any
 
 import runpod
 
+from runpod_doc_worker.obs import logging as _logging
+from runpod_doc_worker.obs import redact as _redact
+
+# Installs this worker's harness config. Imported first among the worker
+# modules so the declaration is visible here rather than arriving as a side
+# effect of importing one of the others.
+from worker import harness as _harness  # noqa: F401
 from worker import debug as _debug
 from worker import io as _io
-from worker import logging as _logging
 from worker import package as _package
 from worker import parse as _parse
-from worker import redact as _redact
 from worker import schema as _schema
 from worker import telemetry as _telemetry
 
@@ -457,7 +465,7 @@ async def handler(job: dict) -> dict:
             )
             _telemetry.counter_add("jobs_total", status="error")
             # One shape for the failure text across all three sinks (response,
-            # stdout, optional OTLP export) — see worker/redact.py.
+            # stdout, optional OTLP export) — see the harness's obs.redact.
             _logging.error(
                 "job failed",
                 error_type=type(exc).__name__,

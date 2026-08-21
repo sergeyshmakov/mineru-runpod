@@ -169,6 +169,30 @@ def test_handler_rejects_bad_basename():
     assert "input validation" in result["error"].lower() or "basename" in result["error"].lower()
 
 
+def test_handler_failure_response_reports_compacted_text(monkeypatch):
+    """Both text fields of a failure response go through the same reduction.
+
+    The reduction itself is the harness's; what this asserts is that the
+    handler routes `error` and `traceback` through it, so a signed URL a
+    caller passed in does not come back in the response it gets.
+    """
+    async def boom(*args, **kwargs):
+        raise RuntimeError(
+            "GET failed for 'https://files.example.com/doc.pdf?sig=abcdef123456'"
+        )
+
+    monkeypatch.setattr(worker_io, "resolve_input_bytes", boom)
+    result = asyncio.run(handler.handler({
+        "id": "compact-test",
+        "input": {"file_b64": "JVBERi0xLjQK"},
+    }))
+
+    assert result["ok"] is False
+    assert "sig=" not in result["error"]
+    assert "sig=" not in result["traceback"]
+    assert "https://files.example.com/doc.pdf" in result["error"]
+
+
 def test_validate_input_rejects_invalid_transport_value():
     with pytest.raises(ValueError, match="input validation"):
         handler._validate_input({"file_b64": "AA==", "transport": "tarball-xml"})
