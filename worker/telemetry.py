@@ -287,6 +287,11 @@ def _build_instruments(meter: Any) -> None:
     _metrics["refresh_total"] = meter.create_counter(
         "mineru.worker.refresh.total", description="Worker recycles", unit="1",
     )
+    _metrics["degraded_total"] = meter.create_counter(
+        "mineru.degraded.total",
+        description="Artifacts a successful response could not carry",
+        unit="1",
+    )
     meter.create_observable_gauge(
         "mineru.worker.jobs_since_boot",
         callbacks=[_observe_jobs_since_boot],

@@ -266,3 +266,95 @@ def test_an_intact_job_carries_no_degraded_key(monkeypatch, capsys):
 
     assert result["ok"] is True
     assert "degraded" not in result["results"][0]
+
+
+# -----------------------------------------------------------------------------
+# Counting what a response could not carry
+# -----------------------------------------------------------------------------
+
+def _degradation_counts(monkeypatch) -> list[tuple[int, dict]]:
+    """Capture degraded_total increments without standing up OTel."""
+    from worker import telemetry
+
+    calls: list[tuple[int, dict]] = []
+
+    def spy(name, value=1, **attrs):
+        if name == "degraded_total":
+            calls.append((value, attrs))
+
+    monkeypatch.setattr(telemetry, "counter_add", spy)
+    return calls
+
+
+def test_a_lost_artifact_is_counted(monkeypatch, capsys):
+    """The response names the artifact for whoever reads that document. The
+    counter is for whoever is watching a fleet and will never read it."""
+    calls = _degradation_counts(monkeypatch)
+
+    async def fake_run(file_bytes, *, basename, work_dir, **kwargs):
+        out = work_dir / "out"
+        out.mkdir()
+        (out / f"{basename}.md").write_text("# real text\n", encoding="utf-8")
+        (out / f"{basename}_content_list.json").write_bytes(b"{truncated")
+        return out
+
+    monkeypatch.setattr("worker.parse.run_mineru", fake_run)
+    asyncio.run(handler.handler({
+        "input": {"file_b64": "JVBERi0xLjQK", "basename": "doc",
+                  "transport": "inline"},
+    }))
+    capsys.readouterr()
+
+    assert calls == [(1, {"reason": "unreadable", "artifact": "content_list"})]
+
+
+def test_an_intact_job_counts_nothing(monkeypatch, capsys):
+    calls = _degradation_counts(monkeypatch)
+
+    async def fake_run(file_bytes, *, basename, work_dir, **kwargs):
+        out = work_dir / "out"
+        out.mkdir()
+        (out / f"{basename}.md").write_text("# fine\n", encoding="utf-8")
+        return out
+
+    monkeypatch.setattr("worker.parse.run_mineru", fake_run)
+    asyncio.run(handler.handler({
+        "input": {"file_b64": "JVBERi0xLjQK", "basename": "doc",
+                  "transport": "inline", "formats": ["markdown"]},
+    }))
+    capsys.readouterr()
+
+    assert calls == []
+
+
+def test_losses_beyond_the_reported_cap_are_still_counted(monkeypatch, capsys):
+    """`items` stops at the harness's cap while `count` stays true. Counting
+    only the listed ones would undercount exactly the pathological job worth
+    knowing about."""
+    from runpod_doc_worker.contract import degraded
+
+    calls = _degradation_counts(monkeypatch)
+    report = degraded.Report()
+    for i in range(degraded.MAX_ITEMS + 7):
+        report.note(reason=degraded.UNREADABLE, file=f"fig{i}.png", artifact="images")
+    capsys.readouterr()
+
+    handler._record_degradation(report)
+
+    counted = sum(value for value, _ in calls)
+    assert counted == degraded.MAX_ITEMS + 7
+    assert (7, {"reason": "unlisted", "artifact": "unlisted"}) in calls
+
+
+def test_an_archive_member_is_counted_under_its_own_label(monkeypatch, capsys):
+    """An archive member belongs to no manifest key, so `artifact` is null in
+    the response. A null label is not usable in a metric."""
+    from runpod_doc_worker.contract import degraded
+
+    calls = _degradation_counts(monkeypatch)
+    report = degraded.Report()
+    report.note(reason=degraded.UNSAFE_NAME, file="..\escape.md")
+    capsys.readouterr()
+
+    handler._record_degradation(report)
+    assert calls == [(1, {"reason": "unsafe_name", "artifact": "archive"})]

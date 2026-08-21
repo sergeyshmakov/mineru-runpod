@@ -370,7 +370,8 @@ the worker then could not read:
 ```
 
 `msg:"response degraded"` is one string for every such case, so a single alert
-rule catches all of them. The same information rides in the response itself
+rule catches all of them — as does the `mineru.degraded.total` counter when
+[OpenTelemetry](/guides/observability/) is configured. The same information rides in the response itself
 under `degraded`, which is what tells you *which* document to reprocess — see
 [Incomplete responses](/reference/api/#incomplete-responses). The job is still
 `ok: true`, so nothing else will flag it.

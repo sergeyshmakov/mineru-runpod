@@ -233,7 +233,7 @@ A parse can produce a file that cannot then be read — bytes that are not the U
 
 `markdown` is the exception. It is the document, so a job that cannot produce readable Markdown fails with `ok: false` rather than returning an empty string — a failed job can be retried, a successful one that quietly returned nothing cannot. The other three artifacts degrade.
 
-Every item is also emitted as a `response degraded` warning on stdout, carrying the same fields plus the `job_id`, so the aggregate is queryable in RunPod's log viewer or your [OTel sink](/guides/observability/) without reading responses. The field is the per-document signal; the log line is the fleet-wide one.
+Every item is also emitted as a `response degraded` warning on stdout, carrying the same fields plus the `job_id`, and counted as `mineru.degraded.total` when [OpenTelemetry](/guides/observability/) is configured. The field is the per-document signal — the only thing that says *which* document to reprocess. The log line and the counter are the fleet-wide ones, and they are what tells you the rate is non-zero at all.
 
 ### Debug observability
 

@@ -88,6 +88,7 @@ Datadog) accepts exponential histograms.
 | `mineru.bytes_in.total` | counter | `source` (`b64`/`url`/`volume`) | Ingest bytes by input source. URLs and filesystem paths are reduced to their source kind before export. |
 | `mineru.bytes_out.total` | counter | `transport` (`tarball_b64`/`inline`/`s3`) | Egress volume by transport. Inline payloads are approximated as `markdown` text + image bytes (ignoring JSON overhead). |
 | `mineru.errors.total` | counter | `type`, `phase` | Error count by exception type. `phase` is currently reported as `handler`. |
+| `mineru.degraded.total` | counter | `reason`, `artifact` | Artifacts a **successful** response could not carry. `reason` is `unreadable`, `unresolvable`, `outside_output_dir`, or `unsafe_name`; `artifact` is the format key, or `archive` for a member of a tarball. A non-zero rate here means jobs are returning `ok: true` with holes in them — see [Incomplete responses](/reference/api/#incomplete-responses). Both labels are bounded, so the series count is. |
 | `mineru.job.duration` | histogram | `backend`, `input_format` | End-to-end wall-clock per job. |
 | `mineru.phase.duration` | histogram | `phase` | Where time goes inside a job. |
 | `mineru.pages_per_second` | histogram | `backend` | Throughput for jobs with a bounded requested page count. |

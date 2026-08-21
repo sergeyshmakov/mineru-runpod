@@ -34,6 +34,7 @@ from typing import Any
 
 import runpod
 
+from runpod_doc_worker.contract import degraded as _degraded
 from runpod_doc_worker.obs import debug as _debug
 from runpod_doc_worker.obs import logging as _logging
 from runpod_doc_worker.obs import redact as _redact
@@ -149,6 +150,36 @@ def _record_job(pages: int) -> str | None:
         if pages_th > 0 and _pages_processed_total >= pages_th:
             return "pages_threshold"
         return None
+
+
+def _record_degradation(lost: _degraded.Report) -> None:
+    """Count what a successful response could not carry.
+
+    The response already names the affected artifacts, per document. This is
+    the other half: an operator watching a fleet needs the rate, because a
+    response nobody reads back is not a signal. Labelled by reason and by
+    artifact — both bounded, so the series count is too.
+
+    `items` stops at the harness's cap while `count` stays true, so the
+    remainder is added under its own label rather than dropped. A metric that
+    quietly undercounts the pathological case is the failure this whole field
+    exists to avoid.
+    """
+    reported = lost.entry()
+    if reported is None:
+        return
+    for item in reported["items"]:
+        _telemetry.counter_add(
+            "degraded_total",
+            reason=item["reason"],
+            # None means an archive member, which no manifest key claims.
+            artifact=item["artifact"] or "archive",
+        )
+    unlisted = reported["count"] - len(reported["items"])
+    if unlisted > 0:
+        _telemetry.counter_add(
+            "degraded_total", unlisted, reason="unlisted", artifact="unlisted",
+        )
 
 
 # -----------------------------------------------------------------------------
@@ -345,6 +376,10 @@ async def _handle_parse(
         )
         transport = cleaned["transport"]
         formats = cleaned["formats"]
+        # Our own report, rather than reading `degraded` back off the entry:
+        # what was lost is wanted here as a count, and the entry is a response
+        # shape that should not have to double as an internal channel.
+        lost = _degraded.Report()
         with _telemetry.span(
             "mineru.package",
             phase="package",
@@ -359,7 +394,9 @@ async def _handle_parse(
                 manifest=_harness.MANIFEST,
                 metadata={"pages_requested": pages_requested},
                 archive_format=cleaned["archive_format"],
+                report=lost,
             )
+        _record_degradation(lost)
         response: dict[str, Any] = {
             "ok": True,
             "elapsed_seconds": round(time.monotonic() - started, 2),
