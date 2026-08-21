@@ -490,7 +490,7 @@ async def handler(job: dict) -> dict:
                 if not _debug.probe_enabled():
                     raise ValueError(
                         "probe is disabled on this endpoint "
-                        "(MINERU_DISABLE_PROBE)"
+                        "(set MINERU_ENABLE_PROBE=1 to enable it)"
                     )
                 return await _handle_probe(started, gpu_info, phase_ms)
 

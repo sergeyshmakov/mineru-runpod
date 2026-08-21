@@ -67,6 +67,14 @@ config.configure(
         # Both are things an operator can get wrong in a way that looks like
         # a missing model, so the probe reports them alongside the HF ones.
         probe_env_keys=("MINERU_MODEL_SOURCE", "MINERU_VL_MODEL_NAME"),
+        # Answer `probe: true` unless an operator says otherwise, which is what
+        # this endpoint has always done and what the troubleshooting guide tells
+        # someone to reach for when a Cached Models setup is not being found.
+        # The harness leaves this to the worker and defaults it off, so saying
+        # nothing here would take the probe away from every deployed endpoint
+        # at its next rebuild, silently, since the response is an ordinary
+        # refusal rather than an error.
+        probe_default=True,
         log_mirror=_telemetry_mirror,
     )
 )

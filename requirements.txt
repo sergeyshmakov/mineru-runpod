@@ -30,7 +30,7 @@ runpod>=1.7.0
 # The `[s3]` extra is boto3, imported lazily inside the s3 packaging path — a
 # worker without S3 env vars never touches it. Drop the extra on a fork that
 # only returns tarballs or inline payloads.
-runpod-doc-worker[s3] @ https://github.com/sergeyshmakov/runpod-doc-worker/archive/refs/tags/v0.3.0.tar.gz
+runpod-doc-worker[s3] @ https://github.com/sergeyshmakov/runpod-doc-worker/archive/refs/tags/v0.4.0.tar.gz
 
 # Used by the handler for downloading URL-supplied PDFs.
 httpx>=0.27

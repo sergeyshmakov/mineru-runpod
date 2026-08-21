@@ -146,11 +146,11 @@
         }
       },
       {
-        "key": "MINERU_DISABLE_PROBE",
+        "key": "MINERU_ENABLE_PROBE",
         "input": {
-          "name": "Disable the probe response",
+          "name": "Enable the probe response",
           "type": "string",
-          "description": "Set to 1 so probe:true jobs return an error instead of the worker's filesystem and model-cache layout. Enabled by default for troubleshooting.",
+          "description": "On by default. Set to 0 so probe:true jobs return an error instead of the worker's filesystem and model-cache layout, on endpoints whose callers should not see either.",
           "default": "",
           "advanced": true
         }

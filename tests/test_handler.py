@@ -401,14 +401,42 @@ def test_validate_input_rejects_effort_on_non_hybrid_backend():
 # -----------------------------------------------------------------------------
 
 def test_handler_probe_mode_can_be_turned_off(monkeypatch):
-    monkeypatch.setenv("MINERU_DISABLE_PROBE", "1")
+    monkeypatch.setenv("MINERU_ENABLE_PROBE", "0")
     result = asyncio.run(handler.handler({"input": {"probe": True}}))
     assert result["ok"] is False
     assert "probe is disabled" in result["error"]
     assert "probe" not in result
 
 
+def test_the_refusal_names_the_knob_that_lifts_it(monkeypatch):
+    """A caller reading this is usually the operator who can act on it."""
+    monkeypatch.setenv("MINERU_ENABLE_PROBE", "0")
+    result = asyncio.run(handler.handler({"input": {"probe": True}}))
+    assert "MINERU_ENABLE_PROBE" in result["error"]
+
+
+def test_the_previous_knob_still_turns_it_off(monkeypatch):
+    """MINERU_DISABLE_PROBE is what deployed endpoints already have set. It is
+    a deprecated spelling upstream, not a dead one, and an operator's stated
+    intent must not stop being honoured because the canonical name changed."""
+    monkeypatch.delenv("MINERU_ENABLE_PROBE", raising=False)
+    monkeypatch.setenv("MINERU_DISABLE_PROBE", "1")
+    result = asyncio.run(handler.handler({"input": {"probe": True}}))
+    assert result["ok"] is False
+    assert "probe is disabled" in result["error"]
+
+
+def test_the_canonical_knob_wins_over_the_previous_one(monkeypatch):
+    monkeypatch.setenv("MINERU_DISABLE_PROBE", "1")
+    monkeypatch.setenv("MINERU_ENABLE_PROBE", "1")
+    result = asyncio.run(handler.handler({"input": {"probe": True}}))
+    assert result["ok"] is True
+
+
 def test_handler_probe_mode_enabled_by_default(monkeypatch):
+    """This worker declares probe_default=True, so an endpoint that sets
+    neither knob keeps the diagnostic it has always had."""
+    monkeypatch.delenv("MINERU_ENABLE_PROBE", raising=False)
     monkeypatch.delenv("MINERU_DISABLE_PROBE", raising=False)
     result = asyncio.run(handler.handler({"input": {"probe": True}}))
     assert result["ok"] is True

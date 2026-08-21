@@ -61,7 +61,7 @@ The worker accepts PDF, image (PNG/JPEG/GIF/BMP/TIFF/WebP), DOCX, PPTX, and XLSX
 | `formats` | array of string | all four | Subset of `["markdown", "content_list", "middle", "images"]`. Selects which artifacts the inline payload contains. Omit (or pass all four) to get everything. **No-op for `tarball_b64` and `s3`** — those transports always ship a self-contained archive with all four artifacts. Empty list is rejected. |
 | `basename` | string | `"doc"` | Filename stem for output files. Must be alphanumeric with `-` or `_`, at most 128 characters, and short enough that the longest generated filename stays within 255 **bytes** — non-ASCII characters cost more than one byte each, so a CJK stem is limited to 78 characters |
 | `archive_format` | string | `"tar.gz"` | Archive container for the `tarball_b64` and `s3` transports: `"tar.gz"` (default) or `"zip"`. No-op for `inline`. See [Output modes → archive format](/guides/output-modes/#archive-format-targz-or-zip). |
-| `probe` | bool | `false` | Diagnostic mode. `{"probe": true}` skips parsing and every field above, then returns the worker's filesystem layout plus the running MinerU version instead of a parse result — for checking baked model paths and volume mounts. Set `MINERU_DISABLE_PROBE=1` on the endpoint to turn it off. |
+| `probe` | bool | `false` | Diagnostic mode. `{"probe": true}` skips parsing and every field above, then returns the worker's filesystem layout plus the running MinerU version instead of a parse result — for checking baked model paths and volume mounts. On by default; set `MINERU_ENABLE_PROBE=0` on the endpoint to turn it off, on endpoints whose callers should not see filesystem paths or model-cache details. `MINERU_DISABLE_PROBE=1` is still honoured. |
 
 ### URL inputs
 
