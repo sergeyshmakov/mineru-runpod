@@ -1,79 +1,47 @@
 version: 2
 
-updates:
-  # Repo-root npm is dev tooling only: conventional-commit linting + semantic
-  # release (the actual project is Python — see the pip note in dependabot docs/PR).
-  - package-ecosystem: "npm"
-    directory: "/"
+# Keep routine dependency maintenance to one consolidated version-update PR.
+multi-ecosystem-groups:
+  monthly-direct-dependencies:
     schedule:
       interval: "monthly"
       time: "06:00"
       timezone: "UTC"
-    allow:
-      - dependency-type: "direct"
-    open-pull-requests-limit: 5
-    labels:
-      - "dependencies"
-    # Conventional-commit prefix so Dependabot PRs pass the commitlint check that
-    # runs on every PR. `build` is this repo's "deps / no release" type, so these
-    # bumps won't trigger a semantic-release version bump.
     commit-message:
       prefix: "build"
       include: "scope"
+
+updates:
+  # Root npm is release tooling; /docs is the Astro/Starlight site. Combining
+  # the directories lets security fixes be grouped into one npm PR as well.
+  - package-ecosystem: "npm"
+    directories:
+      - "/"
+      - "/docs"
+    patterns: ["*"]
+    multi-ecosystem-group: "monthly-direct-dependencies"
+    allow:
+      - dependency-type: "direct"
+    open-pull-requests-limit: 1
+    labels:
+      - "dependencies"
     ignore:
-      # The changelog preset has to match the writer that
-      # @semantic-release/release-notes-generator bundles. v10 renders through
-      # @conventional-changelog/template and exports `template`, while the
-      # bundled conventional-changelog-writer v8 reads `mainTemplate` — so v10
-      # produces release notes with a heading and nothing under it, and nothing
-      # fails. v9 is the newest that still exports `mainTemplate`; lift this
-      # once release-notes-generator ships a writer that speaks the newer
-      # preset. Verified per major: 8 and 9 render, 10 comes out empty.
-      # @commitlint/config-conventional keeps its own nested v10 and is
-      # unaffected.
+      # v10 is incompatible with the writer bundled by
+      # @semantic-release/release-notes-generator; keep the existing v9 pin.
       - dependency-name: "conventional-changelog-conventionalcommits"
         update-types: ["version-update:semver-major"]
     groups:
-      npm-development:
-        dependency-type: "development"
+      npm-security-updates:
+        applies-to: "security-updates"
+        patterns: ["*"]
 
-  # Docs site (Astro / Starlight) in /docs.
-  - package-ecosystem: "npm"
-    directory: "/docs"
-    schedule:
-      interval: "monthly"
-      time: "06:00"
-      timezone: "UTC"
-    allow:
-      - dependency-type: "direct"
-    open-pull-requests-limit: 3
-    labels:
-      - "dependencies"
-      - "docs"
-    commit-message:
-      prefix: "build"
-      include: "scope"
-    groups:
-      docs-deps:
-        patterns:
-          - "*"
-
-  # GitHub Actions used by the CI / release / docs workflows.
   - package-ecosystem: "github-actions"
     directory: "/"
-    schedule:
-      interval: "monthly"
-      time: "06:00"
-      timezone: "UTC"
-    open-pull-requests-limit: 3
+    patterns: ["*"]
+    multi-ecosystem-group: "monthly-direct-dependencies"
+    allow:
+      - dependency-type: "direct"
+    open-pull-requests-limit: 1
     labels:
       - "dependencies"
       - "github-actions"
-    # `ci` (no release) — these bumps only touch workflow files.
-    commit-message:
-      prefix: "ci"
-      include: "scope"
-    groups:
-      github-actions:
-        patterns:
-          - "*"
