@@ -6,7 +6,7 @@ module is a fast no-op and the OTel SDK is never imported — keeping
 the cold-start budget clean for forks that don't care about telemetry.
 
 Logs export is **additive**, not replacement. The direct-print stdout
-JSON in :mod:`worker.logging` continues to fire so RunPod's dashboard
+JSON in the harness's logging module continues to fire so RunPod's dashboard
 remains the source of truth. When enabled, this module mirrors each
 log emission to an OTLP/HTTP logs exporter for downstream sinks
 (Axiom, Honeycomb, Tempo, etc.).
@@ -16,8 +16,8 @@ emit log records directly through the OTel logs SDK
 (:meth:`Logger.emit`), bypassing the ``LoggingHandler`` adapter
 entirely. The runpod SDK silences Python's root logger during
 ``serverless.start()``, so reintroducing ``logging.Logger`` here would
-re-create the disappearing-logs problem the worker.logging module
-already solved.
+re-create the disappearing-logs problem the harness's direct-print
+logging already solved.
 
 Init order matters: :func:`init_telemetry` MUST be called from
 ``handler._bootstrap_main()`` BEFORE ``warmup_async()`` so warmup
@@ -99,8 +99,8 @@ def init_telemetry() -> bool:
             _enabled = True
         except Exception as exc:  # noqa: BLE001
             # Stdout breadcrumb on the known-good channel — same pattern as
-            # worker/warmup.py. Don't use worker.logging here: that module
-            # calls back into us for the mirror, which would recurse during
+            # worker/warmup.py. Don't use the harness's logging here: it calls
+            # back into us through the log mirror, which would recurse during
             # init if a log line fired before _enabled is set.
             print(
                 f"[mineru-telemetry] init failed, continuing without OTel: "
@@ -287,6 +287,11 @@ def _build_instruments(meter: Any) -> None:
     _metrics["refresh_total"] = meter.create_counter(
         "mineru.worker.refresh.total", description="Worker recycles", unit="1",
     )
+    _metrics["degraded_total"] = meter.create_counter(
+        "mineru.degraded.total",
+        description="Artifacts a successful response could not carry",
+        unit="1",
+    )
     meter.create_observable_gauge(
         "mineru.worker.jobs_since_boot",
         callbacks=[_observe_jobs_since_boot],
@@ -426,7 +431,7 @@ def _observe_gpu_util(options: Any) -> Iterator[Any]:  # noqa: ARG001
 
 
 # -----------------------------------------------------------------------------
-# Public API used by handler.py / worker.warmup / worker.logging.
+# Public API used by handler.py / worker.warmup / the harness log mirror.
 # All of these short-circuit cheaply when _enabled is False.
 # -----------------------------------------------------------------------------
 
@@ -478,7 +483,7 @@ def record_exception(exc: BaseException) -> None:
     ERROR so trace dashboards filter it as a failure.
 
     The event is built here rather than via ``Span.record_exception``
-    so the text goes through :func:`worker.redact.compact` first — the
+    so the text goes through the harness's ``redact.compact`` first — the
     exported record then reads the same as the job response and the
     stdout log line for the same failure, instead of being a longer
     variant of it.
@@ -488,7 +493,7 @@ def record_exception(exc: BaseException) -> None:
     try:
         import traceback  # noqa: PLC0415
 
-        from worker import redact as _redact  # noqa: PLC0415
+        from runpod_doc_worker.obs import redact as _redact  # noqa: PLC0415
 
         message = _redact.compact(str(exc))
         stack = _redact.compact(
@@ -563,8 +568,12 @@ def _warn_unknown_metric(name: str) -> None:
 def emit_log(level: str, msg: str, fields: dict[str, Any]) -> None:
     """Mirror a stdout log line to the OTel logs exporter.
 
-    Called from :func:`worker.logging._emit` after the stdout JSON line
-    has already been printed. Never raises: a downed collector or
+    Reached through the harness's log mirror (see :mod:`worker.harness`)
+    after the stdout JSON line has already been printed, and registered
+    there rather than called directly, so a worker without telemetry
+    configured never routes a record through this module at all.
+
+    Never raises: a downed collector or
     misconfigured headers must NOT silence the worker's primary logging
     channel.
     """

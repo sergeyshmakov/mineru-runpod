@@ -7,7 +7,8 @@ description: Architecture, what's in the repo, supported workloads, and how it c
 
 ## What's in the repo
 
-- **`handler.py`** — the serverless worker. Accepts a PDF via URL, base64, or mounted-volume path; calls MinerU's async parse; returns Markdown + `content_list` + `middle.json` + images.
+- **`handler.py`** — the serverless worker. Accepts a PDF via URL, base64, or mounted-volume path; calls MinerU's async parse; returns Markdown + `content_list` + `middle.json` + images. The MinerU-specific parts live in `worker/`; input transport, response packaging, logging and diagnostics come from the harness below.
+- **[`runpod-doc-worker`](https://github.com/sergeyshmakov/runpod-doc-worker)** — a dependency, not a directory: the engine-agnostic half of this worker, extracted so the repo can be the engine and the entry point. It fetches the input from a URL, a base64 blob or a volume path, checks outbound targets, packs the result as a tarball, inline fields or an S3 object, emits one JSON log line per record, and answers a `probe: true` job. What this worker declares to it — env prefix, input roots, output manifest — is one file, `worker/harness.py`. See the [harness docs](https://rdw.shmakov.tools).
 - **`mineru_client/`** — the dependency-light Python package. `MineruClient` exposes the native worker contract; `MineruApiClient` provides a temporary compatibility facade for evaluating a move from the MinerU cloud API.
 - **`deploy.py` / `destroy.py`** — create and remove endpoints with CLI flags for identity, scaling, GPU, disk, and timeout settings. Configure environment variables, secrets, storage, and regions in RunPod.
 - **`.runpod/hub.json`** — the active RunPod Hub listing and deploy form, including GPU pools and optional integration settings.

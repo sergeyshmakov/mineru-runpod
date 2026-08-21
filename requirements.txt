@@ -16,14 +16,24 @@ mineru[core,vllm]>=3.4.0,<3.5.0
 # RunPod serverless SDK — provides runpod.serverless.start() and async helpers.
 runpod>=1.7.0
 
+# The engine-agnostic half of this worker: input transport (url / b64 /
+# volume_path + format detection), outbound target checks, response packaging
+# (tarball / inline / s3), structured logging, redaction and the model-cache
+# probe. This repo keeps the MinerU engine, the input schema and the job
+# envelope; everything above comes from here.
+#
+# Pinned to a tag, not a branch: the harness API is pre-release and expected to
+# move, and an image build has to be reproducible. The archive URL is a PEP 508
+# direct reference, so the build node needs no `git` binary. Kept in sync with
+# the `test` extra in pyproject.toml, which is what CI installs.
+#
+# The `[s3]` extra is boto3, imported lazily inside the s3 packaging path — a
+# worker without S3 env vars never touches it. Drop the extra on a fork that
+# only returns tarballs or inline payloads.
+runpod-doc-worker[s3] @ https://github.com/sergeyshmakov/runpod-doc-worker/archive/refs/tags/v0.5.0.tar.gz
+
 # Used by the handler for downloading URL-supplied PDFs.
 httpx>=0.27
-
-# Used by the handler when callers request `transport: "s3"` to upload the
-# output tarball to an S3-compatible bucket and return a presigned URL.
-# Only imported lazily inside the s3 code path, so a worker without S3
-# env vars never touches it.
-boto3>=1.35
 
 # Xet storage backend client used by huggingface_hub for chunk-based
 # parallel downloads. Auto-detected when installed; the Dockerfile bake

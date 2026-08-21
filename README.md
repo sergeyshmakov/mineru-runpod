@@ -91,6 +91,8 @@ Send `{"input": {...}}` to `/runsync` (or `/run`). The most-used fields:
 
 Responses wrap each file in a `results: [...]` list alongside a top-level `debug` block; failures set `ok=false` with a top-level `error`. The full field list, per-transport response shapes, and validation rules live in the **[API reference](https://mineru.shmakov.tools/reference/api/)** (mirrored from the docstring atop [`handler.py`](handler.py)).
 
+Under that contract, this repo is the MinerU half: the engine, the input schema and the job envelope. Fetching the input, checking outbound targets, packing the response, structured logging and the model-cache probe come from [`runpod-doc-worker`](https://github.com/sergeyshmakov/runpod-doc-worker) ([docs](https://rdw.shmakov.tools)), an engine-agnostic harness extracted from this worker. What this worker declares to it — its env prefix, input roots and output manifest — is one file, [`worker/harness.py`](worker/harness.py).
+
 ## How does it compare?
 
 Parsing accuracy is MinerU's domain; their published [OmniDocBench](https://github.com/opendatalab/OmniDocBench) leaderboard puts the 1.2B VLM ahead of much larger general-purpose models:

@@ -1,14 +1,20 @@
 """RunPod serverless entry point for the MinerU worker.
 
-The pieces this orchestrates live in the worker/ package:
-  worker.schema   — input validation
-  worker.io       — fetch raw bytes from URL / b64 / volume + format detection
-  worker.parse    — MinerU lazy import + async parse call
-  worker.package  — tarball / inline / s3 response packaging
-  worker.debug    — GPU info, model dir, /runpod-volume probe
-  worker.logging  — JSON / text structured logging
-  worker.redact   — one shape for the text a failure reports
-  worker.net      — target checks for the URL job inputs (used by io/schema)
+The MinerU-specific pieces this orchestrates live in the worker/ package:
+  worker.harness   — what this worker declares about itself to the harness
+  worker.schema    — input validation
+  worker.parse     — MinerU lazy import + async parse call
+  worker.telemetry — optional OpenTelemetry export
+  worker.warmup    — one throwaway parse at boot
+
+The engine-agnostic ones come from the runpod_doc_worker package, which
+worker.harness configures for this worker:
+  transport.io      — fetch raw bytes from URL / b64 / volume + format detection
+  transport.net     — target checks for the URL job inputs (used by io/schema)
+  transport.package — tarball / inline / s3 response packaging
+  obs.logging       — JSON / text structured logging
+  obs.redact        — one shape for the text a failure reports
+  obs.debug         — GPU info, model dir, /runpod-volume probe
 
 The module surface (``handler.MAX_INLINE_FILE_MB``, ``handler._detect_format``,
 ``handler._validate_input``, ``handler._package_tarball``, etc.) is preserved
@@ -28,12 +34,18 @@ from typing import Any
 
 import runpod
 
-from worker import debug as _debug
-from worker import io as _io
-from worker import logging as _logging
-from worker import package as _package
+from runpod_doc_worker.contract import degraded as _degraded
+from runpod_doc_worker.obs import debug as _debug
+from runpod_doc_worker.obs import logging as _logging
+from runpod_doc_worker.obs import redact as _redact
+from runpod_doc_worker.transport import io as _io
+from runpod_doc_worker.transport import package as _package
+
+# Installs this worker's harness config. Imported first among the worker
+# modules so the declaration is visible here rather than arriving as a side
+# effect of importing one of the others.
+from worker import harness as _harness  # noqa: F401
 from worker import parse as _parse
-from worker import redact as _redact
 from worker import schema as _schema
 from worker import telemetry as _telemetry
 
@@ -138,6 +150,66 @@ def _record_job(pages: int) -> str | None:
         if pages_th > 0 and _pages_processed_total >= pages_th:
             return "pages_threshold"
         return None
+
+
+def _record_degradation(lost: _degraded.Report) -> None:
+    """Count what a successful response could not carry.
+
+    The response already names the affected artifacts, per document. This is
+    the other half: an operator watching a fleet needs the rate, because a
+    response nobody reads back is not a signal. Labelled by reason and by
+    artifact — both bounded, so the series count is too.
+
+    `items` stops at the harness's cap while `count` stays true, so the
+    remainder is added under its own label rather than dropped. A metric that
+    quietly undercounts the pathological case is the failure this whole field
+    exists to avoid.
+    """
+    reported = lost.entry()
+    if reported is None:
+        return
+    for item in reported["items"]:
+        _telemetry.counter_add(
+            "degraded_total",
+            reason=item["reason"],
+            # None means an archive member, which no manifest key claims.
+            artifact=item["artifact"] or "archive",
+        )
+    unlisted = reported["count"] - len(reported["items"])
+    if unlisted > 0:
+        _telemetry.counter_add(
+            "degraded_total", unlisted, reason="unlisted", artifact="unlisted",
+        )
+
+
+# -----------------------------------------------------------------------------
+# Probe policy
+# -----------------------------------------------------------------------------
+#
+# Who may ask this endpoint for its filesystem layout is this worker's call.
+# The payload names container paths and the model-source env values, and only a
+# worker knows whether its callers are its own operators. The harness supplies
+# the dump and reads no variable of its own, so this name belongs to this repo
+# and cannot be renamed by a dependency release.
+
+_PROBE_NOT_DISABLED = ("0", "false", "no", "off")
+
+
+def _probe_allowed() -> bool:
+    """Whether `probe: true` is answered on this endpoint.
+
+    On unless MINERU_DISABLE_PROBE says otherwise, which is what this endpoint
+    has always done and what the troubleshooting guide points someone to when
+    a Cached Models setup is not being found.
+
+    An unrecognised value denies rather than allows. An operator who typed
+    something into this variable meant to turn the probe off, and a typo should
+    not be what publishes a filesystem dump.
+    """
+    value = os.environ.get("MINERU_DISABLE_PROBE", "").strip().lower()
+    if not value:
+        return True
+    return value in _PROBE_NOT_DISABLED
 
 
 # -----------------------------------------------------------------------------
@@ -334,6 +406,10 @@ async def _handle_parse(
         )
         transport = cleaned["transport"]
         formats = cleaned["formats"]
+        # Our own report, rather than reading `degraded` back off the entry:
+        # what was lost is wanted here as a count, and the entry is a response
+        # shape that should not have to double as an internal channel.
+        lost = _degraded.Report()
         with _telemetry.span(
             "mineru.package",
             phase="package",
@@ -345,9 +421,12 @@ async def _handle_parse(
                 output_dir=output_dir,
                 basename=cleaned["basename"],
                 source=source,
-                pages_requested=pages_requested,
+                manifest=_harness.MANIFEST,
+                metadata={"pages_requested": pages_requested},
                 archive_format=cleaned["archive_format"],
+                report=lost,
             )
+        _record_degradation(lost)
         response: dict[str, Any] = {
             "ok": True,
             "elapsed_seconds": round(time.monotonic() - started, 2),
@@ -438,7 +517,7 @@ async def handler(job: dict) -> dict:
             # Probe mode bypasses schema validation: a probe has no file source
             # and the operator may want to send arbitrary debug flags through.
             if raw_input.get("probe") is True:
-                if not _debug.probe_enabled():
+                if not _probe_allowed():
                     raise ValueError(
                         "probe is disabled on this endpoint "
                         "(MINERU_DISABLE_PROBE)"
@@ -457,7 +536,7 @@ async def handler(job: dict) -> dict:
             )
             _telemetry.counter_add("jobs_total", status="error")
             # One shape for the failure text across all three sinks (response,
-            # stdout, optional OTLP export) — see worker/redact.py.
+            # stdout, optional OTLP export) — see the harness's obs.redact.
             _logging.error(
                 "job failed",
                 error_type=type(exc).__name__,
@@ -478,7 +557,8 @@ async def handler(job: dict) -> dict:
 
 # -----------------------------------------------------------------------------
 # Back-compat surface for tests and any out-of-tree callers that imported
-# helpers from this module directly. New code should import from worker.*.
+# helpers from this module directly. New code should import from worker.* or
+# from the harness.
 # -----------------------------------------------------------------------------
 
 MAX_INLINE_FILE_MB = _io.MAX_INLINE_FILE_MB
@@ -489,7 +569,6 @@ _resolve_input_bytes = _io.resolve_input_bytes
 _detect_format = _io.detect_format
 _validate_input = _schema.validate_input
 _package_tarball = _package.package_tarball
-_package_inline = _package.package_inline
 _package_s3 = _package.package_s3
 _build_tarball_bytes = _package._build_tarball_bytes
 _build_zip_bytes = _package._build_zip_bytes
@@ -497,6 +576,20 @@ _run_mineru = _parse.run_mineru
 _collect_gpu_info = _debug.collect_gpu_info
 _find_model_dir = _debug.find_model_dir
 _probe_filesystem = _debug.probe_filesystem
+
+
+def _package_inline(
+    output_dir: Path, basename: str, formats: Any = None
+) -> dict[str, Any]:
+    """Inline packaging with this worker's manifest bound.
+
+    The harness reads whatever manifest it is handed; which files MinerU
+    writes is this repo's to declare, so the binding happens here rather
+    than at each call site. See :mod:`worker.harness`.
+    """
+    return _package.package_inline(
+        output_dir, basename, _harness.MANIFEST, formats=formats
+    )
 
 
 def _bootstrap_main() -> None:

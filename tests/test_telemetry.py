@@ -122,7 +122,7 @@ def test_init_does_not_import_python_logging(monkeypatch):
     """The OTel logs path must NOT route through Python's logging module.
 
     The runpod SDK reconfigures the root logger inside serverless.start()
-    and silences anything plumbed through it (see worker/logging.py
+    and silences anything plumbed through it (see the harness's obs.logging
     docstring). Reintroducing Python logging here would re-create the
     disappearing-logs bug.
     """
@@ -241,7 +241,7 @@ def test_init_failure_is_nonfatal(monkeypatch):
 
 
 def test_emit_log_failure_is_silent(monkeypatch):
-    """A broken OTel logger must not propagate exceptions back to worker.logging."""
+    """A broken OTel logger must not propagate exceptions back to the log mirror."""
     from worker import telemetry
 
     _enable(monkeypatch)
@@ -255,12 +255,12 @@ def test_emit_log_failure_is_silent(monkeypatch):
 
 
 # -----------------------------------------------------------------------------
-# worker.logging mirror integration: enabled telemetry triggers emit_log
+# Log mirror integration: enabled telemetry triggers emit_log
 # -----------------------------------------------------------------------------
 
 def test_logging_mirrors_to_telemetry_when_enabled(monkeypatch):
-    """worker.logging.info() should fan out to telemetry.emit_log when enabled."""
-    from worker import logging as worker_logging
+    """A log line should fan out to telemetry.emit_log when enabled."""
+    from runpod_doc_worker.obs import logging as worker_logging
     from worker import telemetry
 
     _enable(monkeypatch)
@@ -293,7 +293,7 @@ def test_logging_mirrors_to_telemetry_when_enabled(monkeypatch):
 
 def test_logging_mirror_includes_job_id(monkeypatch):
     """The job_id contextvar should be threaded into the mirrored record."""
-    from worker import logging as worker_logging
+    from runpod_doc_worker.obs import logging as worker_logging
     from worker import telemetry
 
     _enable(monkeypatch)
@@ -315,7 +315,7 @@ def test_logging_mirror_includes_job_id(monkeypatch):
 
 def test_logging_does_not_mirror_when_disabled(monkeypatch):
     """No env var → mirror is skipped (and the OTel SDK isn't even imported)."""
-    from worker import logging as worker_logging
+    from runpod_doc_worker.obs import logging as worker_logging
     from worker import telemetry
 
     telemetry.init_telemetry()  # disabled — no env var set
@@ -624,7 +624,7 @@ def test_histograms_use_exponential_bucket_aggregation(monkeypatch):
 
 
 def test_emit_log_maps_critical_and_fatal_severity(monkeypatch):
-    """worker.logging only emits debug/info/warning/error today, but the
+    """The harness only emits debug/info/warning/error today, but the
     mirror should still map critical/fatal correctly in case a helper
     is added later (or a caller bypasses the wrapper)."""
     from worker import telemetry

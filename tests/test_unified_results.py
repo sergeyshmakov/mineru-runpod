@@ -1,7 +1,9 @@
 """Unified `results: [...]` response shape.
 
-Exercises worker.package.package_results_entry directly (no GPU, no MinerU)
-plus the handler-level shape assertions and the egress sizing helper.
+Exercises the harness's package_results_entry with this worker's manifest
+(no GPU, no MinerU) plus the handler-level shape assertions. What is being
+asserted is the contract callers see: which keys an entry carries per
+transport, and which ones a `formats` filter leaves out.
 """
 
 from __future__ import annotations
@@ -16,8 +18,10 @@ from pathlib import Path
 
 import pytest
 
+from runpod_doc_worker.transport import package
+
 import handler
-from worker import package
+from worker.harness import MANIFEST
 
 
 # -----------------------------------------------------------------------------
@@ -49,7 +53,8 @@ def test_tarball_entry_carries_basename_source_pages_and_tarball(tmp_path):
         output_dir=out,
         basename="doc",
         source="b64",
-        pages_requested=10,
+        manifest=MANIFEST,
+        metadata={"pages_requested": 10},
     )
     assert entry["basename"] == "doc"
     assert entry["source"] == "b64"
@@ -77,7 +82,8 @@ def test_tarball_entry_zip_archive_format(tmp_path):
         output_dir=out,
         basename="doc",
         source="b64",
-        pages_requested=10,
+        manifest=MANIFEST,
+        metadata={"pages_requested": 10},
         archive_format="zip",
     )
     raw = base64.b64decode(entry["tarball_b64"])
@@ -99,7 +105,8 @@ def test_inline_entry_with_all_formats(tmp_path):
         output_dir=out,
         basename="doc",
         source="url:https://x/doc.pdf",
-        pages_requested=-1,
+        manifest=MANIFEST,
+        metadata={"pages_requested": -1},
     )
     assert entry["basename"] == "doc"
     assert entry["source"] == "url:https://x/doc.pdf"
@@ -124,7 +131,8 @@ def test_inline_entry_with_markdown_only_omits_other_keys(tmp_path):
         output_dir=out,
         basename="doc",
         source="b64",
-        pages_requested=5,
+        manifest=MANIFEST,
+        metadata={"pages_requested": 5},
     )
     assert "markdown" in entry
     assert "content_list" not in entry
@@ -142,7 +150,8 @@ def test_inline_entry_with_two_formats(tmp_path):
         output_dir=out,
         basename="doc",
         source="b64",
-        pages_requested=5,
+        manifest=MANIFEST,
+        metadata={"pages_requested": 5},
     )
     assert "markdown" not in entry
     assert "middle" not in entry
@@ -161,7 +170,8 @@ def test_inline_entry_without_images_dir(tmp_path):
         output_dir=out,
         basename="doc",
         source="b64",
-        pages_requested=1,
+        manifest=MANIFEST,
+        metadata={"pages_requested": 1},
     )
     assert entry["markdown"] == "# md"
     assert entry["images"] == {}

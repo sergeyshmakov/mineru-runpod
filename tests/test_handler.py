@@ -17,8 +17,9 @@ from pathlib import Path
 
 import pytest
 
+from runpod_doc_worker.transport import io as worker_io
+
 import handler
-from worker import io as worker_io
 
 
 # -----------------------------------------------------------------------------
@@ -169,6 +170,30 @@ def test_handler_rejects_bad_basename():
     assert "input validation" in result["error"].lower() or "basename" in result["error"].lower()
 
 
+def test_handler_failure_response_reports_compacted_text(monkeypatch):
+    """Both text fields of a failure response go through the same reduction.
+
+    The reduction itself is the harness's; what this asserts is that the
+    handler routes `error` and `traceback` through it, so a signed URL a
+    caller passed in does not come back in the response it gets.
+    """
+    async def boom(*args, **kwargs):
+        raise RuntimeError(
+            "GET failed for 'https://files.example.com/doc.pdf?sig=abcdef123456'"
+        )
+
+    monkeypatch.setattr(worker_io, "resolve_input_bytes", boom)
+    result = asyncio.run(handler.handler({
+        "id": "compact-test",
+        "input": {"file_b64": "JVBERi0xLjQK"},
+    }))
+
+    assert result["ok"] is False
+    assert "sig=" not in result["error"]
+    assert "sig=" not in result["traceback"]
+    assert "https://files.example.com/doc.pdf" in result["error"]
+
+
 def test_validate_input_rejects_invalid_transport_value():
     with pytest.raises(ValueError, match="input validation"):
         handler._validate_input({"file_b64": "AA==", "transport": "tarball-xml"})
@@ -314,7 +339,9 @@ def test_page_ceiling_ignores_a_malformed_value(monkeypatch):
 
 def test_resolve_b64_rejects_oversized_encoded_payload():
     # Rejected on the encoded length, before the decoded copy is allocated.
-    too_big = "A" * (worker_io.MAX_INLINE_B64_CHARS + 1)
+    # One character past the harness's own bound, rather than a copy of its
+    # arithmetic that would stop describing it the moment the headroom moved.
+    too_big = "A" * (worker_io.max_inline_b64_chars() + 1)
     with pytest.raises(ValueError, match="inline file too large"):
         asyncio.run(handler._resolve_input_bytes({"file_b64": too_big}))
 
@@ -381,7 +408,41 @@ def test_handler_probe_mode_can_be_turned_off(monkeypatch):
     assert "probe" not in result
 
 
+def test_the_refusal_names_the_knob(monkeypatch):
+    """A caller reading this is usually the operator who can act on it."""
+    monkeypatch.setenv("MINERU_DISABLE_PROBE", "1")
+    result = asyncio.run(handler.handler({"input": {"probe": True}}))
+    assert "MINERU_DISABLE_PROBE" in result["error"]
+
+
+@pytest.mark.parametrize("value", ["1", "true", "yes", "on", "TRUE", " 1 "])
+def test_every_affirmative_spelling_turns_the_probe_off(monkeypatch, value):
+    monkeypatch.setenv("MINERU_DISABLE_PROBE", value)
+    assert handler._probe_allowed() is False
+
+
+@pytest.mark.parametrize("value", ["0", "false", "no", "off", "OFF"])
+def test_an_explicit_negative_leaves_the_probe_on(monkeypatch, value):
+    monkeypatch.setenv("MINERU_DISABLE_PROBE", value)
+    assert handler._probe_allowed() is True
+
+
+@pytest.mark.parametrize("value", ["maybe", "typo", "disabled", "2"])
+def test_an_unrecognised_value_denies(monkeypatch, value):
+    """An operator who typed something into this variable meant to turn the
+    probe off. A typo must not be what publishes a filesystem dump."""
+    monkeypatch.setenv("MINERU_DISABLE_PROBE", value)
+    assert handler._probe_allowed() is False
+
+
+@pytest.mark.parametrize("value", ["", "   "])
+def test_a_blank_value_is_not_a_setting(monkeypatch, value):
+    monkeypatch.setenv("MINERU_DISABLE_PROBE", value)
+    assert handler._probe_allowed() is True
+
+
 def test_handler_probe_mode_enabled_by_default(monkeypatch):
+    """Unset means available, which is what this endpoint has always done."""
     monkeypatch.delenv("MINERU_DISABLE_PROBE", raising=False)
     result = asyncio.run(handler.handler({"input": {"probe": True}}))
     assert result["ok"] is True
@@ -493,7 +554,7 @@ def test_package_s3_complains_about_each_missing_env_var(tmp_path, monkeypatch):
     ],
 )
 def test_presign_ttl_resolution(monkeypatch, env_value, expected):
-    from worker import package as worker_package
+    from runpod_doc_worker.transport import package as worker_package
 
     if env_value is None:
         monkeypatch.delenv("BUCKET_PRESIGN_TTL_SECONDS", raising=False)

@@ -8,14 +8,23 @@ from typing import Any
 
 from runpod.serverless.utils.rp_validator import validate
 
-from worker import net as _net
+from runpod_doc_worker.contract import artifacts as _artifacts
+from runpod_doc_worker.transport import net as _net
+from runpod_doc_worker.transport import package as _package
+
+from worker.harness import MANIFEST
 
 
-VALID_TRANSPORTS = {"tarball_b64", "inline", "s3"}
+# Both come from where the behaviour is rather than being restated here: a
+# transport this worker accepts but the harness cannot pack, or a format the
+# schema admits but no artifact produces, would be a contract that validates
+# and then fails.
+VALID_TRANSPORTS = _package.VALID_TRANSPORTS
 
-# Order is the canonical output order — used as the default when `formats`
-# is omitted, and as the iteration order for deduplication.
-VALID_FORMATS: tuple[str, ...] = ("markdown", "content_list", "middle", "images")
+# Declaration order in the manifest is the canonical output order — used as
+# the default when `formats` is omitted, and as the iteration order for
+# deduplication.
+VALID_FORMATS: tuple[str, ...] = tuple(_artifacts.keys(MANIFEST))
 
 # MinerU 3.4.x backends. Validated at the handler boundary so callers get a
 # friendly error instead of a deep MinerU stack trace.
@@ -40,8 +49,8 @@ VALID_EFFORTS = {"medium", "high"}
 MAX_BASENAME_LEN = 128
 
 # The longest suffix the worker appends to `basename` when writing an artefact
-# — package_inline reads this one back, so it sets the longest filename a job
-# produces.
+# — it is one of the manifest's patterns, and the longest of them, so it sets
+# the longest filename a job produces. A test keeps the two in step.
 LONGEST_ARTEFACT_SUFFIX = "_content_list_v2.json"
 
 # Filesystems bound a path component in bytes, not characters, and the charset
