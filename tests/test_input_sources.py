@@ -20,10 +20,6 @@ import pytest
 from runpod_doc_worker.transport import io as worker_io
 from runpod_doc_worker.transport import net as worker_net
 
-# Installs this worker's config (input roots, env prefix) before anything
-# below reads it.
-import worker  # noqa: F401
-
 
 def _resolve(job_input: dict):
     return asyncio.run(worker_io.resolve_input_bytes(job_input))
