@@ -257,6 +257,23 @@ The two archive transports — `tarball_b64` and `s3` — default to a `.tar.gz`
 
 The main reason to pick `zip` is drop-in compatibility with the official MinerU cloud API's `full_zip_url` — the [`MineruApiClient`](/getting-started/migrate-from-mineru-api/) sets it for you.
 
+## When output comes back short
+
+Whichever mode you pick, a file MinerU wrote can turn out unreadable — bytes
+that are not valid UTF-8, JSON cut off by a disk that filled mid-write. One
+such file does not fail the job: the affected artifact comes back as its empty
+default (or the archive ships without that member), and the entry carries a
+`degraded` object naming what was lost and why.
+
+The exception is the Markdown itself. It is the document, so a job that cannot
+produce readable Markdown fails with `ok: false` instead of returning an empty
+string — you can retry a failed job, but not a successful one that quietly
+returned nothing.
+
+`degraded` is absent when nothing was lost, so its presence is the signal to
+reprocess that document. Full field reference in
+[Incomplete responses](/reference/api/#incomplete-responses).
+
 ## Picking the right mode
 
 ```mermaid

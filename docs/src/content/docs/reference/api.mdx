@@ -148,6 +148,7 @@ For single-file jobs the markdown lives at `result.results[0].markdown`. Higher-
 | `tarball_b64` | string | Present when `transport: "tarball_b64"`. Base64-encoded archive of the output directory — `.tar.gz` by default, `.zip` when `archive_format: "zip"` |
 | `markdown`, `content_list`, `middle`, `images` | various | Present when `transport: "inline"`. The set of keys reflects the `formats` filter — see below |
 | `tarball_url`, `tarball_url_expires_in`, `bucket_key`, `bucket_bytes` | various | Present when `transport: "s3"`. The archive is `.tar.gz` by default, `.zip` when `archive_format: "zip"`. See [Output modes → s3](/guides/output-modes/) |
+| `degraded` | object | **Present only when the response is short of something.** See [Incomplete responses](#incomplete-responses) |
 
 Each job parses one file. To process many documents, submit them as individual jobs and raise `workers_max` — RunPod's queue runs them in parallel across workers (see [Scaling](/guides/scaling/)).
 
@@ -198,6 +199,41 @@ The `formats` field whitelists which artifacts the inline payload contains. Omit
 The resulting entry has `markdown` and `content_list` only; `middle` and `images` are not present in the response. Empty list is rejected (`formats: []` is a validation error).
 
 For `transport: "tarball_b64"` and `transport: "s3"`, `formats` is a no-op: the tarball always carries the full set of four artifacts (filtering inside an archive would be confusing for downstream callers).
+
+### Incomplete responses
+
+A parse can produce a file that cannot then be read — bytes that are not the UTF-8 the artifact is declared as, JSON truncated by a disk that filled mid-write, an image the filesystem will no longer describe. One corrupt file does not fail the job: the artifact comes back as its empty default, or the archive ships without that member, and the entry gains a `degraded` object saying so.
+
+```json
+{
+  "basename": "doc",
+  "source": "url:https://example.com/report.pdf",
+  "markdown": "# The document's real text
+",
+  "content_list": [],
+  "degraded": {
+    "count": 1,
+    "items": [
+      {"artifact": "content_list", "file": "doc_content_list.json",
+       "reason": "unreadable", "error_type": "JSONDecodeError"}
+    ]
+  }
+}
+```
+
+| Field | Type | Notes |
+|---|---|---|
+| `count` | int | Everything lost. `items` stops at 50, so `count` above `items.length` means the list is abridged |
+| `items[].artifact` | string \| null | Which response key it cost. `null` for an archive member, which is not one of the four formats |
+| `items[].file` | string | Filename only — the output directory is a temp path inside the worker |
+| `items[].reason` | string | `unreadable`, `unresolvable`, `outside_output_dir`, or `unsafe_name` |
+| `items[].error_type` | string | Exception class name, when an exception revealed the problem |
+
+**`degraded` is absent on an intact job**, so its presence is the signal. Treat an entry that has it as a document to reprocess: `ok` is `true` and nothing else will flag it, because from the outside an empty `content_list` looks the same as a document that had no tables in it.
+
+`markdown` is the exception. It is the document, so a job that cannot produce readable Markdown fails with `ok: false` rather than returning an empty string — a failed job can be retried, a successful one that quietly returned nothing cannot. The other three artifacts degrade.
+
+Every item is also emitted as a `response degraded` warning on stdout, carrying the same fields plus the `job_id`, so the aggregate is queryable in RunPod's log viewer or your [OTel sink](/guides/observability/) without reading responses. The field is the per-document signal; the log line is the fleet-wide one.
 
 ### Debug observability
 

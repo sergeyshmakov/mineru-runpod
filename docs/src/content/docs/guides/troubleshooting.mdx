@@ -362,6 +362,19 @@ On failure:
 {"ts":"2026-05-25T18:30:42.789Z","level":"error","logger":"mineru-worker","msg":"job failed","job_id":"queued-uuid-abc","error_type":"ValueError","error_message":"input bytes do not match any supported format","phase_ms":{"fetch_input":8}}
 ```
 
+On a job that succeeded but lost part of its output — a file MinerU wrote and
+the worker then could not read:
+
+```json
+{"ts":"2026-05-25T18:30:48.400Z","level":"warning","logger":"mineru-worker","msg":"response degraded","job_id":"queued-uuid-abc","artifact":"content_list","file":"doc_content_list.json","reason":"unreadable","error_type":"JSONDecodeError"}
+```
+
+`msg:"response degraded"` is one string for every such case, so a single alert
+rule catches all of them. The same information rides in the response itself
+under `degraded`, which is what tells you *which* document to reprocess — see
+[Incomplete responses](/reference/api/#incomplete-responses). The job is still
+`ok: true`, so nothing else will flag it.
+
 Key fields:
 
 | Field | Meaning |
