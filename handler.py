@@ -4,14 +4,17 @@ The MinerU-specific pieces this orchestrates live in the worker/ package:
   worker.harness   — what this worker declares about itself to the harness
   worker.schema    — input validation
   worker.parse     — MinerU lazy import + async parse call
-  worker.debug     — GPU info, model dir, /runpod-volume probe
+  worker.telemetry — optional OpenTelemetry export
+  worker.warmup    — one throwaway parse at boot
 
-The engine-agnostic ones come from the runpod_doc_worker package:
+The engine-agnostic ones come from the runpod_doc_worker package, which
+worker.harness configures for this worker:
   transport.io      — fetch raw bytes from URL / b64 / volume + format detection
   transport.net     — target checks for the URL job inputs (used by io/schema)
   transport.package — tarball / inline / s3 response packaging
   obs.logging       — JSON / text structured logging
   obs.redact        — one shape for the text a failure reports
+  obs.debug         — GPU info, model dir, /runpod-volume probe
 
 The module surface (``handler.MAX_INLINE_FILE_MB``, ``handler._detect_format``,
 ``handler._validate_input``, ``handler._package_tarball``, etc.) is preserved
@@ -31,6 +34,7 @@ from typing import Any
 
 import runpod
 
+from runpod_doc_worker.obs import debug as _debug
 from runpod_doc_worker.obs import logging as _logging
 from runpod_doc_worker.obs import redact as _redact
 from runpod_doc_worker.transport import io as _io
@@ -40,7 +44,6 @@ from runpod_doc_worker.transport import package as _package
 # modules so the declaration is visible here rather than arriving as a side
 # effect of importing one of the others.
 from worker import harness as _harness  # noqa: F401
-from worker import debug as _debug
 from worker import parse as _parse
 from worker import schema as _schema
 from worker import telemetry as _telemetry
