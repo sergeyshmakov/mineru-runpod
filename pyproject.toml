@@ -42,6 +42,15 @@ test = [
     "opentelemetry-exporter-otlp-proto-http>=1.27,<2",
 ]
 
+[tool.hatch.metadata]
+# The `test` extra pins the worker harness by archive URL, which is a PEP 508
+# direct reference. Hatchling refuses those in metadata unless told, because a
+# package carrying one cannot be uploaded to PyPI — true here and not a
+# problem: `mineru_client` is installed from git, and this extra is CI's, not a
+# consumer's. Without this, `pip install -e ".[test]"` fails at metadata
+# generation before a single test runs.
+allow-direct-references = true
+
 [tool.hatch.build.targets.wheel]
 packages = ["mineru_client"]
 
