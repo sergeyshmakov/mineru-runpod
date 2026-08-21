@@ -7,6 +7,7 @@ multi-ecosystem-groups:
       interval: "monthly"
       time: "06:00"
       timezone: "UTC"
+    open-pull-requests-limit: 1
     commit-message:
       prefix: "build"
       include: "scope"
@@ -22,7 +23,6 @@ updates:
     multi-ecosystem-group: "monthly-direct-dependencies"
     allow:
       - dependency-type: "direct"
-    open-pull-requests-limit: 1
     labels:
       - "dependencies"
     ignore:
@@ -41,7 +41,6 @@ updates:
     multi-ecosystem-group: "monthly-direct-dependencies"
     allow:
       - dependency-type: "direct"
-    open-pull-requests-limit: 1
     labels:
       - "dependencies"
       - "github-actions"
