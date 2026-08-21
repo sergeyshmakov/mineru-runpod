@@ -29,6 +29,11 @@ test = [
     "httpx>=0.27",
     "runpod>=1.7",
     "python-dotenv>=1.0",
+    # The worker harness. Needed here and not only in requirements.txt because
+    # CI installs this extra and then imports handler, which imports it at
+    # module load. Same pinned tag as the container-side reference; the two
+    # move together.
+    "runpod-doc-worker[s3] @ https://github.com/sergeyshmakov/runpod-doc-worker/archive/refs/tags/v0.1.0.tar.gz",
     # Telemetry tests exercise the enabled path (env var set), which imports
     # the OTel SDK + OTLP/HTTP exporter. Kept in sync with the container-side
     # pins in requirements.txt.
