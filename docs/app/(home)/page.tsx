@@ -75,11 +75,15 @@ export default async function HomePage() {
 							</a>
 						</div>
 					</div>
+					{/* Abstract rather than figurative: this project's own mark — a
+					    document with a folded corner — at hero scale, a stack of them
+					    resolving into content. One hue at varying opacity, so it needs
+					    no second version for dark mode. */}
 					<img
-						src="/promo_bg.png"
-						alt="PDF transformed to Markdown by a serverless cloud"
-						width={1024}
-						height={1024}
+						src="/hero.svg"
+						alt="Abstract stack of documents resolved into structured content"
+						width={440}
+						height={440}
 						loading="eager"
 						decoding="async"
 						className="mx-auto hidden h-auto w-full max-w-md lg:block"

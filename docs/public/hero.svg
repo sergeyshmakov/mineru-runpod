@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 440 440" fill="none" role="img" aria-label="Abstract stack of documents resolved into structured content">
+	<title>Documents resolved into structure</title>
+
+	<!--
+		Same visual language as the sibling paddleocr-vl-runpod hero — flat
+		geometry, one hue at varying opacity, no glow — but the motif comes from
+		this project's own mark rather than the sibling's. There the mark is a page
+		resolved into regions, so its hero is regions; here the mark is a document
+		with a folded corner, so this is a stack of them resolving into content.
+
+		One hue at varying opacity is what lets it hold on both the light and the
+		dark ground without a second version. And there is deliberately no soft
+		wash behind it: a radial fade inside a bounding box shows its own edges
+		unless the fade completes before them, and it would fight the grid the hero
+		section already lays down.
+	-->
+	<g fill="#5f16f2">
+		<!-- the page behind, offset and faint, so the front one reads as one of many -->
+		<rect x="129" y="46" width="250" height="300" rx="20" opacity=".11" />
+
+		<!-- the page in front: silhouette, then its folded corner -->
+		<path d="M115 70h174l56 56v224a20 20 0 0 1-20 20H115a20 20 0 0 1-20-20V90a20 20 0 0 1 20-20Z" opacity=".22" />
+		<path d="M289 70v56h56Z" opacity=".42" />
+
+		<!-- the content it resolves into: one dominant line, then body, weighted
+		     so the block is not a uniform grey slab -->
+		<rect x="121" y="170" width="150" height="26" rx="9" opacity=".95" />
+		<rect x="121" y="216" width="198" height="16" rx="8" opacity=".34" />
+		<rect x="121" y="244" width="170" height="16" rx="8" opacity=".34" />
+		<rect x="121" y="272" width="198" height="16" rx="8" opacity=".22" />
+		<rect x="121" y="300" width="120" height="16" rx="8" opacity=".55" />
+		<rect x="257" y="300" width="62" height="16" rx="8" opacity=".15" />
+	</g>
+</svg>

@@ -254,7 +254,7 @@ for (const file of [
 	path.join("out", "favicon.svg"),
 	path.join("out", "logo.svg"),
 	path.join("out", "og-default.png"),
-	path.join("out", "promo_bg.png"),
+	path.join("out", "hero.svg"),
 	path.join("out", "google9835a2061220351a.html"),
 	path.join("out", "robots.txt"),
 	path.join("out", "sitemap.xml"),
