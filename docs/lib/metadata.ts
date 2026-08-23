@@ -53,5 +53,16 @@ export function pageMetadata({
 			...(publishedTime ? { publishedTime } : {}),
 			...(modifiedTime ? { modifiedTime } : {}),
 		},
+		// Same replacement rule as openGraph: without this, pages inherit the
+		// root layout's Twitter object and every card reads "mineru-runpod" plus
+		// the site description. Starlight emitted no twitter:title at all, so
+		// cards fell back to og:title; an inherited generic title would override
+		// that fallback and make every card worse than before.
+		twitter: {
+			card: "summary_large_image",
+			title,
+			description,
+			images: [ogImage],
+		},
 	};
 }

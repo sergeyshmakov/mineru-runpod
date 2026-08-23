@@ -164,6 +164,23 @@ for (const route of routes) {
 		route,
 	);
 
+	// A page-level twitter object replaces the root layout's, so an omission
+	// shows up as every card carrying the site name instead of the page title.
+	const cardTitle = decode(
+		match(
+			html,
+			/<meta name="twitter:title" content="([^"]+)"/,
+			"twitter:title",
+			route,
+		),
+	);
+	const pageTitle = expectedTitle.replace(" | mineru-runpod", "");
+	if (cardTitle !== pageTitle) {
+		throw new Error(
+			`${route}: twitter:title is ${cardTitle}; expected ${pageTitle}`,
+		);
+	}
+
 	// Cloudflare Web Analytics is injected by the app shell, not by a proxy.
 	requires(html, CF_BEACON, "Cloudflare Web Analytics beacon", route);
 
