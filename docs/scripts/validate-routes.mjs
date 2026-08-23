@@ -218,7 +218,8 @@ if (!/role="tab"/.test(tabsHtml)) {
 
 for (const file of [
 	path.join("out", "404.html"),
-	path.join("out", "favicon.png"),
+	path.join("out", "favicon.svg"),
+	path.join("out", "logo.svg"),
 	path.join("out", "og-default.png"),
 	path.join("out", "promo_bg.png"),
 	path.join("out", "google9835a2061220351a.html"),

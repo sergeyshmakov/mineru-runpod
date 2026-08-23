@@ -14,7 +14,7 @@ export const metadata: Metadata = {
 	},
 	description: siteDescription,
 	icons: {
-		icon: [{ url: "/favicon.png", type: "image/png" }],
+		icon: [{ url: "/favicon.svg", type: "image/svg+xml" }],
 	},
 	alternates: {
 		canonical: "/",

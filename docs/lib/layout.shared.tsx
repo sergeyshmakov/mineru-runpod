@@ -1,12 +1,13 @@
 import type { BaseLayoutProps } from "fumadocs-ui/layouts/shared";
-import { repositoryUrl, runpodReferralUrl, siteName } from "@/lib/site";
+import { DeployButton } from "@/components/deploy-button";
+import { repositoryUrl, siteName } from "@/lib/site";
 
 export function baseOptions(): BaseLayoutProps {
 	return {
 		nav: {
 			title: (
 				<span className="flex items-center gap-2">
-					<img src="/favicon.png" alt="" width={24} height={24} />
+					<img src="/logo.svg" alt="" width={24} height={24} />
 					<span>{siteName}</span>
 				</span>
 			),
@@ -29,9 +30,8 @@ export function baseOptions(): BaseLayoutProps {
 				active: "nested-url",
 			},
 			{
-				text: "Deploy on RunPod",
-				url: runpodReferralUrl,
-				external: true,
+				type: "custom",
+				children: <DeployButton />,
 			},
 		],
 	};
