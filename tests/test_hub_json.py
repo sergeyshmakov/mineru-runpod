@@ -23,7 +23,7 @@ def test_hub_json_is_publishable():
     """Every description fits the varchar(191) column the Hub stores it in.
 
     Over the limit, the push fails with an opaque database error, so long
-    guidance belongs in docs/src/content/docs/guides/ instead.
+    guidance belongs in docs/content/docs/guides/ instead.
     """
     hub.check(_RUNPOD_DIR / "hub.json")
 

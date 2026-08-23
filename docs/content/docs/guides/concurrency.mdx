@@ -1,0 +1,58 @@
+---
+title: Concurrency
+description: Understand workers_max, MINERU_MAX_CONCURRENCY, and vLLM batching, including how the two user-controlled concurrency settings multiply.
+---
+
+"Concurrency" on a serverless MinerU endpoint happens at three levels. Two are yours to set; the third is automatic. Conflating them is the most common source of "why isn't my endpoint going faster?" confusion — including the trap of firing more requests and watching them queue.
+
+## The three levels
+
+| Level | Knob | Default | Who sets it |
+|---|---|---|---|
+| **Across workers** (horizontal) | `workers_max` — how many separate worker containers run at once, each on its own GPU | `3` | Endpoint setting — RunPod dashboard or `deploy.py --workers-max` |
+| **Within a worker** (vertical) | `MINERU_MAX_CONCURRENCY` — how many jobs one worker pulls off the queue and runs at once through its shared model | `1` | Worker env var (exposed on the Hub deploy form) |
+| **Within the engine** (automatic) | vLLM's continuous batching of page-images in one parse; the pipeline `window_size` | — | Not a request knob — MinerU / vLLM manage it |
+
+**Effective parallelism = `workers_max` × `MINERU_MAX_CONCURRENCY`.** With the defaults (3 × 1) the endpoint runs up to three jobs at once, one per worker.
+
+## How the queue dispatches
+
+RunPod puts every incoming request in a queue and hands it to a worker that has a free concurrency slot:
+
+- Each worker advertises up to `MINERU_MAX_CONCURRENCY` slots (default 1).
+- RunPod scales the worker count up to `workers_max`, spinning workers from zero on demand and back to zero after `idle_timeout`.
+- Requests beyond `workers_max × MINERU_MAX_CONCURRENCY` sit in the queue with status `IN_QUEUE` until a slot frees.
+
+So **submitting more requests than your capacity doesn't make any single one faster — the surplus just queues.** Firing 10 jobs at an endpoint with `workers_max=1, MINERU_MAX_CONCURRENCY=1` runs them strictly one at a time, no matter how concurrent your client is. ("One worker → sequential" is a consequence of the default `MINERU_MAX_CONCURRENCY=1`, not of having one worker — raise it and that single worker runs several at once.)
+
+<Callout type="info" title="Scale the dial, not the client">
+Client-side concurrency only helps up to `workers_max × MINERU_MAX_CONCURRENCY`. To actually go wider, raise those endpoint settings — not the number of requests you fire.
+</Callout>
+
+## Which lever to reach for
+
+### Default: scale out with `workers_max`
+
+For almost every workload, **horizontal scaling is the right dial.** Each worker is an isolated container with its own 24 GB GPU and its own model copy, peaking ~13 GiB on a single parse (see [Choosing a GPU](/guides/choosing-gpu/)). Raising `workers_max` adds full-speed parallel parses with no shared-memory risk. Cost scales linearly with worker-seconds; the only downside is more cold starts, mitigated by [FlashBoot](/guides/scaling/#flashboot).
+
+This is how the [5,039-page batching run](/blog/2026-06-03-clause-aligned-batching-large-pdf-mineru/) hit 3× throughput: `workers_max=3`, `MINERU_MAX_CONCURRENCY=1`, 36 page-range jobs fanned across three 24 GB workers.
+
+### Niche: in-worker concurrency
+
+Raising `MINERU_MAX_CONCURRENCY` to `2-3` makes one worker run several jobs through the **same** vLLM engine. Because they share one KV cache, peak VRAM grows roughly linearly with concurrency — which is the one reason to move to a [48 GB pool](/guides/choosing-gpu/) (`AMPERE_48`).
+
+It only pays off when a **single request doesn't saturate the GPU** — a stream of small documents, or jobs with heavy non-GPU phases (download, PDF rasterization, S3 upload) that leave the GPU idle. Overlapping job A's I/O with job B's GPU time fills those gaps and packs more parses into one GPU-second. For large or dense documents that already keep the GPU busy, in-worker concurrency just adds memory pressure for little gain — add a worker instead.
+
+Only raise it on **≥24 GB GPUs** (`vlm-auto-engine`) or any GPU (`pipeline`), and watch VRAM via `nvidia-smi` or the `gpu.memory` log fields. See [Scaling and tuning → Concurrency](/guides/scaling/#concurrency) for the knob itself.
+
+### Not a lever: the engine window
+
+You may see `Maximum concurrency for 8,192 tokens per request: 87.13x` in the logs, or the pipeline `window_size=64`. These are **internal** — how many sequences or page-images flow through the model in one pass — and MinerU / vLLM manage them automatically. They bound a single parse's throughput and VRAM; they do **not** serve more requests in parallel. Don't reach for `MINERU_PROCESSING_WINDOW_SIZE` to add request concurrency.
+
+## Summary
+
+| Goal | Reach for | GPU |
+|---|---|---|
+| More documents in parallel | `workers_max` (horizontal) | 24 GB per worker |
+| Better GPU use on small / I/O-heavy jobs | `MINERU_MAX_CONCURRENCY` `2-3` (in-worker) | 48 GB for headroom |
+| Faster on one large document | Neither — [batch it by page range](/guides/choosing-gpu/#large-documents-batch-dont-size-up) | 24 GB |

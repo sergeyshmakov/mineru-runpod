@@ -1,7 +1,12 @@
-name: Deploy Docs
+name: Docs
 
 on:
   push:
+    branches: [main]
+    paths:
+      - "docs/**"
+      - ".github/workflows/deploy-docs.yml"
+  pull_request:
     branches: [main]
     paths:
       - "docs/**"
@@ -10,42 +15,74 @@ on:
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
-
-concurrency:
-  group: pages
-  cancel-in-progress: false
 
 jobs:
   build:
-    name: Build
+    name: Build documentation
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: docs
     steps:
       - uses: actions/checkout@v7
         with:
-          # Full history so Starlight's `lastUpdated` (git log per file) is accurate.
+          # Fumadocs derives the visible last-updated dates from Git history.
           fetch-depth: 0
+
+      - name: Configure GitHub Pages
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: actions/configure-pages@v6
+
       - uses: actions/setup-node@v7
         with:
           node-version: 24.18.1
-      - name: Install dependencies
-        working-directory: docs
+          cache: npm
+          cache-dependency-path: docs/package-lock.json
+
+      # `npm ci` installs from the lockfile into a clean tree, so a lockfile
+      # that cannot actually build fails here rather than after a merge.
+      - name: Install documentation dependencies
         run: npm ci
-      - name: Build docs
-        working-directory: docs
+
+      - name: Lint documentation app
+        run: npm run lint
+
+      - name: Check documentation types
+        run: npm run typecheck
+
+      - name: Build static documentation
         run: npm run build
-      - uses: actions/upload-pages-artifact@v5
+
+      # The two gates below are the URL and metadata contract for the published
+      # site: every internal link and anchor resolves, and every public route
+      # keeps its canonical, title, social tags and sitemap entry.
+      - name: Validate documentation links
+        run: npm run validate:links
+
+      - name: Validate public routes and metadata
+        run: npm run validate:routes
+
+      - name: Upload Pages artifact
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        uses: actions/upload-pages-artifact@v5
         with:
-          path: docs/dist
+          path: docs/out
 
   deploy:
-    name: Deploy
+    name: Deploy documentation
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    permissions:
+      pages: write
+      id-token: write
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - id: deployment
+      - name: Deploy GitHub Pages
+        id: deployment
         uses: actions/deploy-pages@v5

@@ -1,0 +1,4 @@
+{
+	"title": "Getting Started",
+	"pages": ["overview", "deploy", "clients", "migrate-from-mineru-api"]
+}

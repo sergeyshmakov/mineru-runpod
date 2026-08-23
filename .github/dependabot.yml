@@ -13,7 +13,7 @@ multi-ecosystem-groups:
       include: "scope"
 
 updates:
-  # Root npm is release tooling; /docs is the Astro/Starlight site. Combining
+  # Root npm is release tooling; /docs is the Fumadocs site. Combining
   # the directories lets security fixes be grouped into one npm PR as well.
   - package-ecosystem: "npm"
     directories:
