@@ -1,0 +1,81 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 630" width="1200" height="630" fill="none">
+	<title>mineru-runpod — MinerU on RunPod Serverless</title>
+
+	<!--
+		Source for public/og-default.png. Crawlers do not render SVG, so the PNG is
+		what ships — see scripts/render-png.mjs. Keeping the source here means the
+		card can be edited as text rather than in an image editor, and stays in step
+		with the logo it carries.
+
+		Same layout as the sibling paddleocr-vl-runpod card, in this project's
+		violet: shared grammar, per-product motif and hue. Light rather than a dark
+		gradient, because the mark is white on violet and the docs are near-white —
+		a dark card would be the one surface here that looked like something else.
+	-->
+	<defs>
+		<linearGradient id="og-ground" x1="0" y1="0" x2="1" y2="1">
+			<stop offset="0" stop-color="#ffffff" />
+			<stop offset="1" stop-color="#f2edfd" />
+		</linearGradient>
+	</defs>
+
+	<rect width="1200" height="630" fill="url(#og-ground)" />
+
+	<!-- A rule at the foot, so the card reads as a card on a white timeline
+	     rather than bleeding into it. -->
+	<rect y="624" width="1200" height="6" fill="#5f16f2" />
+
+	<!-- left column: identity, headline, credentials -->
+
+	<!-- the logo, at the same geometry as logo.svg -->
+	<g transform="translate(80 72) scale(0.9375)">
+		<rect width="64" height="64" rx="14" fill="#5f16f2" />
+		<path d="M20 10h15l14 14v24a5 5 0 0 1-5 5H20a5 5 0 0 1-5-5V15a5 5 0 0 1 5-5Z" fill="#fff" />
+		<path d="M35 10v14h14Z" fill="#5f16f2" opacity=".3" />
+		<rect x="22" y="30" width="20" height="6" rx="3" fill="#5f16f2" />
+		<rect x="22" y="40" width="13" height="6" rx="3" fill="#5f16f2" opacity=".45" />
+	</g>
+
+	<text x="156" y="118" font-family="Segoe UI, Arial, Helvetica, sans-serif"
+	      font-size="34" font-weight="600" fill="#160d2b" letter-spacing="-.5">mineru-runpod</text>
+
+	<text font-family="Segoe UI, Arial, Helvetica, sans-serif" font-size="66"
+	      font-weight="700" fill="#160d2b" letter-spacing="-2.2">
+		<tspan x="80" y="255">MinerU on</tspan>
+		<tspan x="80" y="330">RunPod Serverless</tspan>
+	</text>
+
+	<text x="80" y="396" font-family="Segoe UI, Arial, Helvetica, sans-serif"
+	      font-size="27" font-weight="400" fill="#4d4166">PDFs, images and Office files to Markdown</text>
+	<text x="80" y="434" font-family="Segoe UI, Arial, Helvetica, sans-serif"
+	      font-size="27" font-weight="400" fill="#4d4166">and structured JSON. Scales to zero.</text>
+
+	<!-- credentials, separated by rules rather than bullets so they read as
+	     distinct facts rather than a list. Rules sit an equal 20px from the text
+	     on either side, measured against the rendered widths. -->
+	<g font-family="Segoe UI, Arial, Helvetica, sans-serif" font-size="22" font-weight="600" fill="#5f16f2">
+		<text x="80" y="524">1.2B VLM</text>
+		<text x="212" y="524">Office formats</text>
+		<text x="392" y="524">MinerU 3.4</text>
+	</g>
+	<g fill="#d8ccf5">
+		<rect x="192" y="506" width="2" height="22" />
+		<rect x="372" y="506" width="2" height="22" />
+	</g>
+
+	<!-- right column: the document-stack motif from the hero -->
+
+	<g transform="translate(688 92) scale(0.985)">
+		<g fill="#5f16f2">
+			<rect x="34" y="-24" width="250" height="300" rx="20" opacity=".11" />
+			<path d="M20 0h174l56 56v224a20 20 0 0 1-20 20H20a20 20 0 0 1-20-20V20A20 20 0 0 1 20 0Z" opacity=".22" />
+			<path d="M194 0v56h56Z" opacity=".42" />
+			<rect x="26" y="100" width="150" height="26" rx="9" opacity=".95" />
+			<rect x="26" y="146" width="198" height="16" rx="8" opacity=".34" />
+			<rect x="26" y="174" width="170" height="16" rx="8" opacity=".34" />
+			<rect x="26" y="202" width="198" height="16" rx="8" opacity=".22" />
+			<rect x="26" y="230" width="120" height="16" rx="8" opacity=".55" />
+			<rect x="162" y="230" width="62" height="16" rx="8" opacity=".15" />
+		</g>
+	</g>
+</svg>
