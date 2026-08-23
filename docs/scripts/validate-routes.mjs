@@ -210,6 +210,22 @@ if (markers.length !== 1 || rendered.length !== 1) {
 	);
 }
 
+// The overview hotlinks an upstream benchmark image. next/image cannot size a
+// remote file without fetching it, so this must stay a plain img element.
+const overviewHtml = await readFile(
+	fileForRoute("/getting-started/overview/"),
+	"utf8",
+);
+const leaderboard = "https://hotelll.github.io/MinerU2.5-Pro/leaderboard.png";
+if (!overviewHtml.includes(`src="${leaderboard}"`)) {
+	throw new Error("/getting-started/overview/: missing the leaderboard image");
+}
+if (/<img[^>]*data-nimg/.test(overviewHtml)) {
+	throw new Error(
+		"/getting-started/overview/: external image must not go through next/image",
+	);
+}
+
 // Tabs and callouts survived the MDX conversion.
 const tabsHtml = await readFile(fileForRoute("/getting-started/clients/"), "utf8");
 if (!/role="tab"/.test(tabsHtml)) {

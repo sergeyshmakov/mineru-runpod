@@ -9,7 +9,7 @@ export function DeployButton() {
 			href={runpodReferralUrl}
 			rel="noreferrer noopener"
 			target="_blank"
-			className="inline-flex items-center gap-1.5 rounded-lg bg-fd-primary px-3 py-1.5 text-sm font-medium text-fd-primary-foreground transition-opacity hover:opacity-90"
+			className="inline-flex items-center gap-1.5 rounded-lg border bg-fd-background px-3 py-1.5 text-sm font-medium transition-colors hover:bg-fd-accent hover:text-fd-accent-foreground"
 		>
 			Deploy on RunPod
 			<svg
