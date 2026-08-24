@@ -1,19 +1,24 @@
-# Astro build output
+# build output
 dist/
 .astro/
+.next/
+.source/
+out/
+next-env.d.ts
+*.tsbuildinfo
 
-# Dependencies
+# dependencies
 node_modules/
 
-# Logs
+# logs
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+pnpm-debug.log*
 
-# Environment
+# environment variables
 .env
 .env.production
 
 # OS
 .DS_Store
-Thumbs.db

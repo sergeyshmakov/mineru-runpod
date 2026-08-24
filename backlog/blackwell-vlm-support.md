@@ -51,8 +51,8 @@ When that lands, our migration is:
 1. Bump `Dockerfile`'s `ARG VLLM_VERSION` to the lowest Blackwell-supporting version inside MinerU's new range
 2. Re-check `allowedCudaVersions` — Blackwell hosts may need 13.1+ entries
 3. Add `AMPERE_80`, `ADA_48_PRO`, and any Blackwell pool IDs back to `hub.json` `gpuIds` once we've smoke-tested
-4. Update [docs/src/content/docs/guides/troubleshooting.mdx](../docs/src/content/docs/guides/troubleshooting.mdx) — remove the Blackwell-crash section
-5. Update [docs/src/content/docs/guides/choosing-gpu.mdx](../docs/src/content/docs/guides/choosing-gpu.mdx) — update the `ADA_48_PRO` warning
+4. Update [docs/content/docs/guides/troubleshooting.mdx](../docs/content/docs/guides/troubleshooting.mdx) — remove the Blackwell-crash section
+5. Update [docs/content/docs/guides/choosing-gpu.mdx](../docs/content/docs/guides/choosing-gpu.mdx) — update the `ADA_48_PRO` warning
 
 ## Workaround for users hit by this today
 
@@ -60,4 +60,4 @@ Either:
 - Switch the affected job to `backend: "pipeline"` (works on Blackwell)
 - Use a non-Blackwell pool (`ADA_24`, `AMPERE_24`, `AMPERE_48` — our defaults)
 
-Already documented in [docs/src/content/docs/guides/troubleshooting.mdx](../docs/src/content/docs/guides/troubleshooting.mdx) under "VLM backend crashes on Blackwell GPUs".
+Already documented in [docs/content/docs/guides/troubleshooting.mdx](../docs/content/docs/guides/troubleshooting.mdx) under "VLM backend crashes on Blackwell GPUs".

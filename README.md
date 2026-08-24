@@ -1,5 +1,5 @@
 # mineru-runpod
- 
+
 <!-- badges: ci, license, python, runpod -->
 [![CI](https://github.com/sergeyshmakov/mineru-runpod/actions/workflows/ci.yml/badge.svg)](https://github.com/sergeyshmakov/mineru-runpod/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
@@ -10,11 +10,11 @@
 
 Serverless [MinerU](https://github.com/opendatalab/MinerU) document parser on [RunPod](https://runpod.io?ref=31jdfpnq). MinerU 3.4.x runtime with the `MinerU2.5-Pro-2605-1.2B` VLM. Scales to zero; best-case warm parses measured about $0.0003 per page on a 24 GB serverless RTX 4090.
 
-**📚 [Docs](https://mineru.shmakov.tools/)**  ·  **🚀 [Get started on RunPod](https://runpod.io?ref=31jdfpnq)**  ·  **📝 [Blog](https://mineru.shmakov.tools/blog/)**
+[Docs](https://mineru.shmakov.tools/) · [Get started on RunPod](https://runpod.io?ref=31jdfpnq) · [Blog](https://mineru.shmakov.tools/blog/)
 
-## 30-second taste
+> ⚠️ **Not an official MinerU project.** This is an independent wrapper that packages the open-source MinerU runtime as a RunPod Serverless worker. It is not affiliated with, endorsed by, or supported by OpenDataLab, who publish MinerU, or by RunPod. Parsing behavior belongs [upstream](https://github.com/opendatalab/MinerU/issues); anything about this worker belongs [here](https://github.com/sergeyshmakov/mineru-runpod/issues).
 
-Pick your method. Either of these works.
+## Parse a document
 
 **Python (`mineru_client`):**
 
@@ -44,9 +44,9 @@ Accepts PDF, image (PNG/JPEG/GIF/BMP/TIFF/WebP), DOCX, PPTX, XLSX. Two orthogona
 
 - **MinerU** produces structured Markdown/JSON for text, charts, tables, and math. MinerU 3.4 also provides script-family OCR models through its pipeline backend. See the [paper](https://arxiv.org/abs/2604.04771), [repo](https://github.com/opendatalab/MinerU), and [model card](https://huggingface.co/opendatalab/MinerU2.5-Pro-2605-1.2B) for the published evaluation scope.
 - **RunPod Serverless** bills per-second and scales to zero. A 100-page document costs roughly $0.03 on a 24 GB serverless RTX 4090 instead of paying for an always-on GPU. See [RunPod pricing](https://www.runpod.io/pricing) for current rates.
-- **You don't have to wire any of that together yourself.** Deploy from the [RunPod Hub](https://runpod.io?ref=31jdfpnq) in one click, or fork this repo for full control.
+- Wiring the two together is the part this repo does for you. Deploy from the [RunPod Hub](https://runpod.io?ref=31jdfpnq) in one click, or fork the repo for full control.
 
-## Ways to integrate
+## Calling the endpoint
 
 ### A. Quick start with `MineruClient`
 
@@ -77,7 +77,7 @@ Already calling the MinerU cloud API (`mineru.net/api/v4/...`)? `MineruApiClient
 
 Prototype with A; switch to B once you need async, retries, or multi-language callers. See [Clients](https://mineru.shmakov.tools/getting-started/clients/) for the full comparison.
 
-## API at a glance
+## The API
 
 Send `{"input": {...}}` to `/runsync` (or `/run`). The most-used fields:
 
@@ -93,7 +93,7 @@ Responses wrap each file in a `results: [...]` list alongside a top-level `debug
 
 Under that contract, this repo is the MinerU half: the engine, the input schema and the job envelope. Fetching the input, checking outbound targets, packing the response, structured logging and the model-cache probe come from [`runpod-doc-worker`](https://github.com/sergeyshmakov/runpod-doc-worker) ([docs](https://rdw.shmakov.tools)), an engine-agnostic harness extracted from this worker. What this worker declares to it — its env prefix, input roots and output manifest — is one file, [`worker/harness.py`](worker/harness.py).
 
-## How does it compare?
+## Compared with other parsers
 
 Parsing accuracy is MinerU's domain; their published [OmniDocBench](https://github.com/opendatalab/OmniDocBench) leaderboard puts the 1.2B VLM ahead of much larger general-purpose models:
 
@@ -119,7 +119,7 @@ The license row matters for production use. Marker pairs GPL-3.0 code with modif
 
 ## Documentation
 
-Everything below the surface lives on the docs site:
+The docs site covers the rest:
 
 - **[Overview](https://mineru.shmakov.tools/getting-started/overview/)** — what it is, who it's for, architecture
 - **[Deploy](https://mineru.shmakov.tools/getting-started/deploy/)** — Hub one-click, fork-and-build, or BYO image

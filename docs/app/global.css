@@ -1,0 +1,32 @@
+@import "tailwindcss";
+@import "fumadocs-ui/css/neutral.css";
+@import "fumadocs-ui/css/preset.css";
+
+html {
+	scrollbar-gutter: stable;
+}
+
+html > body[data-scroll-locked] {
+	margin-right: 0 !important;
+	--removed-body-scroll-bar-size: 0px !important;
+}
+
+body {
+	min-height: 100vh;
+}
+
+.rm-hero-grid {
+	background-image:
+		linear-gradient(
+			to right,
+			color-mix(in srgb, var(--color-fd-border) 45%, transparent) 1px,
+			transparent 1px
+		),
+		linear-gradient(
+			to bottom,
+			color-mix(in srgb, var(--color-fd-border) 45%, transparent) 1px,
+			transparent 1px
+		);
+	background-size: 32px 32px;
+	mask-image: linear-gradient(to bottom, black 45%, transparent 100%);
+}

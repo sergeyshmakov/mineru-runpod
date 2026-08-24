@@ -17,6 +17,10 @@ Steady throughput (always-on indexer):
 Long single jobs (full-book parse, OK to wait):
     python deploy.py --template-id $TID --execution-timeout 3600 \\
                      --workers-max 1 --idle-timeout 30
+
+    --execution-timeout is reported rather than applied: the SDK's
+    create_endpoint has no parameter for it, so set it on the endpoint
+    afterwards. It is what decides whether a long document is killed midway.
 """
 
 from __future__ import annotations
@@ -143,10 +147,11 @@ def _build_parser() -> argparse.ArgumentParser:
         default=DEFAULTS["container_disk_gb"],
         help=(
             f"per-worker container disk (default: {DEFAULTS['container_disk_gb']} GB). "
-            f"Worker image is ~27 GB (vllm-openai base + ~4 GB of baked MinerU "
-            f"models); 50 GB gives ~23 GB working room for tempfiles + output "
-            f"tarball assembly. Bump higher only if you regularly parse books "
-            f"that produce multi-GB tarballs."
+            f"The baked weights alone are ~17.5 GB — MinerU2.5-Pro is 2.3 GB and "
+            f"PDF-Extract-Kit-1.0 is 15.1 GB, pulled whole — on top of the "
+            f"vllm-openai base. A pull was measured at ~27 GB, so 50 GB leaves "
+            f"less working room than it looks; confirm with `df -h` in a real "
+            f"worker before parsing books that produce multi-GB tarballs."
         ),
     )
 
@@ -157,8 +162,11 @@ def _build_parser() -> argparse.ArgumentParser:
         default=DEFAULTS["execution_timeout"],
         help=(
             f"per-job hard timeout in seconds (default: {DEFAULTS['execution_timeout']}). "
-            f"RunPod terminates the worker if a single job exceeds this. "
-            f"~1-3 s/page warm on ADA_24 → 900 s covers ~300-900 pages comfortably."
+            f"RunPod terminates the worker if a single job exceeds this; "
+            f"~1-3 s/page warm on ADA_24 → 900 s covers ~300-900 pages "
+            f"comfortably. NOT applied by this script: the SDK's "
+            f"create_endpoint exposes no execution-timeout parameter, so the "
+            f"value is only reported for you to set on the endpoint."
         ),
     )
 
@@ -204,7 +212,6 @@ def main() -> int:
         workers_min=args.workers_min,
         workers_max=args.workers_max,
         idle_timeout=args.idle_timeout,
-        execution_timeout_ms=args.execution_timeout * 1000,
         flashboot=args.flashboot,
         scaler_type=args.scaler_type,
         scaler_value=args.scaler_value,
@@ -218,10 +225,15 @@ def main() -> int:
     print(f"  gpu:               {args.gpu_ids}")
     print(f"  workers:           {args.workers_min} … {args.workers_max}")
     print(f"  idle timeout:      {args.idle_timeout}s")
-    print(f"  execution timeout: {args.execution_timeout}s")
     print(f"  flashboot:         {args.flashboot}")
     print(f"  scaler:            {args.scaler_type} @ {args.scaler_value}")
     print(f"  container disk:    {args.container_disk_gb} GB")
+    print()
+    print("NOT applied — set this on the endpoint yourself:")
+    print(
+        f"  execution timeout: {args.execution_timeout}s "
+        f"(the SDK's create_endpoint has no parameter for it)"
+    )
     print()
     print("Save to .env:")
     print(f"  RUNPOD_ENDPOINT_ID={endpoint_id}")

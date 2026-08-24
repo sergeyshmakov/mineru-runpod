@@ -227,6 +227,19 @@ def validate_input(job_input: dict) -> dict:
             )
     cleaned["effort"] = effort
 
+    # rp_validator skips its own type check when the value is already an
+    # instance of the declared default's type, and `isinstance(True, int)` is
+    # True — so `start_page: true` reached this resolver and was used as page 1.
+    # Driven off INPUT_SCHEMA rather than a list of field names: a later int
+    # field would otherwise arrive unguarded, and silently, because nothing
+    # ties a hand-written list back to the declared types.
+    for field, spec in INPUT_SCHEMA.items():
+        if spec["type"] is int and isinstance(cleaned.get(field), bool):
+            _fail(
+                f"{field} must be an integer, not a boolean; "
+                f"got {cleaned[field]!r}"
+            )
+
     start_page = cleaned.get("start_page", 0) or 0
     if start_page < 0:
         _fail(f"start_page must be >= 0; got {start_page!r}")

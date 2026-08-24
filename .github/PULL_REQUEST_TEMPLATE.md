@@ -48,7 +48,7 @@ Revisit once we have users.
 
 - [ ] Tests pass locally: `pip install -e ".[test]" && pytest`
 - [ ] New code paths have at least one test (CPU-only; CI has no GPU).
-- [ ] If touching the wire contract: handler docstring AND `docs/src/content/docs/reference/api.mdx` both updated.
+- [ ] If touching the wire contract: handler docstring AND `docs/content/docs/reference/api.mdx` both updated.
 - [ ] If adding an env var: it's in `.runpod/hub.json` `env` array AND the Dockerfile/docs reference it.
 - [ ] No secrets in the diff (`.env`, `RUNPOD_API_KEY`, `HF_TOKEN`, `BUCKET_*`).
 - [ ] `CHANGELOG.md` is **not** edited by hand — semantic-release will append the right entry on merge.

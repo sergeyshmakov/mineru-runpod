@@ -1,0 +1,13 @@
+{
+	"title": "Guides",
+	"pages": [
+		"choosing-gpu",
+		"concurrency",
+		"input-formats",
+		"output-modes",
+		"scaling",
+		"observability",
+		"network-volumes",
+		"troubleshooting"
+	]
+}
