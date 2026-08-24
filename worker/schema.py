@@ -19,6 +19,15 @@ from worker.harness import MANIFEST
 # per-job `server_url`. Off by default: see the reasoning at the call site.
 ENFORCE_TARGET_POLICY = "ENFORCE_TARGET_POLICY"
 
+# Hosts `server_url` may name even when they resolve somewhere private. This
+# exists because the obvious alternative is wrong: MINERU_ALLOW_LOCAL_FETCH lifts
+# the address policy for *every* field and every target, so an operator who set
+# it to reach their own private model server would simultaneously re-admit
+# arbitrary private `server_url` values from any caller and switch off the same
+# protection on `file_url`. An allowlist says the one thing the operator actually
+# means — "my model server lives at this name" — and says nothing else.
+ALLOWED_SERVER_HOSTS = "ALLOWED_SERVER_HOSTS"
+
 
 # Both come from where the behaviour is rather than being restated here: a
 # transport this worker accepts but the harness cannot pack, or a format the
@@ -109,6 +118,18 @@ INPUT_SCHEMA: dict[str, dict[str, Any]] = {
 
 def _fail(msg: str) -> None:
     raise ValueError(f"input validation failed: {msg}")
+
+
+def _allowed_server_hosts() -> frozenset[str]:
+    """Hosts an operator has declared their model server uses.
+
+    Comma-separated, compared case-insensitively against the URL's host and
+    nothing else — no suffix matching, so `evil-vllm.internal` does not satisfy
+    an entry of `vllm.internal`. Read per job like the other operator knobs, so
+    a change does not need a redeploy.
+    """
+    raw = _config.active().env(ALLOWED_SERVER_HOSTS)
+    return frozenset(part.strip().lower() for part in raw.split(",") if part.strip())
 
 
 def _max_pages_per_job() -> int:
@@ -308,16 +329,25 @@ def validate_input(job_input: dict) -> dict:
     #
     # So: shape check by default, full policy when
     # MINERU_ENFORCE_TARGET_POLICY is set. Operators exposing an endpoint to
-    # untrusted callers should set it; the guides say so. `check_target` is the
-    # complete check — it calls `require_http_url` itself and honours
-    # MINERU_ALLOW_LOCAL_FETCH, so the two flags compose: policy on, with a
-    # documented exemption.
+    # untrusted callers should set it; the guides say so.
+    #
+    # An operator running a private model server names its host in
+    # MINERU_ALLOWED_SERVER_HOSTS. The earlier version of this told them to set
+    # MINERU_ALLOW_LOCAL_FETCH instead, which was bad advice: that flag lifts the
+    # address policy globally, so it re-admitted arbitrary private `server_url`
+    # values from any caller *and* disabled the same protection on `file_url`. The
+    # allowlist grants exactly the one host the operator meant.
+    #
+    # Note `require_http_url` returns the host rather than the URL — the trap the
+    # harness's AGENTS.md records. Wanted here, hence the name of the variable.
     if server_url := cleaned.get("server_url"):
         try:
-            if _config.active().truthy(ENFORCE_TARGET_POLICY):
+            host = _net.require_http_url(server_url, field="server_url")
+            if (
+                _config.active().truthy(ENFORCE_TARGET_POLICY)
+                and host.lower() not in _allowed_server_hosts()
+            ):
                 _net.check_target(server_url, field="server_url")
-            else:
-                _net.require_http_url(server_url, field="server_url")
         except ValueError as e:
             _fail(str(e))
 

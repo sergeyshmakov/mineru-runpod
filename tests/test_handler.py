@@ -415,18 +415,72 @@ def test_the_policy_refuses_private_server_urls_when_enabled(url, monkeypatch):
         })
 
 
-def test_the_two_flags_compose(monkeypatch):
-    """Policy on, with the documented exemption: an operator who enforces the
-    policy but genuinely runs a private model server sets the same
-    MINERU_ALLOW_LOCAL_FETCH that already governs `file_url`."""
+def test_an_allowlisted_private_host_is_permitted(monkeypatch):
+    """How an operator with a private model server enforces the policy.
+
+    The earlier version of this test used MINERU_ALLOW_LOCAL_FETCH, and that was
+    wrong in a way worth recording: the flag lifts the address policy for *every*
+    field and every target, so it re-admitted arbitrary private `server_url`
+    values from any caller and disabled the same protection on `file_url`. The
+    "recipe" the docs gave was strictly worse than not enforcing the policy at
+    all.
+    """
     monkeypatch.setenv("MINERU_ENFORCE_TARGET_POLICY", "1")
-    monkeypatch.setenv("MINERU_ALLOW_LOCAL_FETCH", "1")
+    monkeypatch.setenv("MINERU_ALLOWED_SERVER_HOSTS", "10.1.2.3")
     cleaned = handler._validate_input({
         "file_b64": "AA==",
         "backend": "vlm-http-client",
         "server_url": "http://10.1.2.3:8000",
     })
     assert cleaned["server_url"] == "http://10.1.2.3:8000"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://127.0.0.1:8000",
+        "http://169.254.169.254/latest/meta-data",
+        "http://192.168.1.10:8000",
+    ],
+)
+def test_the_allowlist_permits_only_what_it_names(url, monkeypatch):
+    """The point of an allowlist over a global flag: everything else stays
+    refused, the metadata endpoint included."""
+    monkeypatch.setenv("MINERU_ENFORCE_TARGET_POLICY", "1")
+    monkeypatch.setenv("MINERU_ALLOWED_SERVER_HOSTS", "10.1.2.3")
+    with pytest.raises(ValueError, match="publicly routable"):
+        handler._validate_input({
+            "file_b64": "AA==",
+            "backend": "vlm-http-client",
+            "server_url": url,
+        })
+
+
+def test_the_allowlist_does_not_match_by_suffix(monkeypatch):
+    """`evil-vllm.internal` must not satisfy an entry of `vllm.internal`."""
+    monkeypatch.setenv("MINERU_ENFORCE_TARGET_POLICY", "1")
+    monkeypatch.setenv("MINERU_ALLOWED_SERVER_HOSTS", "vllm.internal")
+    with pytest.raises(ValueError):
+        handler._validate_input({
+            "file_b64": "AA==",
+            "backend": "vlm-http-client",
+            "server_url": "http://evil-vllm.internal:8000",
+        })
+
+
+def test_the_allowlist_is_case_insensitive_and_tolerates_spacing(monkeypatch):
+    monkeypatch.setenv("MINERU_ENFORCE_TARGET_POLICY", "1")
+    monkeypatch.setenv("MINERU_ALLOWED_SERVER_HOSTS", " VLLM.Internal , other.host ")
+    monkeypatch.setattr(
+        "worker.schema._net.require_http_url",
+        lambda url, *, field: "vllm.internal",
+    )
+    cleaned = handler._validate_input({
+        "file_b64": "AA==",
+        "backend": "vlm-http-client",
+        "server_url": "http://vllm.internal:8000",
+    })
+    assert cleaned["server_url"] == "http://vllm.internal:8000"
 
 
 def test_a_public_server_url_passes_either_way(monkeypatch):

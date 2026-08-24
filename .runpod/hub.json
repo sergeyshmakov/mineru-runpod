@@ -158,6 +158,16 @@
         }
       },
       {
+        "key": "MINERU_ALLOWED_SERVER_HOSTS",
+        "input": {
+          "name": "Allowed private hosts for server_url",
+          "type": "string",
+          "description": "Comma-separated hosts server_url may name even if private, e.g. your own vLLM server. Exact host match. Use this rather than the global local-fetch flag.",
+          "default": "",
+          "advanced": true
+        }
+      },
+      {
         "key": "MINERU_ALLOW_LOCAL_FETCH",
         "input": {
           "name": "Allow non-routable file_url targets",
