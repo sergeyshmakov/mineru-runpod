@@ -1,3 +1,21 @@
+## [1.10.1](https://github.com/sergeyshmakov/mineru-runpod/compare/v1.10.0...v1.10.1) (2026-08-24)
+
+### Bug Fixes
+
+* two defects found while reviewing the sibling worker ([9074408](https://github.com/sergeyshmakov/mineru-runpod/commit/90744083cc043e12bdf6132a8815534261184950))
+
+### Documentation
+
+* correct the baked-weight figure, which was off by 4x ([a60e9b7](https://github.com/sergeyshmakov/mineru-runpod/commit/a60e9b7f2460a35b21bfb2f44c0af4850066b84c))
+* repoint the backlog links at the moved guides ([53cc483](https://github.com/sergeyshmakov/mineru-runpod/commit/53cc4833b6fab55319c27baf613ac8d30979e90c))
+* **site:** give each page its own Twitter card ([6673dde](https://github.com/sergeyshmakov/mineru-runpod/commit/6673dde854353ad1dd6f638f6d72ba45ef7b95b7))
+* **site:** give the site its own mark and a deploy button on every page ([34a16a6](https://github.com/sergeyshmakov/mineru-runpod/commit/34a16a62d6f7616114daf33ea421cf6638d59a9f))
+* **site:** rebuild the documentation site on Fumadocs ([75dec24](https://github.com/sergeyshmakov/mineru-runpod/commit/75dec24db0f20b3e05cc1d93d772047224ec9926))
+* **site:** redraw the social card from the new mark ([6ab6159](https://github.com/sergeyshmakov/mineru-runpod/commit/6ab6159ce058e330e2e066bec0295e265fe3b653))
+* **site:** render external MDX images without next/image ([83e866c](https://github.com/sergeyshmakov/mineru-runpod/commit/83e866cdb11a4c292af92e65883e080562cef5cf))
+* **site:** replace the hero with a mark-derived graphic ([e57ed18](https://github.com/sergeyshmakov/mineru-runpod/commit/e57ed18c520e2252296af614074f7e8106c1ecdf))
+* warn that this is not an official MinerU project ([ec5d770](https://github.com/sergeyshmakov/mineru-runpod/commit/ec5d7702a7ad7edf8cb0297848cf49c07293279b))
+
 ## [1.10.0](https://github.com/sergeyshmakov/mineru-runpod/compare/v1.9.0...v1.10.0) (2026-08-21)
 
 ### Features
