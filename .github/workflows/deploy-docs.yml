@@ -16,6 +16,15 @@ on:
 permissions:
   contents: read
 
+# Ordering matters among the runs that can publish. Main pushes and manual runs
+# share one group and queue instead of cancelling, because two builds racing lets
+# the slower one deploy its older artifact over the newer site. Pull request runs
+# never reach the deploy job, so they get their own per-ref group and supersede
+# themselves rather than blocking a deploy.
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   build:
     name: Build documentation
@@ -73,9 +82,6 @@ jobs:
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     needs: build
     runs-on: ubuntu-latest
-    concurrency:
-      group: pages
-      cancel-in-progress: false
     permissions:
       pages: write
       id-token: write
