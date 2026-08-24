@@ -29,6 +29,13 @@ jobs:
   build:
     name: Build documentation
     runs-on: ubuntu-latest
+    # Job-level permissions replace the workflow-level block rather than adding
+    # to it, so contents is restated. pages is read-only here: the build only
+    # asks the Pages API what the site URL is, and publishing rights stay in the
+    # deploy job.
+    permissions:
+      contents: read
+      pages: read
     defaults:
       run:
         working-directory: docs
