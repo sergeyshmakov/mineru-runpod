@@ -50,9 +50,24 @@ def test_deploy_does_not_pass_the_execution_timeout_to_the_sdk() -> None:
 # Booleans are not page numbers
 # -----------------------------------------------------------------------------
 
-@pytest.mark.parametrize("field", ["start_page", "end_page"])
+# Derived from the schema, not typed out: an int field added later is covered
+# here the moment it is declared, which is the property worth testing.
+_INT_FIELDS = sorted(
+    name for name, spec in schema.INPUT_SCHEMA.items() if spec["type"] is int
+)
+
+
+def test_the_schema_still_declares_int_fields() -> None:
+    """Without this, an empty _INT_FIELDS would make the test below vacuous and
+    pass while guarding nothing."""
+    assert _INT_FIELDS, "INPUT_SCHEMA declares no int field; the guard is untested"
+
+
+@pytest.mark.parametrize("field", _INT_FIELDS)
 @pytest.mark.parametrize("value", [True, False])
-def test_a_boolean_page_index_is_refused(field: str, value: bool) -> None:
+def test_a_boolean_is_refused_wherever_an_int_is_declared(
+    field: str, value: bool
+) -> None:
     """rp_validator skips its declared type check when the value is an instance
     of the default's type, and `isinstance(True, int)` is True — so `true` reached
     the page resolver and was used as index 1."""
