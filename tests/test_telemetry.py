@@ -645,3 +645,96 @@ def test_emit_log_maps_critical_and_fatal_severity(monkeypatch):
     from opentelemetry._logs import SeverityNumber
     assert captured_kwargs[0]["severity_number"] == SeverityNumber.FATAL
     assert captured_kwargs[1]["severity_number"] == SeverityNumber.FATAL
+
+
+# -----------------------------------------------------------------------------
+# The enabled emit path, inside a span
+# -----------------------------------------------------------------------------
+#
+# Everything above exercises emit_log either disabled or outside a span, so the
+# branch that attached trace correlation had no coverage — and it was broken.
+# `trace_id`, `span_id` and `trace_flags` were passed to `Logger.emit()`, which
+# accepts none of them, and the resulting TypeError went into a bare `except`.
+#
+# The handler wraps every job in a span, so every log line a job produced was
+# dropped while boot-time lines exported normally. That asymmetry is what hid it:
+# enabling telemetry and seeing startup logs arrive is reasonable grounds to
+# conclude it works.
+
+def _capture_logs(monkeypatch):
+    """Enable telemetry with an in-memory logs exporter, and a real tracer."""
+    from opentelemetry import trace
+    from opentelemetry.sdk._logs import LoggerProvider
+    from opentelemetry.sdk._logs.export import (
+        InMemoryLogRecordExporter,
+        SimpleLogRecordProcessor,
+    )
+    from opentelemetry.sdk.trace import TracerProvider
+
+    from worker import telemetry
+
+    _enable(monkeypatch)
+    exporter = InMemoryLogRecordExporter()
+    provider = LoggerProvider()
+    provider.add_log_record_processor(SimpleLogRecordProcessor(exporter))
+    monkeypatch.setattr(telemetry, "_logger", provider.get_logger("test"))
+    trace.set_tracer_provider(TracerProvider())
+    return exporter, trace.get_tracer("test")
+
+
+def test_a_log_emitted_inside_a_span_is_exported(monkeypatch):
+    """The regression: this is the case that raised on every job."""
+    from worker import telemetry
+
+    exporter, tracer = _capture_logs(monkeypatch)
+    with tracer.start_as_current_span("mineru.job"):
+        telemetry.emit_log("info", "inside a span", {"job_id": "abc"})
+
+    records = exporter.get_finished_logs()
+    assert len(records) == 1, "the record never reached the exporter"
+    assert records[0].log_record.body == "inside a span"
+
+
+def test_the_exported_record_keeps_its_trace_correlation(monkeypatch):
+    """Correlation is why those keyword arguments were there, so the fix has to
+    preserve it rather than drop the ids to make the call legal."""
+    from worker import telemetry
+
+    exporter, tracer = _capture_logs(monkeypatch)
+    with tracer.start_as_current_span("mineru.job") as span:
+        telemetry.emit_log("error", "correlate me", {})
+        expected = span.get_span_context()
+
+    record = exporter.get_finished_logs()[0].log_record
+    assert record.trace_id == expected.trace_id
+    assert record.span_id == expected.span_id
+
+
+def test_a_log_emitted_outside_a_span_still_exports(monkeypatch):
+    """The half that always worked, kept so a fix cannot trade one for the other."""
+    from worker import telemetry
+
+    exporter, _ = _capture_logs(monkeypatch)
+    telemetry.emit_log("warning", "no span here", {"k": "v"})
+    assert len(exporter.get_finished_logs()) == 1
+
+
+def test_a_broken_emit_is_reported_once_not_silently(monkeypatch, capsys):
+    """A downed collector must stay silent; calling the SDK wrongly must not.
+    That distinction is what this bug cost, so it is now enforced."""
+    from worker import telemetry
+
+    _enable(monkeypatch)
+
+    class Wrong:
+        def emit(self, **kwargs):
+            raise TypeError("Logger.emit() got an unexpected keyword argument 'x'")
+
+    monkeypatch.setattr(telemetry, "_logger", Wrong())
+    monkeypatch.setattr(telemetry, "_emit_defect_reported", False)
+    telemetry.emit_log("info", "one", {})
+    telemetry.emit_log("info", "two", {})
+
+    out = capsys.readouterr().out
+    assert "calling the OTel SDK" in out
+    assert out.count("[mineru-telemetry] log export") == 1, "reported once, not per record"

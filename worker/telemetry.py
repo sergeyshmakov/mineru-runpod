@@ -55,7 +55,12 @@ _lock = threading.Lock()
 # Hoisted at _enable() time; saves a per-call import + dict lookup
 # from emit_log / set_span_attrs / record_exception. None until
 # telemetry activates; cleared back to None by _reset_for_tests.
+# Set once when log export turns out to be calling the SDK wrongly, so the
+# report is one line rather than one per record.
+_emit_defect_reported = False
+
 _trace_api: Any = None
+_context_api: Any = None
 _severity_number: Any = None
 _status_cls: Any = None
 _status_code: Any = None
@@ -134,7 +139,7 @@ def register_worker_gauges(
 def _enable() -> None:
     """Configure OTel SDK providers + exporters. Called once by init_telemetry()."""
     global _tracer, _logger, _logger_provider, _meter
-    global _trace_api, _severity_number, _status_cls, _status_code
+    global _trace_api, _context_api, _severity_number, _status_cls, _status_code
 
     from opentelemetry import metrics, trace  # noqa: PLC0415
     from opentelemetry._logs import SeverityNumber, set_logger_provider  # noqa: PLC0415
@@ -210,7 +215,10 @@ def _enable() -> None:
     # Cache OTel symbols accessed on every emit so we skip the lazy
     # import on the hot path. The SDK is already in sys.modules at
     # this point; this just hoists the per-call dict lookups.
+    from opentelemetry import context as context_api  # noqa: PLC0415
+
     _trace_api = trace
+    _context_api = context_api
     _severity_number = SeverityNumber
     _status_cls = Status
     _status_code = StatusCode
@@ -588,13 +596,6 @@ def emit_log(level: str, msg: str, fields: dict[str, Any]) -> None:
             "critical": _severity_number.FATAL,
             "fatal": _severity_number.FATAL,
         }
-        # Attach to current span if any — gives the OTel backend the
-        # trace_id / span_id for log-to-trace correlation.
-        ctx = None
-        if _trace_api is not None:
-            sp = _trace_api.get_current_span()
-            if sp is not None:
-                ctx = sp.get_span_context()
         kwargs: dict[str, Any] = {
             "timestamp": int(time.time() * 1e9),
             "severity_text": level.upper(),
@@ -602,15 +603,39 @@ def emit_log(level: str, msg: str, fields: dict[str, Any]) -> None:
             "body": msg,
             "attributes": dict(fields) if fields else None,
         }
-        if ctx is not None and ctx.is_valid:
-            kwargs["trace_id"] = ctx.trace_id
-            kwargs["span_id"] = ctx.span_id
-            kwargs["trace_flags"] = ctx.trace_flags
+        # Log-to-trace correlation by handing over the current context, from
+        # which the SDK derives trace_id, span_id and trace_flags itself.
+        #
+        # Those three used to be passed as keyword arguments, and
+        # `Logger.emit()` accepts none of them — it takes an optional LogRecord
+        # plus timestamp, observed_timestamp, context, severity_*, body,
+        # attributes, event_name and exception. So every log emitted while a
+        # span was current raised TypeError into the silent handler below, and
+        # the handler wraps every job in a span, so that was every line a job
+        # produced. Boot-time lines, emitted outside any span, exported fine —
+        # which is the split that made it invisible: an operator who enabled
+        # telemetry saw startup logs arrive and concluded it worked.
+        if _context_api is not None:
+            kwargs["context"] = _context_api.get_current()
         _logger.emit(**kwargs)
-    except Exception:  # noqa: BLE001
-        # Silent: the stdout line already fired; we don't degrade logging
-        # if the OTel pipeline misbehaves.
-        pass
+    except Exception as e:  # noqa: BLE001
+        # Still never raises: the stdout line already fired, and a downed
+        # collector must not silence the worker's primary logging channel.
+        #
+        # But a TypeError or AttributeError is not a downed collector, it is
+        # this module calling the SDK wrongly — which is how the bug above
+        # survived. Reported once, with print rather than the logging module,
+        # because this function is the log mirror and routing through it would
+        # recurse.
+        global _emit_defect_reported
+        if not _emit_defect_reported and isinstance(e, (TypeError, AttributeError)):
+            _emit_defect_reported = True
+            print(
+                f"[mineru-telemetry] log export is calling the OTel SDK "
+                f"incorrectly and is dropping every record: "
+                f"{type(e).__name__}: {e}",
+                flush=True,
+            )
 
 
 def shutdown(timeout_millis: int = 2000) -> None:
@@ -647,7 +672,7 @@ def _reset_for_tests() -> None:
     """Drop initialization state so the next init_telemetry() runs again."""
     global _initialized, _enabled, _tracer, _logger, _logger_provider, _meter
     global _nvml, _nvml_init_attempted
-    global _trace_api, _severity_number, _status_cls, _status_code
+    global _trace_api, _context_api, _severity_number, _status_cls, _status_code
     global _jobs_getter, _pages_getter
     with _lock:
         _initialized = False
@@ -662,6 +687,7 @@ def _reset_for_tests() -> None:
         _nvml_init_attempted = False
         _nvml_handles.clear()
         _trace_api = None
+        _context_api = None
         _severity_number = None
         _status_cls = None
         _status_code = None
