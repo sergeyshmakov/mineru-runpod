@@ -360,21 +360,36 @@ def test_validate_input_rejects_non_http_server_url():
         })
 
 
-def test_validate_input_refuses_a_private_server_url_by_default():
-    """Reversal of a deliberate earlier decision, and the reason is that
-    `server_url` is a *job input* rather than an operator setting.
+def test_a_private_server_url_is_accepted_by_default():
+    """Compatibility is the default, and that is a decision rather than an
+    oversight.
 
-    The old note here read "an operator's own model server may well live on a
-    private address" — true of an operator, but this field comes from the job
-    payload and there is no env var for it. So any caller of an endpoint could
-    name loopback, a link-local address, or a cloud metadata endpoint and have the
-    worker issue requests there from inside its network.
+    Applying the outbound-target policy here was tried and reverted. Every
+    existing `*-http-client` deployment whose model server is on a private
+    address — the ordinary way to run one — would have started failing jobs that
+    had always succeeded, and this repo publishes from the commit title, so the
+    change would have arrived as a patch release discovered through broken jobs.
+
+    The exposure is real and documented: `server_url` is a job input, so any
+    caller can aim the worker at an internal address. Operators whose endpoint is
+    reachable by untrusted callers set MINERU_ENFORCE_TARGET_POLICY.
     """
-    with pytest.raises(ValueError, match="publicly routable"):
+    cleaned = handler._validate_input({
+        "file_b64": "AA==",
+        "backend": "vlm-http-client",
+        "server_url": "http://10.1.2.3:8000",
+    })
+    assert cleaned["server_url"] == "http://10.1.2.3:8000"
+
+
+def test_the_shape_check_still_applies_by_default():
+    """Off does not mean unvalidated: a scheme-less or hostless value is still
+    refused, because it is malformed rather than merely private."""
+    with pytest.raises(ValueError, match="server_url"):
         handler._validate_input({
             "file_b64": "AA==",
             "backend": "vlm-http-client",
-            "server_url": "http://10.1.2.3:8000",
+            "server_url": "vllm.internal:8000",
         })
 
 
@@ -384,9 +399,14 @@ def test_validate_input_refuses_a_private_server_url_by_default():
         "http://127.0.0.1:8000",
         "http://169.254.169.254/latest/meta-data",
         "http://192.168.1.10:8000",
+        "http://10.1.2.3:8000",
     ],
 )
-def test_validate_input_refuses_other_private_server_urls(url):
+def test_the_policy_refuses_private_server_urls_when_enabled(url, monkeypatch):
+    """With the flag set, `server_url` gets exactly the policy `file_url` has.
+    The metadata endpoint is in the list deliberately — it is the target that
+    turns this from a misconfiguration into an SSRF."""
+    monkeypatch.setenv("MINERU_ENFORCE_TARGET_POLICY", "1")
     with pytest.raises(ValueError, match="publicly routable"):
         handler._validate_input({
             "file_b64": "AA==",
@@ -395,9 +415,11 @@ def test_validate_input_refuses_other_private_server_urls(url):
         })
 
 
-def test_a_private_server_url_is_allowed_when_the_operator_says_so(monkeypatch):
-    """The capability is not removed, only moved behind the switch that already
-    governs exactly this for `file_url`."""
+def test_the_two_flags_compose(monkeypatch):
+    """Policy on, with the documented exemption: an operator who enforces the
+    policy but genuinely runs a private model server sets the same
+    MINERU_ALLOW_LOCAL_FETCH that already governs `file_url`."""
+    monkeypatch.setenv("MINERU_ENFORCE_TARGET_POLICY", "1")
     monkeypatch.setenv("MINERU_ALLOW_LOCAL_FETCH", "1")
     cleaned = handler._validate_input({
         "file_b64": "AA==",
@@ -405,6 +427,28 @@ def test_a_private_server_url_is_allowed_when_the_operator_says_so(monkeypatch):
         "server_url": "http://10.1.2.3:8000",
     })
     assert cleaned["server_url"] == "http://10.1.2.3:8000"
+
+
+def test_a_public_server_url_passes_either_way(monkeypatch):
+    """The flag must not affect the ordinary case.
+
+    A literal public address rather than a hostname: with the policy on, the
+    check resolves the host, so a name would make this test depend on DNS and
+    fail in an offline CI. The private-address cases above use literals for the
+    same reason.
+    """
+    url = "https://8.8.8.8/v1"
+    for enforce in ("", "1"):
+        if enforce:
+            monkeypatch.setenv("MINERU_ENFORCE_TARGET_POLICY", enforce)
+        else:
+            monkeypatch.delenv("MINERU_ENFORCE_TARGET_POLICY", raising=False)
+        cleaned = handler._validate_input({
+            "file_b64": "AA==",
+            "backend": "vlm-http-client",
+            "server_url": url,
+        })
+        assert cleaned["server_url"] == url
 
 
 def test_validate_input_defaults_effort_to_none():

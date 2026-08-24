@@ -9,7 +9,10 @@
     "containerDiskInGb": 50,
     "gpuCount": 1,
     "gpuIds": "ADA_24,AMPERE_24,AMPERE_48",
-    "allowedCudaVersions": ["13.0", "12.9"],
+    "allowedCudaVersions": [
+      "13.0",
+      "12.9"
+    ],
     "env": [
       {
         "key": "HF_TOKEN",
@@ -28,9 +31,18 @@
           "description": "Where MinerU pulls weights from. Use Hugging Face by default, ModelScope for a faster mirror in China, or Local for offline setups.",
           "default": "huggingface",
           "options": [
-            { "label": "HuggingFace (default)", "value": "huggingface" },
-            { "label": "ModelScope (faster in China)", "value": "modelscope" },
-            { "label": "Local (advanced — needs mineru.json)", "value": "local" }
+            {
+              "label": "HuggingFace (default)",
+              "value": "huggingface"
+            },
+            {
+              "label": "ModelScope (faster in China)",
+              "value": "modelscope"
+            },
+            {
+              "label": "Local (advanced \u2014 needs mineru.json)",
+              "value": "local"
+            }
           ],
           "advanced": true
         }
@@ -136,6 +148,16 @@
         }
       },
       {
+        "key": "MINERU_ENFORCE_TARGET_POLICY",
+        "input": {
+          "name": "Enforce routable-address policy on server_url",
+          "type": "string",
+          "description": "Set to 1 if untrusted callers can submit jobs: server_url comes from the job payload, so a caller could aim the worker at an internal address. Off by default.",
+          "default": "",
+          "advanced": true
+        }
+      },
+      {
         "key": "MINERU_ALLOW_LOCAL_FETCH",
         "input": {
           "name": "Allow non-routable file_url targets",
@@ -173,8 +195,14 @@
           "description": "Worker log output format. JSON is easier to filter in dashboards; text is human-readable for local development.",
           "default": "json",
           "options": [
-            { "label": "JSON (default)", "value": "json" },
-            { "label": "Text (human-readable)", "value": "text" }
+            {
+              "label": "JSON (default)",
+              "value": "json"
+            },
+            {
+              "label": "Text (human-readable)",
+              "value": "text"
+            }
           ],
           "advanced": true
         }

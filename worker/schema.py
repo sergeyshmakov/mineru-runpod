@@ -8,11 +8,16 @@ from typing import Any
 
 from runpod.serverless.utils.rp_validator import validate
 
+from runpod_doc_worker import config as _config
 from runpod_doc_worker.contract import artifacts as _artifacts
 from runpod_doc_worker.transport import net as _net
 from runpod_doc_worker.transport import package as _package
 
 from worker.harness import MANIFEST
+
+# Suffix of the operator flag that turns the outbound-target policy on for the
+# per-job `server_url`. Off by default: see the reasoning at the call site.
+ENFORCE_TARGET_POLICY = "ENFORCE_TARGET_POLICY"
 
 
 # Both come from where the behaviour is rather than being restated here: a
@@ -283,24 +288,36 @@ def validate_input(job_input: dict) -> dict:
             f"external vLLM OpenAI-compatible server"
         )
 
-    # `server_url` gets the same outbound-target policy as `file_url`, and this
-    # is a deliberate reversal of what stood here before.
+    # `server_url` can get the same outbound-target policy as `file_url`, but
+    # **only when an operator asks for it**, and that default is a deliberate
+    # decision rather than an oversight.
     #
-    # The old reasoning was that where an operator runs their own model server is
-    # their call, private addresses included — true, but `server_url` is a *job
-    # input*, not an operator setting. There is no env var for it. So the field
-    # was caller-controlled, and any caller of an endpoint could name a loopback,
-    # link-local or internal address and have the worker issue OpenAI-compatible
-    # requests there from inside its network, cloud metadata endpoints included.
+    # The exposure is real. `server_url` is a *job input*, not an operator
+    # setting — there is no env var for it — so the field is caller-controlled,
+    # and any caller of an endpoint can name a loopback, link-local or internal
+    # address and have the worker issue OpenAI-compatible requests there from
+    # inside its network, cloud metadata endpoints included.
     #
-    # The capability is not removed, only moved behind the switch that already
-    # governs exactly this for `file_url`: `check_target` honours
-    # MINERU_ALLOW_LOCAL_FETCH, so an operator who needs a private model server
-    # sets the variable they already know about, and the default is safe. Note
-    # `check_target` is the complete check — it calls `require_http_url` itself.
+    # Applying the policy by default was tried and reverted. Every existing
+    # `*-http-client` deployment whose model server is on a private address —
+    # which is the ordinary way to run one — would have started failing jobs that
+    # had always succeeded, and this repo publishes from the commit title, so the
+    # change would have arrived as a patch that operators discover through broken
+    # jobs. A security default that ships as a surprise regression is not a good
+    # trade for a field whose risk depends entirely on who can reach the endpoint.
+    #
+    # So: shape check by default, full policy when
+    # MINERU_ENFORCE_TARGET_POLICY is set. Operators exposing an endpoint to
+    # untrusted callers should set it; the guides say so. `check_target` is the
+    # complete check — it calls `require_http_url` itself and honours
+    # MINERU_ALLOW_LOCAL_FETCH, so the two flags compose: policy on, with a
+    # documented exemption.
     if server_url := cleaned.get("server_url"):
         try:
-            _net.check_target(server_url, field="server_url")
+            if _config.active().truthy(ENFORCE_TARGET_POLICY):
+                _net.check_target(server_url, field="server_url")
+            else:
+                _net.require_http_url(server_url, field="server_url")
         except ValueError as e:
             _fail(str(e))
 
