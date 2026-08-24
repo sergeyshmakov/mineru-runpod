@@ -18,9 +18,10 @@ Long single jobs (full-book parse, OK to wait):
     python deploy.py --template-id $TID --execution-timeout 3600 \\
                      --workers-max 1 --idle-timeout 30
 
-    --execution-timeout is reported rather than applied: the SDK's
-    create_endpoint has no parameter for it, so set it on the endpoint
-    afterwards. It is what decides whether a long document is killed midway.
+    --execution-timeout is applied in a second step. The SDK's create_endpoint
+    has no parameter for it, so it goes on afterwards through the REST API's
+    executionTimeoutMs field. It is what decides whether a long document is
+    killed midway, so a failure to set it is reported loudly.
 """
 
 from __future__ import annotations
@@ -37,6 +38,8 @@ except ImportError:
     pass
 
 import runpod
+
+import runpod_rest
 
 
 DEFAULTS = {
@@ -164,9 +167,8 @@ def _build_parser() -> argparse.ArgumentParser:
             f"per-job hard timeout in seconds (default: {DEFAULTS['execution_timeout']}). "
             f"RunPod terminates the worker if a single job exceeds this; "
             f"~1-3 s/page warm on ADA_24 → 900 s covers ~300-900 pages "
-            f"comfortably. NOT applied by this script: the SDK's "
-            f"create_endpoint exposes no execution-timeout parameter, so the "
-            f"value is only reported for you to set on the endpoint."
+            f"comfortably. Applied after creation via the REST API, since the "
+            f"SDK's create_endpoint has no parameter for it."
         ),
     )
 
@@ -218,6 +220,19 @@ def main() -> int:
     )
     endpoint_id = endpoint["id"]
 
+    # Second step, not part of creation: executionTimeoutMs is an
+    # EndpointUpdateInput field with no equivalent on the SDK's create call. A
+    # failure leaves a working endpoint with the wrong ceiling, so it is reported
+    # rather than raised — but reported as a warning, because a long parse killed
+    # at the default is a confusing way to discover it.
+    timeout_note = f"{args.execution_timeout}s"
+    try:
+        runpod_rest.set_execution_timeout(
+            endpoint_id, seconds=args.execution_timeout, api_key=runpod.api_key
+        )
+    except runpod_rest.RunpodApiError as e:
+        timeout_note = f"NOT SET ({e}) — set it in the console"
+
     print()
     print("Endpoint created:")
     print(f"  id:                {endpoint_id}")
@@ -225,15 +240,10 @@ def main() -> int:
     print(f"  gpu:               {args.gpu_ids}")
     print(f"  workers:           {args.workers_min} … {args.workers_max}")
     print(f"  idle timeout:      {args.idle_timeout}s")
+    print(f"  execution timeout: {timeout_note}")
     print(f"  flashboot:         {args.flashboot}")
     print(f"  scaler:            {args.scaler_type} @ {args.scaler_value}")
     print(f"  container disk:    {args.container_disk_gb} GB")
-    print()
-    print("NOT applied — set this on the endpoint yourself:")
-    print(
-        f"  execution timeout: {args.execution_timeout}s "
-        f"(the SDK's create_endpoint has no parameter for it)"
-    )
     print()
     print("Save to .env:")
     print(f"  RUNPOD_ENDPOINT_ID={endpoint_id}")

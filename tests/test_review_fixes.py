@@ -35,14 +35,19 @@ def test_the_sdk_still_has_no_execution_timeout_parameter() -> None:
 
 
 def test_deploy_does_not_pass_the_execution_timeout_to_the_sdk() -> None:
+    """The first fix here made deploy.py *report* the timeout instead of passing a
+    keyword `create_endpoint` rejects. That was the right half of the answer: the
+    SDK has no parameter, but `executionTimeoutMs` is a REST field, so the flag can
+    be honoured after creation. See tests/test_runpod_rest.py for the rest.
+    """
     source = Path(__file__).resolve().parents[1].joinpath("deploy.py").read_text(
         encoding="utf-8"
     )
     assert "execution_timeout_ms" not in source, (
         "deploy.py must not pass a keyword create_endpoint rejects"
     )
-    assert "NOT applied" in source, (
-        "deploy.py must say the execution timeout is reported, not applied"
+    assert "runpod_rest.set_execution_timeout" in source, (
+        "the timeout is applied via the REST API now, not merely reported"
     )
 
 
