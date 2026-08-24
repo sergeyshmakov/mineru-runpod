@@ -340,7 +340,7 @@ Most common reasons:
 
 **Fix**:
 - **Client-side**: pass a larger `timeout` to `parse_document(timeout=3600, ...)`
-- **Endpoint-side**: raise the endpoint's execution timeout — 3600 s for full books. Set it on the endpoint itself (RunPod console, or a `saveEndpoint` call): `deploy.py --execution-timeout` only reports the value it would want, because the SDK's `create_endpoint` exposes no parameter for it.
+- **Endpoint-side**: raise the endpoint's execution timeout — 3600 s for full books. `deploy.py --execution-timeout 3600` applies it: the SDK's `create_endpoint` takes no such parameter, so the script sets it afterwards through the REST API's `executionTimeoutMs` field. If that call fails the summary says `NOT SET` with the reason, and only then do you need the console. For an endpoint that already exists, change it there or with a `PATCH /v1/endpoints/{id}`.
 - **Per-page math (warm worker, GPU- and content-dependent)**: MinerU upstream cites ~0.5 s/page for the VLM backend on an A100. We measured **~1–10 s/page on an A5000 24 GB depending on content density** (uniform multi-page reports run fast; dense financial forms run slow). Pipeline ≈ 3–5 s/page across GPUs. A 1000-page book on pipeline = ~3000–5000 s; on VLM-on-A5000 ≈ ~1000–10000 s depending on content; on VLM-on-A100 ≈ ~500 s. **Add 90–130 s for the first call on a cold worker if VLM** (model load + vLLM warmup) — the cold-start tax is paid once per worker, not per page.
 
 ## Reading worker logs

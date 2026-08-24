@@ -40,6 +40,10 @@ test = [
     "opentelemetry-api>=1.27,<2",
     "opentelemetry-sdk>=1.27,<2",
     "opentelemetry-exporter-otlp-proto-http>=1.27,<2",
+    # tests/test_repo_config.py parses .github/dependabot.yml. Declared rather
+    # than relied on: nothing else here requires PyYAML, so a clean
+    # `pip install -e ".[test]"` had it only by accident of the environment.
+    "PyYAML>=6",
 ]
 
 [tool.hatch.metadata]
