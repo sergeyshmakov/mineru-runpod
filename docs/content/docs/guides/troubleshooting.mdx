@@ -82,7 +82,7 @@ If you bump vLLM, re-check the CUDA floor from upstream's release notes (vLLM v0
 Build exceeded maximum time limit of 1800 seconds (30.0 minutes). Build terminated.
 ```
 
-**Cause**: RunPod's build pipeline has a hard 30-minute ceiling. The image bakes ~4 GB of model weights (MinerU VLM + PDF-Extract-Kit) and installs vLLM + Torch on top; on a slow build-region day, those steps alone can blow past the cap.
+**Cause**: RunPod's build pipeline has a hard 30-minute ceiling. The image bakes ~17.5 GB of model weights (MinerU2.5-Pro at 2.3 GB, plus all of PDF-Extract-Kit-1.0 at 15.1 GB — `snapshot_download` pulls the whole repo, with no `allow_patterns`) and installs vLLM + Torch on top; on a slow build-region day, those steps alone can blow past the cap.
 
 **Fix**: the `Dockerfile` already uses `hf-xet` with `HF_XET_HIGH_PERFORMANCE=1` for fast model bakes, and the two model downloads are split into separate RUN layers so a partial cache survives retries. If you still time out:
 
