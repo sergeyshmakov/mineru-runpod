@@ -283,13 +283,24 @@ def validate_input(job_input: dict) -> dict:
             f"external vLLM OpenAI-compatible server"
         )
 
-    # Shape-check server_url at the boundary so a malformed value reports the
-    # field name here instead of failing inside MinerU's HTTP client. Only the
-    # shape: which host an operator runs their own model server on is their
-    # call, including one that isn't reachable from the public internet.
+    # `server_url` gets the same outbound-target policy as `file_url`, and this
+    # is a deliberate reversal of what stood here before.
+    #
+    # The old reasoning was that where an operator runs their own model server is
+    # their call, private addresses included — true, but `server_url` is a *job
+    # input*, not an operator setting. There is no env var for it. So the field
+    # was caller-controlled, and any caller of an endpoint could name a loopback,
+    # link-local or internal address and have the worker issue OpenAI-compatible
+    # requests there from inside its network, cloud metadata endpoints included.
+    #
+    # The capability is not removed, only moved behind the switch that already
+    # governs exactly this for `file_url`: `check_target` honours
+    # MINERU_ALLOW_LOCAL_FETCH, so an operator who needs a private model server
+    # sets the variable they already know about, and the default is safe. Note
+    # `check_target` is the complete check — it calls `require_http_url` itself.
     if server_url := cleaned.get("server_url"):
         try:
-            _net.require_http_url(server_url, field="server_url")
+            _net.check_target(server_url, field="server_url")
         except ValueError as e:
             _fail(str(e))
 

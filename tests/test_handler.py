@@ -360,8 +360,45 @@ def test_validate_input_rejects_non_http_server_url():
         })
 
 
-def test_validate_input_accepts_a_private_server_url():
-    # An operator's own model server may well live on a private address.
+def test_validate_input_refuses_a_private_server_url_by_default():
+    """Reversal of a deliberate earlier decision, and the reason is that
+    `server_url` is a *job input* rather than an operator setting.
+
+    The old note here read "an operator's own model server may well live on a
+    private address" — true of an operator, but this field comes from the job
+    payload and there is no env var for it. So any caller of an endpoint could
+    name loopback, a link-local address, or a cloud metadata endpoint and have the
+    worker issue requests there from inside its network.
+    """
+    with pytest.raises(ValueError, match="publicly routable"):
+        handler._validate_input({
+            "file_b64": "AA==",
+            "backend": "vlm-http-client",
+            "server_url": "http://10.1.2.3:8000",
+        })
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://127.0.0.1:8000",
+        "http://169.254.169.254/latest/meta-data",
+        "http://192.168.1.10:8000",
+    ],
+)
+def test_validate_input_refuses_other_private_server_urls(url):
+    with pytest.raises(ValueError, match="publicly routable"):
+        handler._validate_input({
+            "file_b64": "AA==",
+            "backend": "vlm-http-client",
+            "server_url": url,
+        })
+
+
+def test_a_private_server_url_is_allowed_when_the_operator_says_so(monkeypatch):
+    """The capability is not removed, only moved behind the switch that already
+    governs exactly this for `file_url`."""
+    monkeypatch.setenv("MINERU_ALLOW_LOCAL_FETCH", "1")
     cleaned = handler._validate_input({
         "file_b64": "AA==",
         "backend": "vlm-http-client",
