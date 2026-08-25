@@ -37,6 +37,7 @@ from runpod_doc_worker.contract import degraded as _degraded
 from runpod_doc_worker.obs import debug as _debug
 from runpod_doc_worker.obs import logging as _logging
 
+from worker import envelope as _envelope
 from worker.envelope import (
     _PROBE_NOT_DISABLED,  # noqa: F401 - re-exported below
     _build_debug,
@@ -348,12 +349,17 @@ async def handler(job: dict) -> dict:
 # -----------------------------------------------------------------------------
 # Back-compat surface for tests and any out-of-tree callers
 #
+# Names that once lived in this module and now live under `worker.*`. Anything
+# that imported them from here keeps working; new code should import from
+# `worker.*` or from the harness.
+#
 # `_shutting_down`, `_refresh_lock`, `_refresh_thresholds` and
-# `_PROBE_NOT_DISABLED` are imported above and not called here. They are part
-# of this surface too: the tests drive them through `handler`, and the shutdown
-# event in particular has to be the same object the lifecycle module mutates. that imported
-# helpers from this module directly. New code should import from worker.* or
-# from the harness.
+# `_PROBE_NOT_DISABLED` are imported above and not called here. They belong to
+# this surface too, and the shutdown event in particular has to be the same
+# object the lifecycle module mutates rather than a copy.
+#
+# Asserted by `tests/test_public_surface.py`: a list of names in a comment cannot
+# fail, and three refactors have now dropped one from here without noticing.
 # -----------------------------------------------------------------------------
 
 MAX_INLINE_FILE_MB = _io.MAX_INLINE_FILE_MB
@@ -371,6 +377,10 @@ _run_mineru = _parse.run_mineru
 _collect_gpu_info = _debug.collect_gpu_info
 _find_model_dir = _debug.find_model_dir
 _probe_filesystem = _debug.probe_filesystem
+# Moved to `worker.envelope` with the rest of the response-shaped helpers, and the
+# only one of them that was not re-exported -- so `handler._package_inline` raised
+# AttributeError for anyone still calling it.
+_package_inline = _envelope._package_inline
 
 
 def _bootstrap_main() -> None:
