@@ -14,7 +14,6 @@ import json
 from pathlib import Path
 
 import pytest
-
 from runpod_doc_worker import config
 from runpod_doc_worker.contract import artifacts
 from runpod_doc_worker.obs import logging as harness_logging
@@ -22,7 +21,6 @@ from runpod_doc_worker.obs import logging as harness_logging
 import handler
 from worker import schema
 from worker.harness import MANIFEST
-
 
 HUB_JSON = Path(__file__).resolve().parents[1] / ".runpod" / "hub.json"
 

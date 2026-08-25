@@ -26,7 +26,6 @@ from __future__ import annotations
 import os
 import signal
 import tempfile
-import threading
 import time
 import traceback
 from pathlib import Path
@@ -37,6 +36,26 @@ import runpod
 from runpod_doc_worker.contract import degraded as _degraded
 from runpod_doc_worker.obs import debug as _debug
 from runpod_doc_worker.obs import logging as _logging
+
+from worker.envelope import (
+    _PROBE_NOT_DISABLED,  # noqa: F401 - re-exported below
+    _build_debug,
+    _maybe_progress,
+    _measure_output_bytes,
+    _probe_allowed,
+)
+from worker.lifecycle import (
+    _concurrency_modifier,
+    _jobs_processed,
+    _note_shutdown,
+    _on_sigterm,
+    _pages_processed_total,
+    _record_degradation,
+    _record_job,
+    _refresh_lock,  # noqa: F401 - re-exported below
+    _refresh_thresholds,  # noqa: F401 - re-exported below
+    _shutting_down,  # noqa: F401 - re-exported below
+)
 from runpod_doc_worker.obs import redact as _redact
 from runpod_doc_worker.transport import io as _io
 from runpod_doc_worker.transport import package as _package
@@ -50,35 +69,6 @@ from worker import schema as _schema
 from worker import telemetry as _telemetry
 
 
-# -----------------------------------------------------------------------------
-# Graceful shutdown
-# -----------------------------------------------------------------------------
-#
-# RunPod sends SIGTERM when recycling a worker (idle timeout, refresh, manual
-# stop). The SDK already drains in-flight jobs, but the user-visible signal
-# tends to be "worker logs go silent." We install a breadcrumb handler + a
-# shutdown event that the handler notes between phases, so the logs show
-# where a job was when SIGTERM arrived.
-#
-# The between-phase check deliberately does NOT abort the job. After SIGTERM
-# the SDK stops pulling new jobs, so anything that reaches the check was
-# already accepted. Failing it would return a top-level `error`, which RunPod
-# treats as terminal (FAILED, never retried) — clients saw routine scale-ins
-# as permanent "worker shutting down, refusing further work" job failures.
-# Draining to completion (or dying with the worker, in which case RunPod
-# re-queues the job) is strictly better for the caller. Mid-parse
-# cancellation is NOT possible anyway (vLLM forward pass is a blocking GPU
-# call from asyncio's POV).
-
-_shutting_down = threading.Event()
-
-
-def _on_sigterm(signum: int, frame: Any) -> None:  # noqa: ARG001
-    _logging.warning("sigterm received, draining current job")
-    _telemetry.counter_add("refresh_total", reason="sigterm")
-    _shutting_down.set()
-
-
 # Install at module init. RunPod's SDK may install its own handler when
 # runpod.serverless.start() runs; in that case our handler is replaced and
 # this becomes a no-op breadcrumb that never fires. Acceptable — failure is
@@ -87,206 +77,6 @@ try:
     signal.signal(signal.SIGTERM, _on_sigterm)
 except (ValueError, OSError) as e:  # pragma: no cover — non-main-thread case
     _logging.warning("could not install sigterm handler", error=repr(e))
-
-
-def _note_shutdown(phase: str) -> None:
-    """Log a breadcrumb if SIGTERM has been received. Called between request
-    phases. Never raises — see the drain rationale in the section comment."""
-    if _shutting_down.is_set():
-        _logging.warning("sigterm received mid-job; continuing to drain", phase=phase)
-
-
-# -----------------------------------------------------------------------------
-# Cumulative refresh counters
-# -----------------------------------------------------------------------------
-#
-# Recycle this worker after N cumulative jobs or M cumulative pages so that
-# MinerU + vLLM accumulated VRAM fragmentation gets released. Opt-in via env
-# vars; both default to 0 (disabled). When a threshold trips, the handler
-# attaches `refresh_worker: True` to the response — RunPod's SDK then kills
-# the worker after the response is sent.
-#
-# Pages counter only increments when the caller used a bounded slice
-# (end_page >= 0). Full-document parses (end_page=-1, the default) contribute
-# 1 to jobs but 0 to pages — documented in scaling.mdx so operators know to
-# use the jobs counter for unbounded workloads.
-
-_jobs_processed = 0
-_pages_processed_total = 0
-_refresh_lock = threading.Lock()
-
-
-def _refresh_thresholds() -> tuple[int, int]:
-    """Read thresholds from env on every job so they can be tuned without redeploy."""
-    try:
-        jobs = int(os.environ.get("REFRESH_WORKER_AFTER_JOBS", "0"))
-    except ValueError:
-        jobs = 0
-    try:
-        pages = int(os.environ.get("REFRESH_WORKER_AFTER_PAGES", "0"))
-    except ValueError:
-        pages = 0
-    return max(0, jobs), max(0, pages)
-
-
-def _record_job(pages: int) -> str | None:
-    """Bump counters; return the refresh reason if a threshold was crossed.
-
-    ``pages`` is the requested slice size (positive) or 0 for unbounded /
-    unknown — only the jobs counter increments in the unbounded case.
-    Returns ``"jobs_threshold"`` or ``"pages_threshold"`` when a recycle
-    should be signaled, ``None`` otherwise. Jobs is checked first so if
-    both trip on the same job, jobs wins (deterministic, matches the
-    order the env vars are documented in).
-    """
-    global _jobs_processed, _pages_processed_total
-    with _refresh_lock:
-        _jobs_processed += 1
-        if pages > 0:
-            _pages_processed_total += pages
-        jobs_th, pages_th = _refresh_thresholds()
-        if jobs_th > 0 and _jobs_processed >= jobs_th:
-            return "jobs_threshold"
-        if pages_th > 0 and _pages_processed_total >= pages_th:
-            return "pages_threshold"
-        return None
-
-
-def _record_degradation(lost: _degraded.Report) -> None:
-    """Count what a successful response could not carry.
-
-    The response already names the affected artifacts, per document. This is
-    the other half: an operator watching a fleet needs the rate, because a
-    response nobody reads back is not a signal. Labelled by reason and by
-    artifact — both bounded, so the series count is too.
-
-    `items` stops at the harness's cap while `count` stays true, so the
-    remainder is added under its own label rather than dropped. A metric that
-    quietly undercounts the pathological case is the failure this whole field
-    exists to avoid.
-    """
-    reported = lost.entry()
-    if reported is None:
-        return
-    for item in reported["items"]:
-        _telemetry.counter_add(
-            "degraded_total",
-            reason=item["reason"],
-            # None means an archive member, which no manifest key claims.
-            artifact=item["artifact"] or "archive",
-        )
-    unlisted = reported["count"] - len(reported["items"])
-    if unlisted > 0:
-        _telemetry.counter_add(
-            "degraded_total", unlisted, reason="unlisted", artifact="unlisted",
-        )
-
-
-# -----------------------------------------------------------------------------
-# Probe policy
-# -----------------------------------------------------------------------------
-#
-# Who may ask this endpoint for its filesystem layout is this worker's call.
-# The payload names container paths and the model-source env values, and only a
-# worker knows whether its callers are its own operators. The harness supplies
-# the dump and reads no variable of its own, so this name belongs to this repo
-# and cannot be renamed by a dependency release.
-
-_PROBE_NOT_DISABLED = ("0", "false", "no", "off")
-
-
-def _probe_allowed() -> bool:
-    """Whether `probe: true` is answered on this endpoint.
-
-    On unless MINERU_DISABLE_PROBE says otherwise, which is what this endpoint
-    has always done and what the troubleshooting guide points someone to when
-    a Cached Models setup is not being found.
-
-    An unrecognised value denies rather than allows. An operator who typed
-    something into this variable meant to turn the probe off, and a typo should
-    not be what publishes a filesystem dump.
-    """
-    value = os.environ.get("MINERU_DISABLE_PROBE", "").strip().lower()
-    if not value:
-        return True
-    return value in _PROBE_NOT_DISABLED
-
-
-# -----------------------------------------------------------------------------
-# Concurrency
-# -----------------------------------------------------------------------------
-#
-# vLLM pre-allocates a large KV cache and isn't safe to drive from concurrent
-# aio_do_parse calls on smaller GPUs. Default 1 is safe on every supported
-# GPU type. Operators with ≥24 GB GPUs may raise via MINERU_MAX_CONCURRENCY.
-# See guides/scaling.mdx for the VRAM math.
-
-def _concurrency_modifier(current_concurrency: int) -> int:  # noqa: ARG001
-    try:
-        return max(1, int(os.environ.get("MINERU_MAX_CONCURRENCY", "1")))
-    except ValueError:
-        return 1
-
-
-# -----------------------------------------------------------------------------
-# Progress + debug envelope
-# -----------------------------------------------------------------------------
-
-def _maybe_progress(job: dict, data: dict) -> None:
-    """Best-effort progress update. Tests / sync clients without a job id
-    shouldn't fail just because we tried to surface progress."""
-    try:
-        runpod.serverless.progress_update(job, data)
-    except Exception as e:  # noqa: BLE001
-        _logging.debug("progress_update failed", error=repr(e))
-
-
-def _build_debug(phase_ms: dict[str, int], gpu_info: dict[str, Any], **extra: Any) -> dict[str, Any]:
-    return {
-        "gpu": gpu_info,
-        "model_dir": _debug.find_model_dir(),
-        "phase_ms": phase_ms,
-        **extra,
-    }
-
-
-def _measure_output_bytes(response: dict[str, Any], transport: str) -> int:
-    """Approximate bytes shipped to the caller, for the egress metrics.
-
-    Reads from ``response["results"][0]`` — the per-file entry — because the
-    payload-carrying keys (``tarball_b64``, ``markdown``, ``images``,
-    ``bucket_bytes``) live there in the unified response shape.
-
-    Per-transport sizing:
-      * tarball_b64 — the b64 string IS the payload; len() is exact.
-      * inline      — markdown text + image bytes dominate the JSON-encoded
-                      response; sum those (json overhead for content_list/
-                      middle is ignored). Cheap and within ~10% of the true
-                      response size on real documents.
-      * s3          — package_s3 records the uploaded tarball size in
-                      `bucket_bytes`; the worker shipped exactly that.
-    Returns 0 when the response shape doesn't include the expected fields
-    (e.g. an empty parse or a failure response with no `results`) so the
-    histogram doesn't get a misleading zero sample for "no output produced."
-    """
-    results = response.get("results") or []
-    if not results:
-        return 0
-    entry = results[0] if isinstance(results[0], dict) else {}
-    if transport == "tarball_b64":
-        tb = entry.get("tarball_b64")
-        return len(tb) if isinstance(tb, str) else 0
-    if transport == "s3":
-        return int(entry.get("bucket_bytes") or 0)
-    if transport == "inline":
-        md = entry.get("markdown") or ""
-        images = entry.get("images") or {}
-        md_bytes = len(md.encode("utf-8")) if isinstance(md, str) else 0
-        image_bytes = sum(
-            len(v) for v in images.values() if isinstance(v, str)
-        ) if isinstance(images, dict) else 0
-        return md_bytes + image_bytes
-    return 0
 
 
 async def _handle_probe(started: float, gpu_info: dict[str, Any], phase_ms: dict[str, int]) -> dict[str, Any]:
@@ -556,7 +346,12 @@ async def handler(job: dict) -> dict:
 
 
 # -----------------------------------------------------------------------------
-# Back-compat surface for tests and any out-of-tree callers that imported
+# Back-compat surface for tests and any out-of-tree callers
+#
+# `_shutting_down`, `_refresh_lock`, `_refresh_thresholds` and
+# `_PROBE_NOT_DISABLED` are imported above and not called here. They are part
+# of this surface too: the tests drive them through `handler`, and the shutdown
+# event in particular has to be the same object the lifecycle module mutates. that imported
 # helpers from this module directly. New code should import from worker.* or
 # from the harness.
 # -----------------------------------------------------------------------------
@@ -576,20 +371,6 @@ _run_mineru = _parse.run_mineru
 _collect_gpu_info = _debug.collect_gpu_info
 _find_model_dir = _debug.find_model_dir
 _probe_filesystem = _debug.probe_filesystem
-
-
-def _package_inline(
-    output_dir: Path, basename: str, formats: Any = None
-) -> dict[str, Any]:
-    """Inline packaging with this worker's manifest bound.
-
-    The harness reads whatever manifest it is handed; which files MinerU
-    writes is this repo's to declare, so the binding happens here rather
-    than at each call site. See :mod:`worker.harness`.
-    """
-    return _package.package_inline(
-        output_dir, basename, _harness.MANIFEST, formats=formats
-    )
 
 
 def _bootstrap_main() -> None:

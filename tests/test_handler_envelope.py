@@ -1,30 +1,15 @@
-"""Handler-side unit tests. Exercise the parts that don't need a GPU or MinerU.
-
-The handler module is intentionally written so it imports cleanly even when
-the heavy `mineru` dependency is unavailable (it wraps that import in try /
-except and falls back to a "mineru is not importable" path). That lets us
-test input validation, packaging, and error handling on plain Python CI.
-"""
+"""Handler-side unit tests. Exercise the parts that don't need a GPU or MinerU. -- envelope."""
 
 from __future__ import annotations
 
 import asyncio
 import base64
-import io
-import json
-import tarfile
-from pathlib import Path
 
 import pytest
-
 from runpod_doc_worker.transport import io as worker_io
 
 import handler
 
-
-# -----------------------------------------------------------------------------
-# _resolve_input_bytes
-# -----------------------------------------------------------------------------
 
 def test_resolve_requires_exactly_one_source():
     with pytest.raises(ValueError, match="exactly one"):
@@ -78,10 +63,6 @@ def test_telemetry_source_kind_is_bounded(source_label, expected):
     assert worker_io.telemetry_source_kind(source_label) == expected
 
 
-# -----------------------------------------------------------------------------
-# _detect_format
-# -----------------------------------------------------------------------------
-
 def test_detect_format_pdf():
     assert handler._detect_format(b"%PDF-1.4\nfoo") == "pdf"
 
@@ -103,53 +84,6 @@ def test_detect_format_unknown():
     assert handler._detect_format(b"not a real file") == "unknown"
     assert handler._detect_format(b"") == "unknown"
 
-
-# -----------------------------------------------------------------------------
-# _package_tarball / _package_inline
-# -----------------------------------------------------------------------------
-
-def _seed_mineru_output(dir_: Path, basename: str) -> None:
-    (dir_ / f"{basename}.md").write_text("# heading\n\nbody\n", encoding="utf-8")
-    (dir_ / f"{basename}_content_list.json").write_text(
-        json.dumps([{"type": "text", "text": "body", "page_idx": 0}]),
-        encoding="utf-8",
-    )
-    (dir_ / f"{basename}_middle.json").write_text(json.dumps({"k": 1}), encoding="utf-8")
-    (dir_ / "images").mkdir()
-    (dir_ / "images" / "fig1.png").write_bytes(b"\x89PNG fake")
-
-
-def test_package_tarball_includes_all_artefacts(tmp_path):
-    out = tmp_path / "out"
-    out.mkdir()
-    _seed_mineru_output(out, "doc")
-
-    encoded = handler._package_tarball(out)
-    raw = base64.b64decode(encoded)
-    with tarfile.open(fileobj=io.BytesIO(raw), mode="r:gz") as tar:
-        names = set(tar.getnames())
-    assert "doc.md" in names
-    assert "doc_content_list.json" in names
-    assert "doc_middle.json" in names
-    assert "images/fig1.png" in names or "images" in names
-
-
-def test_package_inline_returns_full_payload(tmp_path):
-    out = tmp_path / "out"
-    out.mkdir()
-    _seed_mineru_output(out, "doc")
-
-    pkg = handler._package_inline(out, "doc")
-    assert pkg["markdown"].startswith("# heading")
-    assert pkg["content_list"][0]["text"] == "body"
-    assert pkg["middle"]["k"] == 1
-    assert "fig1.png" in pkg["images"]
-    assert base64.b64decode(pkg["images"]["fig1.png"]) == b"\x89PNG fake"
-
-
-# -----------------------------------------------------------------------------
-# handler() top-level error paths
-# -----------------------------------------------------------------------------
 
 def test_handler_returns_error_on_bad_input():
     result = asyncio.run(handler.handler({"input": {}}))  # no source provided
@@ -192,27 +126,6 @@ def test_handler_failure_response_reports_compacted_text(monkeypatch):
     assert "sig=" not in result["error"]
     assert "sig=" not in result["traceback"]
     assert "https://files.example.com/doc.pdf" in result["error"]
-
-
-def test_validate_input_rejects_invalid_transport_value():
-    with pytest.raises(ValueError, match="input validation"):
-        handler._validate_input({"file_b64": "AA==", "transport": "tarball-xml"})
-
-
-def test_validate_input_defaults_applied():
-    cleaned = handler._validate_input({"file_b64": "AA=="})
-    assert cleaned["start_page"] == 0
-    assert cleaned["end_page"] == -1
-    assert cleaned["lang"] == "en"
-    assert cleaned["backend"] == "vlm-auto-engine"
-    assert cleaned["transport"] == "tarball_b64"
-    assert cleaned["formats"] == ["markdown", "content_list", "middle", "images"]
-    assert cleaned["basename"] == "doc"
-
-
-def test_validate_input_accepts_s3_transport():
-    cleaned = handler._validate_input({"file_b64": "AA==", "transport": "s3"})
-    assert cleaned["transport"] == "s3"
 
 
 def test_validate_input_rejects_unknown_backend():
@@ -531,152 +444,6 @@ def test_validate_input_rejects_effort_on_non_hybrid_backend():
         )
 
 
-# -----------------------------------------------------------------------------
-# probe mode — bypasses MinerU and dumps filesystem layout.
-# -----------------------------------------------------------------------------
-
-def test_handler_probe_mode_can_be_turned_off(monkeypatch):
-    monkeypatch.setenv("MINERU_DISABLE_PROBE", "1")
-    result = asyncio.run(handler.handler({"input": {"probe": True}}))
-    assert result["ok"] is False
-    assert "probe is disabled" in result["error"]
-    assert "probe" not in result
-
-
-def test_the_refusal_names_the_knob(monkeypatch):
-    """A caller reading this is usually the operator who can act on it."""
-    monkeypatch.setenv("MINERU_DISABLE_PROBE", "1")
-    result = asyncio.run(handler.handler({"input": {"probe": True}}))
-    assert "MINERU_DISABLE_PROBE" in result["error"]
-
-
-@pytest.mark.parametrize("value", ["1", "true", "yes", "on", "TRUE", " 1 "])
-def test_every_affirmative_spelling_turns_the_probe_off(monkeypatch, value):
-    monkeypatch.setenv("MINERU_DISABLE_PROBE", value)
-    assert handler._probe_allowed() is False
-
-
-@pytest.mark.parametrize("value", ["0", "false", "no", "off", "OFF"])
-def test_an_explicit_negative_leaves_the_probe_on(monkeypatch, value):
-    monkeypatch.setenv("MINERU_DISABLE_PROBE", value)
-    assert handler._probe_allowed() is True
-
-
-@pytest.mark.parametrize("value", ["maybe", "typo", "disabled", "2"])
-def test_an_unrecognised_value_denies(monkeypatch, value):
-    """An operator who typed something into this variable meant to turn the
-    probe off. A typo must not be what publishes a filesystem dump."""
-    monkeypatch.setenv("MINERU_DISABLE_PROBE", value)
-    assert handler._probe_allowed() is False
-
-
-@pytest.mark.parametrize("value", ["", "   "])
-def test_a_blank_value_is_not_a_setting(monkeypatch, value):
-    monkeypatch.setenv("MINERU_DISABLE_PROBE", value)
-    assert handler._probe_allowed() is True
-
-
-def test_handler_probe_mode_enabled_by_default(monkeypatch):
-    """Unset means available, which is what this endpoint has always done."""
-    monkeypatch.delenv("MINERU_DISABLE_PROBE", raising=False)
-    result = asyncio.run(handler.handler({"input": {"probe": True}}))
-    assert result["ok"] is True
-
-
-def test_handler_probe_mode_returns_filesystem_dump():
-    result = asyncio.run(handler.handler({"input": {"probe": True}}))
-    assert result["ok"] is True
-    assert "probe" in result
-    assert "env" in result["probe"]
-    assert "paths" in result["probe"]
-    assert "models_found" in result["probe"]
-    # Surfaces the MinerU availability flag so a busted import doesn't hide
-    # behind a happy ok=true probe response.
-    assert "mineru_available" in result
-    assert isinstance(result["mineru_available"], bool)
-
-
-# -----------------------------------------------------------------------------
-# Progress updates — regression guard for the packaging/completion race.
-#
-# progress_update POSTs {"status": "IN_PROGRESS"} from a background thread
-# to the same endpoint the SDK posts the final result to. Any update emitted
-# after the parse phase runs milliseconds before the handler returns, so it
-# can land AFTER the COMPLETED post and overwrite the finished job back to
-# IN_PROGRESS — the job then appears stuck forever. The parse phase must
-# therefore be the last progress event of a request.
-# -----------------------------------------------------------------------------
-
-def test_no_progress_update_after_parse(monkeypatch):
-    async def fake_run(file_bytes, *, basename, work_dir, **kwargs):
-        out = work_dir / "out"
-        out.mkdir()
-        (out / f"{basename}.md").write_text("# fake\n", encoding="utf-8")
-        return out
-
-    monkeypatch.setattr("worker.parse.run_mineru", fake_run)
-
-    phases: list = []
-    monkeypatch.setattr(
-        "runpod.serverless.progress_update",
-        lambda job, data: phases.append(data.get("phase")),
-    )
-
-    result = asyncio.run(handler.handler({
-        "id": "race-regression-test",
-        "input": {"file_b64": "JVBERi0xLjQK", "basename": "doc", "transport": "inline"},
-    }))
-
-    assert result["ok"] is True
-    assert phases, "expected progress updates during the request"
-    assert phases[-1] == "parsing", (
-        f"last progress phase must be 'parsing'; a later update (got {phases!r}) "
-        f"races the COMPLETED result post and can strand the job IN_PROGRESS"
-    )
-
-
-# -----------------------------------------------------------------------------
-# _package_s3 — env-var validation only; the actual upload requires boto3 +
-# a live S3 endpoint and is not exercised here.
-# -----------------------------------------------------------------------------
-
-def test_package_s3_requires_bucket_env_vars(tmp_path, monkeypatch):
-    # Strip any leaked credentials from the test process.
-    for var in (
-        "BUCKET_ENDPOINT_URL",
-        "BUCKET_NAME",
-        "BUCKET_ACCESS_KEY_ID",
-        "BUCKET_SECRET_ACCESS_KEY",
-    ):
-        monkeypatch.delenv(var, raising=False)
-    out = tmp_path / "out"
-    out.mkdir()
-    _seed_mineru_output(out, "doc")
-    with pytest.raises(ValueError, match="BUCKET_"):
-        handler._package_s3(out, "doc")
-
-
-def test_package_s3_complains_about_each_missing_env_var(tmp_path, monkeypatch):
-    # All four names should be mentioned in the error.
-    for var in (
-        "BUCKET_ENDPOINT_URL",
-        "BUCKET_NAME",
-        "BUCKET_ACCESS_KEY_ID",
-        "BUCKET_SECRET_ACCESS_KEY",
-    ):
-        monkeypatch.delenv(var, raising=False)
-    out = tmp_path / "out"
-    out.mkdir()
-    _seed_mineru_output(out, "doc")
-    with pytest.raises(ValueError) as excinfo:
-        handler._package_s3(out, "doc")
-    msg = str(excinfo.value)
-    assert "BUCKET_ENDPOINT_URL" in msg
-    assert "BUCKET_NAME" in msg
-    assert "BUCKET_ACCESS_KEY_ID" in msg
-    assert "BUCKET_SECRET_ACCESS_KEY" in msg
-
-
 @pytest.mark.parametrize(
     ("env_value", "expected"),
     [
@@ -696,68 +463,3 @@ def test_presign_ttl_resolution(monkeypatch, env_value, expected):
     else:
         monkeypatch.setenv("BUCKET_PRESIGN_TTL_SECONDS", env_value)
     assert worker_package.presign_ttl_seconds() == expected
-
-
-def test_package_s3_signs_with_the_configured_lifetime(tmp_path, monkeypatch):
-    """The knob has to reach the signing call and the reported value, not just
-    resolve correctly on its own."""
-    # package_s3 imports boto3 lazily, so the patch goes on the module itself.
-    import boto3  # noqa: PLC0415
-
-    recorded = {}
-
-    class _FakeS3:
-        def put_object(self, **kwargs):
-            recorded["key"] = kwargs["Key"]
-
-        def generate_presigned_url(self, op, Params, ExpiresIn):  # noqa: N803
-            recorded["op"] = op
-            recorded["expires_in"] = ExpiresIn
-            return f"https://bucket.example/{Params['Key']}?signature=x"
-
-    monkeypatch.setattr(boto3, "client", lambda *a, **k: _FakeS3())
-    for var, val in (
-        ("BUCKET_ENDPOINT_URL", "https://bucket.example"),
-        ("BUCKET_NAME", "parses"),
-        ("BUCKET_ACCESS_KEY_ID", "id"),
-        ("BUCKET_SECRET_ACCESS_KEY", "secret"),
-        ("BUCKET_PRESIGN_TTL_SECONDS", "900"),
-    ):
-        monkeypatch.setenv(var, val)
-
-    out = tmp_path / "out"
-    out.mkdir()
-    _seed_mineru_output(out, "doc")
-    result = handler._package_s3(out, "doc")
-
-    assert recorded["expires_in"] == 900
-    assert result["tarball_url_expires_in"] == 900
-    assert result["bucket_key"] == recorded["key"]
-    assert result["bucket_bytes"] > 0
-
-
-def test_build_tarball_bytes_roundtrip(tmp_path):
-    out = tmp_path / "out"
-    out.mkdir()
-    _seed_mineru_output(out, "doc")
-    data = handler._build_tarball_bytes(out)
-    # Should be valid gzip-tar with the seeded files inside.
-    with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
-        names = set(tar.getnames())
-    assert "doc.md" in names
-    assert "doc_content_list.json" in names
-
-
-def test_build_zip_bytes_roundtrip(tmp_path):
-    import zipfile  # noqa: PLC0415
-
-    out = tmp_path / "out"
-    out.mkdir()
-    _seed_mineru_output(out, "doc")
-    data = handler._build_zip_bytes(out)
-    assert data[:4] == b"PK\x03\x04"  # zip magic
-    with zipfile.ZipFile(io.BytesIO(data)) as zf:
-        names = set(zf.namelist())
-    assert "doc.md" in names
-    assert "doc_content_list.json" in names
-    assert "images/fig1.png" in names

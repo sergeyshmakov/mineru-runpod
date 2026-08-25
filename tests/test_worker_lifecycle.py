@@ -12,13 +12,14 @@ import asyncio
 import pytest
 
 import handler
+from worker import lifecycle
 
 
 @pytest.fixture(autouse=True)
 def reset_counters(monkeypatch):
     """Each test starts with clean counters and no thresholds set."""
-    handler._jobs_processed = 0
-    handler._pages_processed_total = 0
+    lifecycle._jobs_processed = 0
+    lifecycle._pages_processed_total = 0
     monkeypatch.delenv("REFRESH_WORKER_AFTER_JOBS", raising=False)
     monkeypatch.delenv("REFRESH_WORKER_AFTER_PAGES", raising=False)
     yield
@@ -40,7 +41,7 @@ def test_refresh_jobs_threshold_crosses(monkeypatch):
     assert handler._record_job(0) is None
     # Third job crosses the jobs threshold — reason identifies which one.
     assert handler._record_job(0) == "jobs_threshold"
-    assert handler._jobs_processed == 3
+    assert lifecycle._jobs_processed == 3
 
 
 def test_refresh_pages_threshold_crosses(monkeypatch):
@@ -49,7 +50,7 @@ def test_refresh_pages_threshold_crosses(monkeypatch):
     assert handler._record_job(20) is None  # 40 cumulative
     # 60 cumulative crosses 50 — pages reason wins.
     assert handler._record_job(20) == "pages_threshold"
-    assert handler._pages_processed_total == 60
+    assert lifecycle._pages_processed_total == 60
 
 
 def test_refresh_unbounded_jobs_do_not_count_pages(monkeypatch):
