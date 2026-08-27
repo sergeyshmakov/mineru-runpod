@@ -55,6 +55,23 @@ See the [project README](https://github.com/sergeyshmakov/mineru-runpod#how-does
 - **Outputs**: Markdown + `content_list` + `middle.json` + extracted images. Three transport modes: base64 tarball, inline fields, or presigned URL to an S3-compatible bucket. See [Output modes](/guides/output-modes/).
 - **Backends**: five MinerU backends — the VLM (model card tagged English + Chinese; empirically handles Cyrillic on the tested Pro model), the pipeline OCR with script-family language models, the hybrid auto-router, and two backends for an external VLM server. See [Picking a backend](/guides/choosing-gpu/#picking-a-backend).
 
+## Versions and compatibility
+
+| | |
+|---|---|
+| **MinerU series** | `3.4.x`, pinned as `mineru[core,vllm]>=3.4.0,<3.5.0` |
+| **Template version** | The `v*` tag on this repo, and the `mineru-client` version |
+
+The template's **major** version moves when MinerU has a major release -- that
+being the change that actually moves output and behaviour. A breaking change to the
+job contract ships on a **minor** instead, and leads the release notes under **Job
+Contract Changes**, so read those before upgrading a minor. A change that breaks
+`pip install mineru-client` is a minor too, under **Compatibility Changes** -- the
+major is reserved for MinerU alone, so that it never drifts out of step.
+
+The engine version is stated here rather than encoded in the template's version
+number, because "v4.0.0" tells you nothing about which MinerU you are getting.
+
 ## Next steps
 
 The [Deploy guide](/getting-started/deploy/) covers all three supported paths:

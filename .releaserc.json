@@ -7,6 +7,8 @@
       {
         "preset": "conventionalcommits",
         "releaseRules": [
+          { "type": "contract", "release": "minor" },
+          { "type": "compat",   "release": "minor" },
           { "type": "perf",     "release": "patch" },
           { "type": "refactor", "release": "patch" },
           { "type": "docs",     "scope": "readme", "release": "patch" },
@@ -25,6 +27,8 @@
         "preset": "conventionalcommits",
         "presetConfig": {
           "types": [
+            { "type": "contract", "section": "⚠ Job Contract Changes (action may be required)" },
+            { "type": "compat",   "section": "⚠ Compatibility Changes (action may be required)" },
             { "type": "feat",     "section": "Features" },
             { "type": "fix",      "section": "Bug Fixes" },
             { "type": "perf",     "section": "Performance" },

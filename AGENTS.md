@@ -8,6 +8,46 @@ is no separate "release" step a human performs.
 Read that again before you commit anything, because it is the fact behind the
 rule below.
 
+## Versioning
+
+The version number here describes a **deployment template**, not a library on an
+index. Neither client is published to PyPI -- both install from a git URL, so no
+resolver ever reads the number and nobody can range-pin it. That is what makes the
+scheme below workable, and it is also why the changelog carries the weight the
+version number would carry elsewhere.
+
+**Major** is reserved for an upstream engine major: a new major of `MinerU` or of
+its models. It is the one fact a template user acts on, because it is when output
+and behaviour actually move. The engine is minor-locked in `requirements.txt`
+(`mineru[core,vllm]>=3.4.0,<3.5.0`), so this cannot happen by accident.
+
+**A breaking change to the template's own contract ships on a minor.** A renamed
+job field, a default that flips, a value that used to be accepted and now is not.
+These do not earn a major, because reserving the major for the engine is what makes
+the major mean something.
+
+Two rules keep that from becoming a way to break people quietly:
+
+1. **Use the `contract:` commit type.** It bumps the minor and renders its own
+   section at the top of the release notes. A contract break committed as `feat:`
+   is a contract break nobody will find.
+2. **Use the `compat:` commit type for an installability break.** Raising
+   `requires-python`, dropping a supported interpreter, removing an import path. Also
+   a minor, also its own section at the top of the notes.
+
+   It is deliberately *not* a major. Nothing range-pins a git-URL install, so a
+   major version cannot warn those users any better than a release note can -- while
+   spending the major here would leave it one behind the engine major it is reserved
+   for, and further behind after every such change. The notes are the channel that
+   reaches them; the digit is not.
+
+State the engine version explicitly rather than encoding it in the major digit --
+in the README, the docs compatibility table and `.runpod/hub.json`. "Version 4.0.0"
+tells nobody which MinerU they are getting.
+
+None of this changes the rule above: whether a change is worth a major is the
+owner's call every time, never the agent's.
+
 ## Never mark a change breaking on your own
 
 **Do not put `!` in a commit title, and do not write a `BREAKING CHANGE:` footer,
