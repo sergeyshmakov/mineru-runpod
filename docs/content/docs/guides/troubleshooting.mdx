@@ -259,16 +259,16 @@ are processed sequentially.
 
 See [Choosing a GPU](/guides/choosing-gpu/) for the VRAM math.
 
-## `unexpected handler return type: <class 'NoneType'>` after a successful parse
+## `the job reported COMPLETED but carried no output`
 
-**Symptom**: the client raises `MineruClientError: unexpected handler return type: <class 'NoneType'>` (or `run_sync` returns `None` directly). Worker logs show the handler **completed successfully** — `[mineru-worker] done: elapsed=Xs phase_ms={...}` — immediately followed by:
+**Symptom**: the client raises `MineruClientError: the job reported COMPLETED but carried no output`, followed by the cap and the ways out. Callers using the RunPod SDK directly see a bare `None` instead, with nothing naming size — which is what this client's message exists to replace. Worker logs show the handler **completed successfully** — `[mineru-worker] done: elapsed=Xs phase_ms={...}` — immediately followed by:
 
 ```
 "Failed to return job results. | 400, message='Bad Request',
  url='https://api.runpod.ai/v2/<endpoint>/job-done/<worker>/<request>?gpu=...&isStream=false'"
 ```
 
-**Cause**: RunPod's `/runsync` gateway caps the **response** payload at ~20 MB. The worker built a valid result; when it tried to POST it back via `/job-done`, the gateway returned HTTP 400 and discarded it. The SDK then sees no output → `None` → our client raises this error.
+**Cause**: RunPod's `/runsync` gateway caps the **response** payload at ~20 MB. The worker built a valid result; when it tried to POST it back via `/job-done`, the gateway returned HTTP 400 and discarded it. The SDK then sees no output and hands the client `None`, which it reports as the message above rather than as a Python type name.
 
 Triggers (measured on a real 82-page PDF):
 

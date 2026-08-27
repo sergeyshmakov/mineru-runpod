@@ -40,7 +40,7 @@
               "value": "modelscope"
             },
             {
-              "label": "Local (advanced \u2014 needs mineru.json)",
+              "label": "Local (advanced — needs mineru.json)",
               "value": "local"
             }
           ],
@@ -150,9 +150,9 @@
       {
         "key": "MINERU_ENFORCE_TARGET_POLICY",
         "input": {
-          "name": "Enforce routable-address policy on server_url",
+          "name": "Require an allow-list for server_url",
           "type": "string",
-          "description": "Set to 1 if untrusted callers can submit jobs: server_url comes from the job payload, so a caller could aim the worker at an internal address. Off by default.",
+          "description": "Set to 1 if untrusted callers submit jobs. Every server_url host, public included, must then be listed in MINERU_ALLOWED_SERVER_HOSTS -- fill that in too or http-client jobs are refused.",
           "default": "",
           "advanced": true
         }
@@ -160,9 +160,9 @@
       {
         "key": "MINERU_ALLOWED_SERVER_HOSTS",
         "input": {
-          "name": "Allowed private hosts for server_url",
+          "name": "Hosts server_url may name",
           "type": "string",
-          "description": "Comma-separated hosts server_url may name even if private, e.g. your own vLLM server. Exact host match. Use this rather than the global local-fetch flag.",
+          "description": "Comma-separated, exact host match (e.g. your own vLLM server). Required for every permitted host, not only private ones, when the allow-list is enforced above. Ignored otherwise.",
           "default": "",
           "advanced": true
         }
