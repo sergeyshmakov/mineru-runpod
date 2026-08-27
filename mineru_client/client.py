@@ -15,6 +15,7 @@ import runpod
 from runpod_doc_client import (
     ResponseError,
     decode_b64,
+    describe_dropped_response,
     download,
     extract,
     limits,
@@ -62,49 +63,6 @@ def _apply_fetch_policy() -> None:
         limits.ALLOW_PRIVATE_FETCH_TARGETS = True
 
 
-
-def _no_output_message(transport: str) -> str:
-    """Explain a COMPLETED job that carried no output.
-
-    RunPod's gateway drops a response over its size cap, reports the job
-    COMPLETED with a normal executionTime, and omits the ``output`` key
-    entirely -- nothing in the reply names size as the cause. The SDK surfaces
-    that as ``None``, so the previous message here was
-    ``unexpected handler return type: <class 'NoneType'>``, which sends a
-    caller looking for a bug in the handler instead of at the size of what
-    they asked for.
-
-    The cap is 20 MB on ``/runsync`` and 10 MB on ``/run``; a few hundred pages
-    of output passes it, and a scanned parse gets there sooner because
-    ``middle.json`` carries per-character boxes.
-    """
-    advice = {
-        "tarball_b64": (
-            'transport="tarball_b64" ships the whole output directory as one '
-            "base64 blob, which is the transport most likely to pass the cap."
-        ),
-        "inline": (
-            'transport="inline" returns the artifacts as JSON; middle.json is '
-            "usually the bulk of it on a scanned document."
-        ),
-    }.get(transport, f"transport={transport!r} returned no output.")
-    return (
-        "the job reported COMPLETED but carried no output.\n"
-        "\n"
-        "The usual cause is RunPod's response-size cap (20 MB on /runsync, "
-        "10 MB on /run): the gateway drops an oversized response and still "
-        "reports success, without naming size anywhere in the reply.\n"
-        f"\n{advice}\n"
-        "\n"
-        "Either of these keeps the response under the cap:\n"
-        '  * transport="inline" with formats=["markdown", "content_list"], '
-        "which leaves out the per-character boxes in middle.json;\n"
-        '  * transport="s3", which returns a presigned URL instead of the '
-        "bytes -- needs the BUCKET_* env vars set on the endpoint.\n"
-        "\n"
-        "A bounded page range (start_page / end_page) also works, and is the "
-        "only option that keeps every format."
-    )
 
 class MineruClient:
     """Wraps a single deployed mineru-runpod endpoint.
@@ -236,7 +194,7 @@ class MineruClient:
         if result is None:
             # Not a handler bug: the gateway dropped the response. See
             # `_no_output_message`.
-            raise MineruClientError(_no_output_message(transport))
+            raise MineruClientError(describe_dropped_response(transport, bulky_artifact="middle.json"))
         if not isinstance(result, dict):
             raise MineruClientError(f"unexpected handler return type: {type(result)}")
         if not result.get("ok", False):
