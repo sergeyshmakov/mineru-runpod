@@ -17,6 +17,7 @@ from runpod_doc_client import (
     decode_b64,
     download,
     extract,
+    limits,
     require_fetchable_url,
     safe_output_name,
 )
@@ -30,6 +31,35 @@ from inside ``download`` and ``extract``, and a subclass here would leave
 ``except MineruClientError`` not catching it -- which is the single-error-type
 property the shared package exists to provide.
 """
+
+
+# Truthy spellings accepted for the opt-in below. Matches what the worker already
+# accepts for MINERU_ALLOW_LOCAL_FETCH, so an operator who has set one does not
+# have to discover that the other spells it differently.
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+
+def _apply_fetch_policy() -> None:
+    """Honour MINERU_CLIENT_ALLOW_PRIVATE_FETCH before an archive fetch.
+
+    The shared reader refuses to fetch from an address that is not globally
+    routable, judged on the socket it actually connected to. That is the right
+    default for a client: the URL comes out of a *response*, so without the check
+    a worker could make the machine running this code open connections inside its
+    own network.
+
+    It is wrong for one documented deployment, though. An S3-compatible store on
+    a private network -- a self-hosted MinIO beside the endpoint is the case in
+    the docs -- serves presigned URLs on exactly the addresses the policy
+    rejects, and this used to work. Hence the opt-in, read per call so a process
+    can set it late, and named for the client because the worker's
+    MINERU_ALLOW_LOCAL_FETCH governs a different fetch in a different process.
+
+    Only ever widens. A caller who set the shared flag directly keeps it, which
+    matters because the error message tells them to do precisely that.
+    """
+    if os.environ.get("MINERU_CLIENT_ALLOW_PRIVATE_FETCH", "").strip().lower() in _TRUTHY:
+        limits.ALLOW_PRIVATE_FETCH_TARGETS = True
 
 
 class MineruClient:
@@ -255,6 +285,7 @@ class MineruClient:
             raise MineruClientError(
                 "result has no tarball_url; was transport='s3'?"
             )
+        _apply_fetch_policy()
         require_fetchable_url(entry["tarball_url"])
         return extract(download(entry["tarball_url"]), dest_dir)
 

@@ -53,7 +53,7 @@ from ._mapping import (
     build_task_response,
     build_worker_payload,
 )
-from .client import MineruClientError
+from .client import MineruClientError, _apply_fetch_policy
 
 
 def _download_and_extract(url: str, dest_dir: str | Path) -> Path:
@@ -64,6 +64,7 @@ def _download_and_extract(url: str, dest_dir: str | Path) -> Path:
     `tarball_url` regardless of how the task was created. The presigned URL is
     short-lived -- call promptly after the task is ``done``.
     """
+    _apply_fetch_policy()
     require_fetchable_url(url)
     return extract(download(url), dest_dir)
 

@@ -155,6 +155,24 @@ Response is small (~500 bytes):
 
 The caller downloads the tarball from the bucket and extracts it. `MineruClient.save_s3_tarball(result, "./out")` does the download + extraction in one call.
 
+### If your bucket is on a private network
+
+`save_s3_tarball` refuses a presigned URL that resolves to an address which is not
+globally routable, judged on the socket it actually connects to. The URL comes out
+of a worker response, so the check is what stops a response from making your
+machine open connections inside your own network.
+
+A self-hosted MinIO next to the endpoint is the case where that default is wrong.
+Set `MINERU_CLIENT_ALLOW_PRIVATE_FETCH=1` in the environment running the client:
+
+```bash
+MINERU_CLIENT_ALLOW_PRIVATE_FETCH=1 python parse.py
+```
+
+It is read per call, so a long-running process can set it late. Note it is a
+*client* variable: `MINERU_ALLOW_LOCAL_FETCH` governs the worker fetching
+`file_url`, runs in a different process, and does not affect this.
+
 ### Setup
 
 You need an S3-compatible bucket. Works with **AWS S3, Cloudflare R2, Backblaze B2, Hetzner Object Storage, MinIO**, and anything else that speaks the S3 API with SigV4.
