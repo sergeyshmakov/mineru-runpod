@@ -347,7 +347,16 @@ def validate_input(job_input: dict) -> dict:
                 _config.active().truthy(ENFORCE_TARGET_POLICY)
                 and host.lower() not in _allowed_server_hosts()
             ):
-                _net.check_target(server_url, field="server_url")
+                # allow_local=False: the operator's ALLOW_LOCAL_FETCH is an
+                # exemption for fetching *documents* from their own network, and it
+                # is scoped to the whole worker. Letting it reach this field meant
+                # that an endpoint configured for a private document mirror also
+                # accepted any private server_url a caller sent -- cloud metadata
+                # included. An operator who really does run a private model server
+                # names it in ALLOWED_SERVER_HOSTS, which is checked above.
+                _net.check_target(
+                    server_url, field="server_url", allow_local=False
+                )
         except ValueError as e:
             _fail(str(e))
 
