@@ -39,6 +39,7 @@ const routes = [
 	"/guides/scaling/",
 	"/guides/troubleshooting/",
 	"/reference/api/",
+	"/reference/versioning/",
 ];
 
 // Titles as the live site publishes them: page title plus the site suffix.
@@ -82,6 +83,7 @@ const titles = new Map(
 		"/guides/scaling/": "Scaling and tuning",
 		"/guides/troubleshooting/": "Troubleshooting",
 		"/reference/api/": "API reference",
+		"/reference/versioning/": "Versioning",
 	}).map(([route, title]) => [route, `${title} | mineru-runpod`]),
 );
 

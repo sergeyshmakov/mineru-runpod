@@ -57,20 +57,9 @@ See the [project README](https://github.com/sergeyshmakov/mineru-runpod#how-does
 
 ## Versions and compatibility
 
-| | |
-|---|---|
-| **MinerU series** | `3.4.x`, pinned as `mineru[core,vllm]>=3.4.0,<3.5.0` |
-| **Template version** | The `v*` tag on this repo, and the `mineru-client` version |
+This template tracks MinerU `3.4.x`, pinned as `mineru[core,vllm]>=3.4.0,<3.5.0`.
 
-The template's **major** version moves when MinerU has a major release -- that
-being the change that actually moves output and behaviour. A breaking change to the
-job contract ships on a **minor** instead, and leads the release notes under **Job
-Contract Changes**, so read those before upgrading a minor. A change that breaks
-`pip install mineru-client` is a minor too, under **Compatibility Changes** -- the
-major is reserved for MinerU alone, so that it never drifts out of step.
-
-The engine version is stated here rather than encoded in the template's version
-number, because "v4.0.0" tells you nothing about which MinerU you are getting.
+The major version moves only when MinerU has a major release. Breaking changes to the job contract or to installability ship on a minor and lead the release notes — see [Versioning](/reference/versioning/) for what to read before upgrading.
 
 ## Next steps
 
