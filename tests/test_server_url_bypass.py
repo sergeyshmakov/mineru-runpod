@@ -1,20 +1,23 @@
-"""A caller cannot borrow the operator's local-fetch exemption for server_url.
+"""What an enforcing endpoint accepts for `server_url`, and why it is a list.
 
-`MINERU_ALLOW_LOCAL_FETCH` exists so an operator can serve documents from their own
-network. It is scoped to the whole worker, and `check_target` honoured it for every
-field -- so an endpoint configured for a private document mirror also accepted any
-private `server_url` a caller sent, cloud metadata included, and the worker would
-POST OpenAI-compatible requests there.
+Two findings, one after the other.
 
-Reproduced before the fix, with both variables set as a real deployment would:
+The first: `MINERU_ALLOW_LOCAL_FETCH` exists so an operator can serve documents from
+their own network, and `check_target` honoured it for every field -- so an endpoint
+configured for a private document mirror also accepted any private `server_url` a
+caller sent, cloud metadata included.
 
-    server_url=http://169.254.169.254/v1   ACCEPTED
-    server_url=http://127.0.0.1:8000/v1    ACCEPTED
-    server_url=http://10.0.0.5/v1          ACCEPTED
+The second: checking where a host *resolves* cannot hold for this field at all. The
+engine's HTTP client resolves the name again and opens the connection itself, so a
+host answering publicly at validation can answer privately at connect time.
+`mineru_vl_utils` builds its `httpx.Client` internally with no transport to inject,
+and pinning the address would mean handing it a literal IP with a `Host` header --
+which fails certificate validation for any https target, the configuration a remote
+model server should be using.
 
-`allow_local=False` holds the field to the policy while leaving the operator's own
-document fetches exempt. An operator who genuinely runs a private model server
-names it in `MINERU_ALLOWED_SERVER_HOSTS`, which is checked before this.
+So enforcement means the allow-list. A name the operator chose is not subject to
+rebinding by a caller, which is the whole difference. Without enforcement the field
+keeps its shape check only, as documented.
 
 Resolution is stubbed. A test that let one of these through would open a real
 socket, which took this suite from 3s to 24s once before.
@@ -29,7 +32,6 @@ from worker import schema
 
 HOSTS = {
     "metadata.internal": ["169.254.169.254"],
-    "loopback.internal": ["127.0.0.1"],
     "private.internal": ["10.0.0.5"],
     "vllm.internal": ["10.0.0.9"],
     "public.example": ["93.184.216.34"],
@@ -42,12 +44,21 @@ def _stub_dns(monkeypatch: pytest.MonkeyPatch):
 
 
 @pytest.fixture(autouse=True)
-def _enforcing(monkeypatch: pytest.MonkeyPatch):
-    """The configuration the hole needed: the operator's document bypass on, and
-    the target policy enforced."""
-    monkeypatch.setenv("MINERU_ALLOW_LOCAL_FETCH", "1")
+def _clean_env(monkeypatch: pytest.MonkeyPatch):
+    for name in (
+        "MINERU_ENFORCE_TARGET_POLICY",
+        "MINERU_ALLOWED_SERVER_HOSTS",
+        "MINERU_ALLOW_LOCAL_FETCH",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+
+@pytest.fixture
+def enforcing(monkeypatch: pytest.MonkeyPatch):
+    """An endpoint that has turned the policy on, with the operator's document
+    bypass also set -- the configuration the first hole needed."""
     monkeypatch.setenv("MINERU_ENFORCE_TARGET_POLICY", "1")
-    monkeypatch.delenv("MINERU_ALLOWED_SERVER_HOSTS", raising=False)
+    monkeypatch.setenv("MINERU_ALLOW_LOCAL_FETCH", "1")
 
 
 def _parse(server_url: str) -> dict:
@@ -61,41 +72,76 @@ def _parse(server_url: str) -> dict:
 
 
 @pytest.mark.parametrize(
-    "host", ["metadata.internal", "loopback.internal", "private.internal"]
+    "url",
+    [
+        "http://169.254.169.254/v1",
+        "http://metadata.internal/v1",
+        "http://private.internal/v1",
+    ],
 )
-def test_a_caller_cannot_name_a_private_model_server(host: str) -> None:
-    with pytest.raises(ValueError, match="publicly routable"):
-        _parse(f"http://{host}/v1")
+def test_a_caller_cannot_name_a_private_model_server(url: str, enforcing) -> None:
+    """The first finding. The operator's document bypass is set, and it does not
+    reach this field."""
+    with pytest.raises(ValueError, match="MINERU_ALLOWED_SERVER_HOSTS"):
+        _parse(url)
 
 
-def test_the_refusal_does_not_suggest_the_variable_that_is_already_set() -> None:
-    """The operator has `ALLOW_LOCAL_FETCH=1` and it does not apply here, so
-    repeating it would send them to a switch they have already flipped."""
+def test_an_unlisted_public_host_is_refused_under_enforcement(enforcing) -> None:
+    """The second finding, and the contract change it required.
+
+    A public host used to pass on the strength of where it resolved. That check is
+    exactly what DNS rebinding defeats when the engine reconnects, so enforcement
+    no longer offers it -- the host has to be one the operator named.
+    """
+    with pytest.raises(ValueError, match="MINERU_ALLOWED_SERVER_HOSTS"):
+        _parse("https://public.example/v1")
+
+
+def test_an_empty_allow_list_says_so(enforcing) -> None:
+    """An operator who turns enforcement on without a list has accidentally
+    disabled per-job model servers. The message says that rather than looking like
+    a rejection of the particular URL."""
     with pytest.raises(ValueError) as caught:
-        _parse("http://private.internal/v1")
-    message = str(caught.value)
-    assert "does not honour" in message
-    assert "ALLOW_LOCAL_FETCH=1 to allow this" not in message
+        _parse("https://public.example/v1")
+    assert "is empty" in str(caught.value)
+    assert "accepts no per-job server_url" in str(caught.value)
 
 
-def test_a_public_model_server_is_still_accepted() -> None:
-    """The guard on the narrowing: this must refuse private targets, not all of
-    them."""
-    assert _parse("http://public.example/v1")["server_url"] == (
-        "http://public.example/v1"
-    )
-
-
-def test_an_allow_listed_private_host_is_still_accepted(
-    monkeypatch: pytest.MonkeyPatch,
+def test_a_listed_host_is_accepted_even_when_private(
+    enforcing, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """An operator who really does run a private model server names it. That path
-    is checked before the address policy and is how the legitimate case works."""
+    """The legitimate case, and the reason the list exists: an operator running
+    their own VLM on a private address names it, and rebinding is irrelevant
+    because the name is theirs."""
     monkeypatch.setenv("MINERU_ALLOWED_SERVER_HOSTS", "vllm.internal")
     assert _parse("http://vllm.internal/v1")["server_url"] == "http://vllm.internal/v1"
 
 
-def test_the_operator_document_bypass_is_untouched() -> None:
+def test_the_list_is_matched_exactly(
+    enforcing, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No suffix matching, so an attacker-registered lookalike does not satisfy an
+    entry. Asserted here because the allow-list is now the whole defence."""
+    monkeypatch.setenv("MINERU_ALLOWED_SERVER_HOSTS", "vllm.internal")
+    with pytest.raises(ValueError, match="MINERU_ALLOWED_SERVER_HOSTS"):
+        _parse("http://evil-vllm.internal/v1")
+
+
+def test_without_enforcement_the_field_keeps_its_shape_check_only() -> None:
+    """The documented default. An endpoint that has not turned the policy on trusts
+    its callers, and this change must not quietly start refusing their jobs."""
+    assert _parse("https://vlm.example.com/v1")["server_url"] == (
+        "https://vlm.example.com/v1"
+    )
+
+
+def test_a_malformed_url_is_still_refused_without_enforcement() -> None:
+    """The shape check is not conditional on the policy."""
+    with pytest.raises(ValueError, match="server_url"):
+        _parse("vlm.example.com/v1")
+
+
+def test_the_operator_document_bypass_is_untouched(enforcing) -> None:
     """What `ALLOW_LOCAL_FETCH` is for. If this broke, every endpoint serving its
-    own private mirror would stop working -- a worse outcome than the hole."""
+    own private mirror would stop working -- worse than either hole."""
     net.check_target("http://private.internal/report.pdf", field="file_url")

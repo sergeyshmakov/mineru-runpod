@@ -343,20 +343,32 @@ def validate_input(job_input: dict) -> dict:
     if server_url := cleaned.get("server_url"):
         try:
             host = _net.require_http_url(server_url, field="server_url")
-            if (
-                _config.active().truthy(ENFORCE_TARGET_POLICY)
-                and host.lower() not in _allowed_server_hosts()
-            ):
-                # allow_local=False: the operator's ALLOW_LOCAL_FETCH is an
-                # exemption for fetching *documents* from their own network, and it
-                # is scoped to the whole worker. Letting it reach this field meant
-                # that an endpoint configured for a private document mirror also
-                # accepted any private server_url a caller sent -- cloud metadata
-                # included. An operator who really does run a private model server
-                # names it in ALLOWED_SERVER_HOSTS, which is checked above.
-                _net.check_target(
-                    server_url, field="server_url", allow_local=False
-                )
+            if _config.active().truthy(ENFORCE_TARGET_POLICY):
+                # Enforcement means the allow-list, not an address check.
+                #
+                # Checking where the host resolves cannot hold for this field: the
+                # engine's own HTTP client resolves the name again and opens the
+                # connection, so a host whose DNS answers publicly here can answer
+                # privately there. `mineru_vl_utils` builds its `httpx.Client`
+                # internally with no transport to inject, and pinning the address
+                # would mean handing it a literal IP with a Host header -- which
+                # fails certificate validation for any https target, the very
+                # configuration a remote model server should use.
+                #
+                # So an enforcing endpoint requires the operator to name the hosts.
+                # A name the operator chose is not subject to rebinding by a caller,
+                # which is the whole difference. Without enforcement this field
+                # keeps its shape check only, as documented.
+                if host.lower() not in _allowed_server_hosts():
+                    allowed = _config.active().env_name(ALLOWED_SERVER_HOSTS)
+                    listed = sorted(_allowed_server_hosts())
+                    raise ValueError(
+                        f"server_url must name a host listed in {allowed}; got "
+                        f"{host!r}"
+                        + (f" (listed: {', '.join(listed)})" if listed else
+                           f" ({allowed} is empty, so this endpoint accepts no "
+                           f"per-job server_url)")
+                    )
         except ValueError as e:
             _fail(str(e))
 

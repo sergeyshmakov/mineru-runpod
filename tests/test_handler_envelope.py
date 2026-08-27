@@ -320,7 +320,7 @@ def test_the_policy_refuses_private_server_urls_when_enabled(url, monkeypatch):
     The metadata endpoint is in the list deliberately — it is the target that
     turns this from a misconfiguration into an SSRF."""
     monkeypatch.setenv("MINERU_ENFORCE_TARGET_POLICY", "1")
-    with pytest.raises(ValueError, match="publicly routable"):
+    with pytest.raises(ValueError, match="MINERU_ALLOWED_SERVER_HOSTS"):
         handler._validate_input({
             "file_b64": "AA==",
             "backend": "vlm-http-client",
@@ -361,7 +361,7 @@ def test_the_allowlist_permits_only_what_it_names(url, monkeypatch):
     refused, the metadata endpoint included."""
     monkeypatch.setenv("MINERU_ENFORCE_TARGET_POLICY", "1")
     monkeypatch.setenv("MINERU_ALLOWED_SERVER_HOSTS", "10.1.2.3")
-    with pytest.raises(ValueError, match="publicly routable"):
+    with pytest.raises(ValueError, match="MINERU_ALLOWED_SERVER_HOSTS"):
         handler._validate_input({
             "file_b64": "AA==",
             "backend": "vlm-http-client",
@@ -396,27 +396,35 @@ def test_the_allowlist_is_case_insensitive_and_tolerates_spacing(monkeypatch):
     assert cleaned["server_url"] == "http://vllm.internal:8000"
 
 
-def test_a_public_server_url_passes_either_way(monkeypatch):
-    """The flag must not affect the ordinary case.
+def test_a_public_server_url_needs_listing_once_the_policy_is_on(monkeypatch):
+    """The contract change that closed DNS rebinding on this field.
 
-    A literal public address rather than a hostname: with the policy on, the
-    check resolves the host, so a name would make this test depend on DNS and
-    fail in an offline CI. The private-address cases above use literals for the
-    same reason.
+    A public address used to pass under enforcement on the strength of where it
+    resolved. That check is precisely what rebinding defeats: the engine resolves
+    the host again and opens the connection itself, so an answer that is public
+    here can be private there. Enforcement therefore requires the operator to name
+    the host, and a name they chose cannot be rebound by a caller.
+
+    Without the policy the field keeps its shape check only, which is the
+    documented default and is what most endpoints run.
     """
     url = "https://8.8.8.8/v1"
-    for enforce in ("", "1"):
-        if enforce:
-            monkeypatch.setenv("MINERU_ENFORCE_TARGET_POLICY", enforce)
-        else:
-            monkeypatch.delenv("MINERU_ENFORCE_TARGET_POLICY", raising=False)
-        cleaned = handler._validate_input({
-            "file_b64": "AA==",
-            "backend": "vlm-http-client",
-            "server_url": url,
-        })
-        assert cleaned["server_url"] == url
+    payload = {
+        "file_b64": "AA==",
+        "backend": "vlm-http-client",
+        "server_url": url,
+    }
 
+    monkeypatch.delenv("MINERU_ENFORCE_TARGET_POLICY", raising=False)
+    assert handler._validate_input(dict(payload))["server_url"] == url
+
+    monkeypatch.setenv("MINERU_ENFORCE_TARGET_POLICY", "1")
+    monkeypatch.delenv("MINERU_ALLOWED_SERVER_HOSTS", raising=False)
+    with pytest.raises(ValueError, match="MINERU_ALLOWED_SERVER_HOSTS"):
+        handler._validate_input(dict(payload))
+
+    monkeypatch.setenv("MINERU_ALLOWED_SERVER_HOSTS", "8.8.8.8")
+    assert handler._validate_input(dict(payload))["server_url"] == url
 
 def test_validate_input_defaults_effort_to_none():
     cleaned = handler._validate_input({"file_b64": "AA=="})
