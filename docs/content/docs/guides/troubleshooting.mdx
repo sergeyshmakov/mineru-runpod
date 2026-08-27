@@ -320,6 +320,7 @@ Most common reasons:
 
 | Message | Cause | Fix |
 |---|---|---|
+| `the job reported COMPLETED but carried no output` | RunPod's gateway dropped the response for exceeding its size cap (20 MB on `/runsync`, 10 MB on `/run`) and still reported success — nothing in the reply names size. Most likely on the default `transport="tarball_b64"` with a long or scanned document, where `middle.json` carries per-character boxes | Any of: `transport="inline"` with `formats=["markdown", "content_list"]`; `transport="s3"` (needs the `BUCKET_*` vars — see [Output modes](/guides/output-modes/)); or a bounded `start_page` / `end_page` range, which is the only one that keeps every format |
 | `volume_path must be an absolute path` | A relative path was sent | Send the full path, e.g. `/runpod-volume/inputs/doc.pdf` |
 | `volume_path is outside the configured input roots` | The resolved path isn't under a directory the endpoint serves documents from. Also fires when `..` segments or a symlink lead out of one | Check for a typo; otherwise add the directory to `MINERU_VOLUME_ROOTS` (see [Network volumes](/guides/network-volumes/#what-volume_path-accepts)) |
 | `file_url must be an http(s) URL` | A scheme the worker doesn't fetch, or a bare hostname with no scheme | Use `http://` or `https://` |
