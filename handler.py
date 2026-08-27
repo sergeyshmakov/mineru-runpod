@@ -45,12 +45,11 @@ from worker.envelope import (
     _measure_output_bytes,
     _probe_allowed,
 )
+from worker import lifecycle as _lifecycle
 from worker.lifecycle import (
     _concurrency_modifier,
-    _jobs_processed,
     _note_shutdown,
     _on_sigterm,
-    _pages_processed_total,
     _record_degradation,
     _record_job,
     _refresh_lock,  # noqa: F401 - re-exported below
@@ -259,8 +258,8 @@ async def _handle_parse(
             _logging.info(
                 "refresh threshold crossed; signaling worker recycle",
                 reason=refresh_reason,
-                jobs_processed=_jobs_processed,
-                pages_processed_total=_pages_processed_total,
+                jobs_processed=_lifecycle.jobs_since_boot(),
+                pages_processed_total=_lifecycle.pages_since_boot(),
             )
 
         # Top-level metrics for the just-completed job. Labels match the
@@ -349,18 +348,24 @@ async def handler(job: dict) -> dict:
 # -----------------------------------------------------------------------------
 # Back-compat surface for tests and any out-of-tree callers
 #
-# Names that once lived in this module and now live under `worker.*`. Anything
-# that imported them from here keeps working; new code should import from
-# `worker.*` or from the harness.
+# Names that once lived here and now live under `worker.*`. Callers that imported
+# them from here keep working; new code should import from `worker.*` or the
+# harness. `_shutting_down`, `_refresh_lock`, `_refresh_thresholds` and
+# `_PROBE_NOT_DISABLED` belong to it too -- imported above, not called here, and
+# the shutdown event must be the same object lifecycle mutates, not a copy.
 #
-# `_shutting_down`, `_refresh_lock`, `_refresh_thresholds` and
-# `_PROBE_NOT_DISABLED` are imported above and not called here. They belong to
-# this surface too, and the shutdown event in particular has to be the same
-# object the lifecycle module mutates rather than a copy.
-#
-# Asserted by `tests/test_public_surface.py`: a list of names in a comment cannot
-# fail, and three refactors have now dropped one from here without noticing.
+# Asserted by `tests/test_public_surface.py`: three refactors have dropped a name
+# from here without noticing, and a list in a comment cannot fail.
 # -----------------------------------------------------------------------------
+
+
+def __getattr__(name: str) -> object:
+    # The two counters are in the surface below but forwarded, not aliased: an
+    # int cannot share a rebinding. See `worker.lifecycle.jobs_since_boot`.
+    if name in ("_jobs_processed", "_pages_processed_total"):
+        return getattr(_lifecycle, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 MAX_INLINE_FILE_MB = _io.MAX_INLINE_FILE_MB
 MINERU_VERSION = _parse.MINERU_VERSION
@@ -429,16 +434,10 @@ def _bootstrap_main() -> None:
         # tasks, so they do not interact with vLLM's event loop.
         _telemetry.init_telemetry()
 
-        # Hand worker-state getters to the telemetry module so its
-        # observable gauges don't have to import ``handler`` (avoids
-        # an import cycle and keeps the dependency arrow pointing
-        # from the entry-point module into telemetry, not the
-        # reverse). Safe to call when telemetry is disabled — the
-        # getters are simply unused.
-        _telemetry.register_worker_gauges(
-            jobs_since_boot=lambda: _jobs_processed,
-            pages_since_boot=lambda: _pages_processed_total,
-        )
+        # Getters, so telemetry's observable gauges need not import
+        # ``handler`` — that would be an import cycle. Unused when
+        # telemetry is disabled.
+        _telemetry.register_worker_gauges(**_lifecycle.GAUGE_GETTERS)
 
         # 1. Fitness checks (runpod-python runs these synchronously
         # before serving; we run them async in the same loop).

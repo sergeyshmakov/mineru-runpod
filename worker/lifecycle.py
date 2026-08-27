@@ -78,6 +78,34 @@ _pages_processed_total = 0
 _refresh_lock = threading.Lock()
 
 
+def jobs_since_boot() -> int:
+    """Jobs completed since boot.
+
+    An accessor rather than something a caller re-imports. ``_record_job``
+    rebinds the integer above under ``global``, and ``from worker.lifecycle
+    import _jobs_processed`` binds by *value* -- so the caller's alias kept the
+    zero it was bound to. That is what made both ``*_since_boot`` gauges report
+    zero for the life of the process, while the thresholds checked here stayed
+    correct and hid it.
+    """
+    return _jobs_processed
+
+
+def pages_since_boot() -> int:
+    """Pages parsed since boot. Only bounded slices contribute -- see
+    :func:`_record_job`."""
+    return _pages_processed_total
+
+
+# Handed to telemetry at boot by the entry point. Declared here, with the state,
+# so the wiring is one name rather than two literals in another module -- which is
+# how the previous version came to close over integers it did not own.
+GAUGE_GETTERS = {
+    "jobs_since_boot": jobs_since_boot,
+    "pages_since_boot": pages_since_boot,
+}
+
+
 def _refresh_thresholds() -> tuple[int, int]:
     """Read thresholds from env on every job so they can be tuned without redeploy."""
     try:
