@@ -9,6 +9,7 @@ against — and the roots are whatever worker.harness declares, so importing
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from runpod_doc_worker.testing import hub
@@ -36,3 +37,25 @@ def test_validator_inputs_are_reachable():
     expensive place to find out.
     """
     hub.check_test_inputs(_RUNPOD_DIR / "tests.json")
+
+
+def test_the_hub_listing_names_the_engine_series_in_the_pin() -> None:
+    """The versioning policy asks for the engine version in three places, and this
+    is the one nobody reads while editing: a Hub visitor sees only this listing.
+
+    Asserted against `requirements.txt` rather than a constant, because the failure
+    mode is drift -- the pin moves and the description keeps advertising the old
+    series to everyone evaluating the template.
+    """
+    import re
+
+    requirements = (_RUNPOD_DIR.parent / "requirements.txt").read_text(encoding="utf-8")
+    pin = re.search(r"^mineru\[.*?\]>=(\d+)\.(\d+)", requirements, re.MULTILINE)
+    assert pin, "no mineru pin found in requirements.txt"
+    series = f"{pin.group(1)}.{pin.group(2)}"
+
+    hub_json = json.loads((_RUNPOD_DIR / "hub.json").read_text(encoding="utf-8"))
+    assert f"MinerU {series}" in hub_json["description"], (
+        f"hub.json should name the pinned series (MinerU {series}); it says: "
+        f"{hub_json['description']!r}"
+    )

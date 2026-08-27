@@ -1,6 +1,6 @@
 {
   "title": "MinerU Document Parser",
-  "description": "Convert PDFs, images, and Office documents into clean Markdown and structured JSON using MinerU's vision-language model.",
+  "description": "Convert PDFs, images, and Office documents into clean Markdown and structured JSON using MinerU 3.4's vision-language model.",
   "type": "serverless",
   "category": "language",
   "iconUrl": "https://raw.githubusercontent.com/sergeyshmakov/mineru-runpod/main/.runpod/icon.png",
