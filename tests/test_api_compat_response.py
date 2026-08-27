@@ -53,20 +53,13 @@ def fake_endpoint(monkeypatch):
 
 
 def _serve(monkeypatch, data: bytes) -> None:
-    """Make urllib.request.urlopen return `data` for any (https) URL — no network,
-    no file:// (the scheme guard rejects file://). Patches the module attribute
-    both client paths resolve at call time."""
-    class _Resp:
-        def read(self):
-            return data
+    """Return `data` from the shared reader's fetch, without touching the network.
 
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *exc):
-            return False
-
-    monkeypatch.setattr("urllib.request.urlopen", lambda url, *a, **k: _Resp())
+    Patched at this module's own binding rather than deeper: that is the seam the
+    client actually calls, and patching urllib below it stopped intercepting once
+    the fetch moved behind an opener with its own deadline thread.
+    """
+    monkeypatch.setattr("mineru_client.api_compat.download", lambda url: data)
 
 
 def test_create_response_shape():
@@ -257,7 +250,7 @@ def test_download_results_rejects_non_http_url(fake_endpoint, tmp_path):
     """A non-HTTP(S) full_zip_url (e.g. file://) is refused before any fetch."""
     client = MineruApiClient(endpoint_id="ep-1", api_key="x")
     response = {"data": {"state": "done", "full_zip_url": "file:///etc/passwd"}}
-    with pytest.raises(MineruClientError, match="non-HTTP"):
+    with pytest.raises(MineruClientError, match="expected an http"):
         client.download_results(response, tmp_path / "out")
 
 
@@ -317,31 +310,22 @@ def test_download_results_zip_member_outside_dest_is_reported(
     assert not (tmp_path / "escape.txt").exists()
 
 
-def test_download_results_passes_a_timeout(fake_endpoint, tmp_path, monkeypatch):
-    """urlopen must be called with a timeout so a stalled download can't hang forever."""
+def test_download_results_goes_through_the_shared_fetch(fake_endpoint, tmp_path, monkeypatch):
+    """Same as the native client: the fetch bound is the shared reader's, not ours."""
+    import runpod_doc_client
+
+    import mineru_client.api_compat as compat_module
+
+    assert compat_module.download is runpod_doc_client.download
+
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, mode="w") as zf:
         zf.writestr("doc.md", "x")
-    captured = {}
+    _serve(monkeypatch, buf.getvalue())
 
-    class _Resp:
-        def read(self):
-            return buf.getvalue()
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *exc):
-            return False
-
-    def fake_urlopen(url, *a, **k):
-        captured["timeout"] = k.get("timeout")
-        return _Resp()
-
-    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
     client = MineruApiClient(endpoint_id="ep-1", api_key="x")
     client.download_results(
         {"data": {"state": "done", "full_zip_url": "https://bucket.example/o.zip"}},
         tmp_path / "out",
     )
-    assert isinstance(captured["timeout"], (int, float)) and captured["timeout"] > 0
+    assert (tmp_path / "out" / "doc.md").read_text() == "x"

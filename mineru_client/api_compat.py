@@ -46,18 +46,14 @@ from pathlib import Path
 from typing import Any
 
 import runpod
+from runpod_doc_client import download, extract, require_fetchable_url
 
 from ._mapping import (
     build_create_response,
     build_task_response,
     build_worker_payload,
 )
-from .client import (
-    _DOWNLOAD_TIMEOUT_SECONDS,
-    MineruClientError,
-    _extract_archive_bytes,
-    _require_http_url,
-)
+from .client import MineruClientError
 
 
 def _download_and_extract(url: str, dest_dir: str | Path) -> Path:
@@ -66,16 +62,10 @@ def _download_and_extract(url: str, dest_dir: str | Path) -> Path:
     The compat client requests `.zip` (to match the cloud API's full_zip_url),
     but this handles both containers so it works against any worker
     `tarball_url` regardless of how the task was created. The presigned URL is
-    short-lived — call promptly after the task is ``done``.
+    short-lived -- call promptly after the task is ``done``.
     """
-    import urllib.request  # noqa: PLC0415
-
-    _require_http_url(url)
-    with urllib.request.urlopen(  # noqa: S310 — scheme checked above
-        url, timeout=_DOWNLOAD_TIMEOUT_SECONDS
-    ) as resp:
-        data = resp.read()
-    return _extract_archive_bytes(data, dest_dir)
+    require_fetchable_url(url)
+    return extract(download(url), dest_dir)
 
 
 class MineruApiClient:
