@@ -1,0 +1,65 @@
+---
+title: Versioning
+description: What moves the MinerU template's major, minor and patch, and which release notes you have to read before upgrading.
+---
+
+The version on this repo describes a **deployment template**, not a library on a
+package index. That shapes the whole scheme, so it is worth stating plainly.
+
+## What moves each part
+
+| Part | Moves when |
+|---|---|
+| **Major** | MinerU itself has a major release |
+| **Minor** | New features, and breaking changes shipped under the two headings below |
+| **Patch** | Fixes and internal work |
+
+The major is reserved for the engine because that is the change which actually
+moves output quality and behaviour. Nothing else takes a major, so the number
+never drifts out of step with the engine it names.
+
+## Two kinds of breaking change ride a minor
+
+Both get their own section at the **top** of the release notes, above Features.
+If you read nothing else before upgrading a minor, read those.
+
+| Section | Covers |
+|---|---|
+| **Job Contract Changes** | A renamed job field, a default that flips, a value that used to be accepted and now is not |
+| **Compatibility Changes** | A raised Python floor, a dropped interpreter, a removed import path |
+
+### Why not a major
+
+`mineru-client` is not on PyPI. It installs from a git URL:
+
+```bash
+pip install "mineru-client @ git+https://github.com/sergeyshmakov/mineru-runpod"
+```
+
+Nothing you can write there range-pins a version, and no resolver ever reads one.
+A major bump therefore cannot warn you any better than a release note can — while
+spending the major on it would leave the number one behind the MinerU major it
+is reserved for, and further behind after every such change. The release notes are
+the channel that reaches you; the digit is not.
+
+That also means the practical advice is the same either way: **pin a tag** if you
+need stability, and read the notes when you move it.
+
+## Engine compatibility
+
+| | |
+|---|---|
+| **MinerU series** | `3.4.x` |
+| **Pinned as** | `mineru[core,vllm]>=3.4.0,<3.5.0` |
+
+The engine version is stated here, in the README, and in the Hub listing, rather
+than encoded in the template's version number — "v4.0.0" would not tell you which
+MinerU you are getting. The pin is minor-locked, so an engine major cannot arrive
+by accident.
+
+## Reading the notes
+
+Releases are cut by semantic-release from the commit history, and the sections
+above come from commit types (`contract:` and `compat:`) rather than from anyone
+remembering to write them. That mapping is asserted in CI, because a policy which
+depends on configuration nobody checks stops applying quietly.

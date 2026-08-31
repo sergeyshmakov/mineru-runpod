@@ -27,6 +27,12 @@ jobs:
       - name: Install commitlint
         run: npm ci || npm install
 
+      - name: Verify the release rules
+        # The versioning policy in AGENTS.md is only real if `contract:` and
+        # `compat:` actually resolve to a minor. Checked against the installed
+        # commit-analyzer rather than read off the config.
+        run: node scripts/check-release-rules.mjs
+
       - name: Validate commits
         # On a PR: lint every commit from the merge base.
         # On a push to main: lint only the new commits.

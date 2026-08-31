@@ -11,9 +11,10 @@ name = "mineru-client"
 version = "1.10.1"
 description = "Python client for the mineru-runpod serverless service"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10.12"
 dependencies = [
     "runpod>=1.7",
+    "runpod-doc-client @ https://github.com/sergeyshmakov/runpod-doc-worker/archive/refs/tags/v0.7.2.tar.gz#subdirectory=client",
 ]
 
 [project.optional-dependencies]
@@ -33,13 +34,17 @@ test = [
     # CI installs this extra and then imports handler, which imports it at
     # module load. Same pinned tag as the container-side reference; the two
     # move together.
-    "runpod-doc-worker[s3] @ https://github.com/sergeyshmakov/runpod-doc-worker/archive/refs/tags/v0.5.0.tar.gz",
+    "runpod-doc-worker[s3] @ https://github.com/sergeyshmakov/runpod-doc-worker/archive/refs/tags/v0.7.2.tar.gz",
     # Telemetry tests exercise the enabled path (env var set), which imports
     # the OTel SDK + OTLP/HTTP exporter. Kept in sync with the container-side
     # pins in requirements.txt.
     "opentelemetry-api>=1.27,<2",
     "opentelemetry-sdk>=1.27,<2",
     "opentelemetry-exporter-otlp-proto-http>=1.27,<2",
+    # tests/test_repo_config.py parses .github/dependabot.yml. Declared rather
+    # than relied on: nothing else here requires PyYAML, so a clean
+    # `pip install -e ".[test]"` had it only by accident of the environment.
+    "PyYAML>=6",
 ]
 
 [tool.hatch.metadata]

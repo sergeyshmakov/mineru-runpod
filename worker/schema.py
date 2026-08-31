@@ -8,11 +8,25 @@ from typing import Any
 
 from runpod.serverless.utils.rp_validator import validate
 
+from runpod_doc_worker import config as _config
 from runpod_doc_worker.contract import artifacts as _artifacts
 from runpod_doc_worker.transport import net as _net
 from runpod_doc_worker.transport import package as _package
 
 from worker.harness import MANIFEST
+
+# Suffix of the operator flag that turns the outbound-target policy on for the
+# per-job `server_url`. Off by default: see the reasoning at the call site.
+ENFORCE_TARGET_POLICY = "ENFORCE_TARGET_POLICY"
+
+# Hosts `server_url` may name even when they resolve somewhere private. This
+# exists because the obvious alternative is wrong: MINERU_ALLOW_LOCAL_FETCH lifts
+# the address policy for *every* field and every target, so an operator who set
+# it to reach their own private model server would simultaneously re-admit
+# arbitrary private `server_url` values from any caller and switch off the same
+# protection on `file_url`. An allowlist says the one thing the operator actually
+# means — "my model server lives at this name" — and says nothing else.
+ALLOWED_SERVER_HOSTS = "ALLOWED_SERVER_HOSTS"
 
 
 # Both come from where the behaviour is rather than being restated here: a
@@ -104,6 +118,18 @@ INPUT_SCHEMA: dict[str, dict[str, Any]] = {
 
 def _fail(msg: str) -> None:
     raise ValueError(f"input validation failed: {msg}")
+
+
+def _allowed_server_hosts() -> frozenset[str]:
+    """Hosts an operator has declared their model server uses.
+
+    Comma-separated, compared case-insensitively against the URL's host and
+    nothing else — no suffix matching, so `evil-vllm.internal` does not satisfy
+    an entry of `vllm.internal`. Read per job like the other operator knobs, so
+    a change does not need a redeploy.
+    """
+    raw = _config.active().env(ALLOWED_SERVER_HOSTS)
+    return frozenset(part.strip().lower() for part in raw.split(",") if part.strip())
 
 
 def _max_pages_per_job() -> int:
@@ -283,13 +309,66 @@ def validate_input(job_input: dict) -> dict:
             f"external vLLM OpenAI-compatible server"
         )
 
-    # Shape-check server_url at the boundary so a malformed value reports the
-    # field name here instead of failing inside MinerU's HTTP client. Only the
-    # shape: which host an operator runs their own model server on is their
-    # call, including one that isn't reachable from the public internet.
+    # `server_url` can get the same outbound-target policy as `file_url`, but
+    # **only when an operator asks for it**, and that default is a deliberate
+    # decision rather than an oversight.
+    #
+    # The exposure is real. `server_url` is a *job input*, not an operator
+    # setting — there is no env var for it — so the field is caller-controlled,
+    # and any caller of an endpoint can name a loopback, link-local or internal
+    # address and have the worker issue OpenAI-compatible requests there from
+    # inside its network, cloud metadata endpoints included.
+    #
+    # Applying the policy by default was tried and reverted. Every existing
+    # `*-http-client` deployment whose model server is on a private address —
+    # which is the ordinary way to run one — would have started failing jobs that
+    # had always succeeded, and this repo publishes from the commit title, so the
+    # change would have arrived as a patch that operators discover through broken
+    # jobs. A security default that ships as a surprise regression is not a good
+    # trade for a field whose risk depends entirely on who can reach the endpoint.
+    #
+    # So: shape check by default, full policy when
+    # MINERU_ENFORCE_TARGET_POLICY is set. Operators exposing an endpoint to
+    # untrusted callers should set it; the guides say so.
+    #
+    # An operator running a private model server names its host in
+    # MINERU_ALLOWED_SERVER_HOSTS. The earlier version of this told them to set
+    # MINERU_ALLOW_LOCAL_FETCH instead, which was bad advice: that flag lifts the
+    # address policy globally, so it re-admitted arbitrary private `server_url`
+    # values from any caller *and* disabled the same protection on `file_url`. The
+    # allowlist grants exactly the one host the operator meant.
+    #
+    # Note `require_http_url` returns the host rather than the URL — the trap the
+    # harness's AGENTS.md records. Wanted here, hence the name of the variable.
     if server_url := cleaned.get("server_url"):
         try:
-            _net.require_http_url(server_url, field="server_url")
+            host = _net.require_http_url(server_url, field="server_url")
+            if _config.active().truthy(ENFORCE_TARGET_POLICY):
+                # Enforcement means the allow-list, not an address check.
+                #
+                # Checking where the host resolves cannot hold for this field: the
+                # engine's own HTTP client resolves the name again and opens the
+                # connection, so a host whose DNS answers publicly here can answer
+                # privately there. `mineru_vl_utils` builds its `httpx.Client`
+                # internally with no transport to inject, and pinning the address
+                # would mean handing it a literal IP with a Host header -- which
+                # fails certificate validation for any https target, the very
+                # configuration a remote model server should use.
+                #
+                # So an enforcing endpoint requires the operator to name the hosts.
+                # A name the operator chose is not subject to rebinding by a caller,
+                # which is the whole difference. Without enforcement this field
+                # keeps its shape check only, as documented.
+                if host.lower() not in _allowed_server_hosts():
+                    allowed = _config.active().env_name(ALLOWED_SERVER_HOSTS)
+                    listed = sorted(_allowed_server_hosts())
+                    raise ValueError(
+                        f"server_url must name a host listed in {allowed}; got "
+                        f"{host!r}"
+                        + (f" (listed: {', '.join(listed)})" if listed else
+                           f" ({allowed} is empty, so this endpoint accepts no "
+                           f"per-job server_url)")
+                    )
         except ValueError as e:
             _fail(str(e))
 

@@ -55,6 +55,12 @@ See the [project README](https://github.com/sergeyshmakov/mineru-runpod#how-does
 - **Outputs**: Markdown + `content_list` + `middle.json` + extracted images. Three transport modes: base64 tarball, inline fields, or presigned URL to an S3-compatible bucket. See [Output modes](/guides/output-modes/).
 - **Backends**: five MinerU backends — the VLM (model card tagged English + Chinese; empirically handles Cyrillic on the tested Pro model), the pipeline OCR with script-family language models, the hybrid auto-router, and two backends for an external VLM server. See [Picking a backend](/guides/choosing-gpu/#picking-a-backend).
 
+## Versions and compatibility
+
+This template tracks MinerU `3.4.x`, pinned as `mineru[core,vllm]>=3.4.0,<3.5.0`.
+
+The major version moves only when MinerU has a major release. Breaking changes to the job contract or to installability ship on a minor and lead the release notes — see [Versioning](/reference/versioning/) for what to read before upgrading.
+
 ## Next steps
 
 The [Deploy guide](/getting-started/deploy/) covers all three supported paths:

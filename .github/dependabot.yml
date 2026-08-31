@@ -21,8 +21,15 @@ updates:
       - "/docs"
     patterns: ["*"]
     multi-ecosystem-group: "monthly-direct-dependencies"
-    allow:
-      - dependency-type: "direct"
+    # No `allow` block, deliberately. GitHub's default is already what the monthly
+    # PR wants — "all dependencies explicitly defined in a manifest are kept up to
+    # date by version updates" — so `dependency-type: direct` bought nothing there.
+    # What it cost is the other half of the default: "all dependencies defined in
+    # lock files with vulnerable dependencies are updated by security updates".
+    # `allow` carries the security shield in the options reference, meaning it
+    # narrows security PRs too, so restricting to direct excluded any CVE reachable
+    # only through package-lock.json — most of them in an npm tree, and exactly
+    # what the npm-security-updates group below exists to deliver.
     labels:
       - "dependencies"
     ignore:

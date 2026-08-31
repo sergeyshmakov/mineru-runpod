@@ -2,6 +2,12 @@
 
 Reads RUNPOD_ENDPOINT_ID + MINERU_TEMPLATE_ID from environment / .env, or
 takes them on the CLI.
+
+Deletion goes through RunPod's REST API rather than the Python SDK, because the
+SDK has no delete call for either resource — see runpod_rest.py. This script used
+to look one up defensively and, finding nothing, print "delete via dashboard" to
+stderr and return 0. A teardown that exits successfully having deleted nothing is
+one a CI job believes, while the endpoint keeps billing.
 """
 
 from __future__ import annotations
@@ -17,7 +23,7 @@ try:
 except ImportError:
     pass
 
-import runpod
+import runpod_rest
 
 
 def main() -> int:
@@ -37,50 +43,55 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    runpod.api_key = os.environ.get("RUNPOD_API_KEY")
-    if not runpod.api_key:
+    api_key = (os.environ.get("RUNPOD_API_KEY") or "").strip()
+    if not api_key:
         print("RUNPOD_API_KEY is not set.", file=sys.stderr)
         return 2
 
     if args.endpoint_id:
-        # The Python SDK doesn't expose delete_endpoint directly across versions —
-        # update workers to 0 first, then call the raw GraphQL helper if present.
         print(f"Scaling endpoint {args.endpoint_id} to 0 workers and deleting …")
         try:
-            runpod.update_endpoint_template  # smoke check
-        except AttributeError:
-            print(
-                "  runpod SDK is too old; please run `pip install -U runpod`.",
-                file=sys.stderr,
-            )
-            return 2
-        # Best-effort delete; SDK API surface here changes between versions.
-        delete_fn = getattr(runpod, "delete_endpoint", None) or getattr(
-            runpod.api, "delete_endpoint", None
-        )
-        if delete_fn is None:
-            print(
-                "  no delete_endpoint helper in this SDK; delete via dashboard "
-                "or RunPod GraphQL `deleteEndpoint(input: { id: ... })`.",
-                file=sys.stderr,
-            )
+            # Both bounds to zero first. RunPod documents that as the precondition
+            # for deleting an endpoint, and the line above has claimed to do it
+            # since this script was written — it never did.
+            runpod_rest.scale_to_zero(args.endpoint_id, api_key=api_key)
+            runpod_rest.delete_endpoint(args.endpoint_id, api_key=api_key)
+        except runpod_rest.RunpodApiError as e:
+            if e.status == 404:
+                # Already gone, which is the state this command was asking for.
+                # Stopping here would strand the template on exactly the rerun
+                # that exists to finish deleting it: the endpoint delete
+                # succeeded last time, the template delete did not, and the
+                # operator reran the same command.
+                print(f"  endpoint {args.endpoint_id} was already absent")
+            else:
+                # Loud, and non-zero. This used to print to stderr and `return 0`,
+                # so a CI teardown read success while the endpoint kept billing.
+                # Anything that is not a 404 says nothing about whether the
+                # endpoint is gone, so it still stops the script.
+                print(
+                    f"error: endpoint {args.endpoint_id} was NOT deleted: {e}",
+                    file=sys.stderr,
+                )
+                print(
+                    "  delete it in the RunPod console before it accrues more cost.",
+                    file=sys.stderr,
+                )
+                return 1
         else:
-            delete_fn(args.endpoint_id)
             print(f"  endpoint {args.endpoint_id} deleted")
 
     if args.template_id and not args.keep_template:
         print(f"Deleting template {args.template_id} …")
-        delete_fn = getattr(runpod, "delete_template", None) or getattr(
-            runpod.api, "delete_template", None
-        )
-        if delete_fn is None:
+        try:
+            runpod_rest.delete_template(args.template_id, api_key=api_key)
+        except runpod_rest.RunpodApiError as e:
             print(
-                "  no delete_template helper in this SDK; delete via dashboard.",
+                f"error: template {args.template_id} was NOT deleted: {e}",
                 file=sys.stderr,
             )
-        else:
-            delete_fn(args.template_id)
-            print(f"  template {args.template_id} deleted")
+            return 1
+        print(f"  template {args.template_id} deleted")
     return 0
 
 

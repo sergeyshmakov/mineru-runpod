@@ -129,6 +129,27 @@ The docs site covers the rest:
 - **[API reference](https://mineru.shmakov.tools/reference/api/)** — JSON payload contract, response shapes, validation rules
 - **[Blog](https://mineru.shmakov.tools/blog/)** — launch posts and project notes
 
+## Versioning
+
+| Version part | Moves when |
+|---|---|
+| **Major** | MinerU itself has a major release (currently pinned `mineru[core,vllm]>=3.4.0,<3.5.0`) |
+| **Minor** | New features, and breaking changes to the job contract -- these lead the release notes under **Job Contract Changes** |
+| **Patch** | Fixes and internal work |
+
+The major is reserved for the engine because that is the change that moves output
+quality and behaviour. A template-contract break ships on a minor, so **read the
+release notes before upgrading a minor** -- they lead with anything that needs
+action.
+
+A change that breaks `pip install mineru-client` -- a raised Python floor, a dropped
+import path -- is also a minor, under **Compatibility Changes**. It is not a major:
+nothing range-pins a git-URL install, so the release notes are what reach you, and
+spending the major there would put it permanently out of step with MinerU.
+
+The engine version is stated in the docs compatibility table rather than encoded in
+the version number.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Commits follow [Conventional Commits](https://www.conventionalcommits.org/); commitlint enforces this in CI and `CHANGELOG.md` is generated automatically by semantic-release on push to `main`.

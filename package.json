@@ -4,6 +4,7 @@
   "private": true,
   "description": "Dev tooling for mineru-runpod: conventional-commit linting and automated changelog + version management via semantic-release. The actual project is Python.",
   "scripts": {
+    "check:release-rules": "node scripts/check-release-rules.mjs",
     "commitlint": "commitlint --edit",
     "release": "semantic-release"
   },

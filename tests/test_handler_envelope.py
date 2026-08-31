@@ -1,30 +1,15 @@
-"""Handler-side unit tests. Exercise the parts that don't need a GPU or MinerU.
-
-The handler module is intentionally written so it imports cleanly even when
-the heavy `mineru` dependency is unavailable (it wraps that import in try /
-except and falls back to a "mineru is not importable" path). That lets us
-test input validation, packaging, and error handling on plain Python CI.
-"""
+"""Handler-side unit tests. Exercise the parts that don't need a GPU or MinerU. -- envelope."""
 
 from __future__ import annotations
 
 import asyncio
 import base64
-import io
-import json
-import tarfile
-from pathlib import Path
 
 import pytest
-
 from runpod_doc_worker.transport import io as worker_io
 
 import handler
 
-
-# -----------------------------------------------------------------------------
-# _resolve_input_bytes
-# -----------------------------------------------------------------------------
 
 def test_resolve_requires_exactly_one_source():
     with pytest.raises(ValueError, match="exactly one"):
@@ -78,10 +63,6 @@ def test_telemetry_source_kind_is_bounded(source_label, expected):
     assert worker_io.telemetry_source_kind(source_label) == expected
 
 
-# -----------------------------------------------------------------------------
-# _detect_format
-# -----------------------------------------------------------------------------
-
 def test_detect_format_pdf():
     assert handler._detect_format(b"%PDF-1.4\nfoo") == "pdf"
 
@@ -103,53 +84,6 @@ def test_detect_format_unknown():
     assert handler._detect_format(b"not a real file") == "unknown"
     assert handler._detect_format(b"") == "unknown"
 
-
-# -----------------------------------------------------------------------------
-# _package_tarball / _package_inline
-# -----------------------------------------------------------------------------
-
-def _seed_mineru_output(dir_: Path, basename: str) -> None:
-    (dir_ / f"{basename}.md").write_text("# heading\n\nbody\n", encoding="utf-8")
-    (dir_ / f"{basename}_content_list.json").write_text(
-        json.dumps([{"type": "text", "text": "body", "page_idx": 0}]),
-        encoding="utf-8",
-    )
-    (dir_ / f"{basename}_middle.json").write_text(json.dumps({"k": 1}), encoding="utf-8")
-    (dir_ / "images").mkdir()
-    (dir_ / "images" / "fig1.png").write_bytes(b"\x89PNG fake")
-
-
-def test_package_tarball_includes_all_artefacts(tmp_path):
-    out = tmp_path / "out"
-    out.mkdir()
-    _seed_mineru_output(out, "doc")
-
-    encoded = handler._package_tarball(out)
-    raw = base64.b64decode(encoded)
-    with tarfile.open(fileobj=io.BytesIO(raw), mode="r:gz") as tar:
-        names = set(tar.getnames())
-    assert "doc.md" in names
-    assert "doc_content_list.json" in names
-    assert "doc_middle.json" in names
-    assert "images/fig1.png" in names or "images" in names
-
-
-def test_package_inline_returns_full_payload(tmp_path):
-    out = tmp_path / "out"
-    out.mkdir()
-    _seed_mineru_output(out, "doc")
-
-    pkg = handler._package_inline(out, "doc")
-    assert pkg["markdown"].startswith("# heading")
-    assert pkg["content_list"][0]["text"] == "body"
-    assert pkg["middle"]["k"] == 1
-    assert "fig1.png" in pkg["images"]
-    assert base64.b64decode(pkg["images"]["fig1.png"]) == b"\x89PNG fake"
-
-
-# -----------------------------------------------------------------------------
-# handler() top-level error paths
-# -----------------------------------------------------------------------------
 
 def test_handler_returns_error_on_bad_input():
     result = asyncio.run(handler.handler({"input": {}}))  # no source provided
@@ -192,27 +126,6 @@ def test_handler_failure_response_reports_compacted_text(monkeypatch):
     assert "sig=" not in result["error"]
     assert "sig=" not in result["traceback"]
     assert "https://files.example.com/doc.pdf" in result["error"]
-
-
-def test_validate_input_rejects_invalid_transport_value():
-    with pytest.raises(ValueError, match="input validation"):
-        handler._validate_input({"file_b64": "AA==", "transport": "tarball-xml"})
-
-
-def test_validate_input_defaults_applied():
-    cleaned = handler._validate_input({"file_b64": "AA=="})
-    assert cleaned["start_page"] == 0
-    assert cleaned["end_page"] == -1
-    assert cleaned["lang"] == "en"
-    assert cleaned["backend"] == "vlm-auto-engine"
-    assert cleaned["transport"] == "tarball_b64"
-    assert cleaned["formats"] == ["markdown", "content_list", "middle", "images"]
-    assert cleaned["basename"] == "doc"
-
-
-def test_validate_input_accepts_s3_transport():
-    cleaned = handler._validate_input({"file_b64": "AA==", "transport": "s3"})
-    assert cleaned["transport"] == "s3"
 
 
 def test_validate_input_rejects_unknown_backend():
@@ -360,8 +273,20 @@ def test_validate_input_rejects_non_http_server_url():
         })
 
 
-def test_validate_input_accepts_a_private_server_url():
-    # An operator's own model server may well live on a private address.
+def test_a_private_server_url_is_accepted_by_default():
+    """Compatibility is the default, and that is a decision rather than an
+    oversight.
+
+    Applying the outbound-target policy here was tried and reverted. Every
+    existing `*-http-client` deployment whose model server is on a private
+    address — the ordinary way to run one — would have started failing jobs that
+    had always succeeded, and this repo publishes from the commit title, so the
+    change would have arrived as a patch release discovered through broken jobs.
+
+    The exposure is real and documented: `server_url` is a job input, so any
+    caller can aim the worker at an internal address. Operators whose endpoint is
+    reachable by untrusted callers set MINERU_ENFORCE_TARGET_POLICY.
+    """
     cleaned = handler._validate_input({
         "file_b64": "AA==",
         "backend": "vlm-http-client",
@@ -369,6 +294,137 @@ def test_validate_input_accepts_a_private_server_url():
     })
     assert cleaned["server_url"] == "http://10.1.2.3:8000"
 
+
+def test_the_shape_check_still_applies_by_default():
+    """Off does not mean unvalidated: a scheme-less or hostless value is still
+    refused, because it is malformed rather than merely private."""
+    with pytest.raises(ValueError, match="server_url"):
+        handler._validate_input({
+            "file_b64": "AA==",
+            "backend": "vlm-http-client",
+            "server_url": "vllm.internal:8000",
+        })
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://127.0.0.1:8000",
+        "http://169.254.169.254/latest/meta-data",
+        "http://192.168.1.10:8000",
+        "http://10.1.2.3:8000",
+    ],
+)
+def test_the_policy_refuses_private_server_urls_when_enabled(url, monkeypatch):
+    """With the flag set, `server_url` gets exactly the policy `file_url` has.
+    The metadata endpoint is in the list deliberately — it is the target that
+    turns this from a misconfiguration into an SSRF."""
+    monkeypatch.setenv("MINERU_ENFORCE_TARGET_POLICY", "1")
+    with pytest.raises(ValueError, match="MINERU_ALLOWED_SERVER_HOSTS"):
+        handler._validate_input({
+            "file_b64": "AA==",
+            "backend": "vlm-http-client",
+            "server_url": url,
+        })
+
+
+def test_an_allowlisted_private_host_is_permitted(monkeypatch):
+    """How an operator with a private model server enforces the policy.
+
+    The earlier version of this test used MINERU_ALLOW_LOCAL_FETCH, and that was
+    wrong in a way worth recording: the flag lifts the address policy for *every*
+    field and every target, so it re-admitted arbitrary private `server_url`
+    values from any caller and disabled the same protection on `file_url`. The
+    "recipe" the docs gave was strictly worse than not enforcing the policy at
+    all.
+    """
+    monkeypatch.setenv("MINERU_ENFORCE_TARGET_POLICY", "1")
+    monkeypatch.setenv("MINERU_ALLOWED_SERVER_HOSTS", "10.1.2.3")
+    cleaned = handler._validate_input({
+        "file_b64": "AA==",
+        "backend": "vlm-http-client",
+        "server_url": "http://10.1.2.3:8000",
+    })
+    assert cleaned["server_url"] == "http://10.1.2.3:8000"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://127.0.0.1:8000",
+        "http://169.254.169.254/latest/meta-data",
+        "http://192.168.1.10:8000",
+    ],
+)
+def test_the_allowlist_permits_only_what_it_names(url, monkeypatch):
+    """The point of an allowlist over a global flag: everything else stays
+    refused, the metadata endpoint included."""
+    monkeypatch.setenv("MINERU_ENFORCE_TARGET_POLICY", "1")
+    monkeypatch.setenv("MINERU_ALLOWED_SERVER_HOSTS", "10.1.2.3")
+    with pytest.raises(ValueError, match="MINERU_ALLOWED_SERVER_HOSTS"):
+        handler._validate_input({
+            "file_b64": "AA==",
+            "backend": "vlm-http-client",
+            "server_url": url,
+        })
+
+
+def test_the_allowlist_does_not_match_by_suffix(monkeypatch):
+    """`evil-vllm.internal` must not satisfy an entry of `vllm.internal`."""
+    monkeypatch.setenv("MINERU_ENFORCE_TARGET_POLICY", "1")
+    monkeypatch.setenv("MINERU_ALLOWED_SERVER_HOSTS", "vllm.internal")
+    with pytest.raises(ValueError):
+        handler._validate_input({
+            "file_b64": "AA==",
+            "backend": "vlm-http-client",
+            "server_url": "http://evil-vllm.internal:8000",
+        })
+
+
+def test_the_allowlist_is_case_insensitive_and_tolerates_spacing(monkeypatch):
+    monkeypatch.setenv("MINERU_ENFORCE_TARGET_POLICY", "1")
+    monkeypatch.setenv("MINERU_ALLOWED_SERVER_HOSTS", " VLLM.Internal , other.host ")
+    monkeypatch.setattr(
+        "worker.schema._net.require_http_url",
+        lambda url, *, field: "vllm.internal",
+    )
+    cleaned = handler._validate_input({
+        "file_b64": "AA==",
+        "backend": "vlm-http-client",
+        "server_url": "http://vllm.internal:8000",
+    })
+    assert cleaned["server_url"] == "http://vllm.internal:8000"
+
+
+def test_a_public_server_url_needs_listing_once_the_policy_is_on(monkeypatch):
+    """The contract change that closed DNS rebinding on this field.
+
+    A public address used to pass under enforcement on the strength of where it
+    resolved. That check is precisely what rebinding defeats: the engine resolves
+    the host again and opens the connection itself, so an answer that is public
+    here can be private there. Enforcement therefore requires the operator to name
+    the host, and a name they chose cannot be rebound by a caller.
+
+    Without the policy the field keeps its shape check only, which is the
+    documented default and is what most endpoints run.
+    """
+    url = "https://8.8.8.8/v1"
+    payload = {
+        "file_b64": "AA==",
+        "backend": "vlm-http-client",
+        "server_url": url,
+    }
+
+    monkeypatch.delenv("MINERU_ENFORCE_TARGET_POLICY", raising=False)
+    assert handler._validate_input(dict(payload))["server_url"] == url
+
+    monkeypatch.setenv("MINERU_ENFORCE_TARGET_POLICY", "1")
+    monkeypatch.delenv("MINERU_ALLOWED_SERVER_HOSTS", raising=False)
+    with pytest.raises(ValueError, match="MINERU_ALLOWED_SERVER_HOSTS"):
+        handler._validate_input(dict(payload))
+
+    monkeypatch.setenv("MINERU_ALLOWED_SERVER_HOSTS", "8.8.8.8")
+    assert handler._validate_input(dict(payload))["server_url"] == url
 
 def test_validate_input_defaults_effort_to_none():
     cleaned = handler._validate_input({"file_b64": "AA=="})
@@ -396,152 +452,6 @@ def test_validate_input_rejects_effort_on_non_hybrid_backend():
         )
 
 
-# -----------------------------------------------------------------------------
-# probe mode — bypasses MinerU and dumps filesystem layout.
-# -----------------------------------------------------------------------------
-
-def test_handler_probe_mode_can_be_turned_off(monkeypatch):
-    monkeypatch.setenv("MINERU_DISABLE_PROBE", "1")
-    result = asyncio.run(handler.handler({"input": {"probe": True}}))
-    assert result["ok"] is False
-    assert "probe is disabled" in result["error"]
-    assert "probe" not in result
-
-
-def test_the_refusal_names_the_knob(monkeypatch):
-    """A caller reading this is usually the operator who can act on it."""
-    monkeypatch.setenv("MINERU_DISABLE_PROBE", "1")
-    result = asyncio.run(handler.handler({"input": {"probe": True}}))
-    assert "MINERU_DISABLE_PROBE" in result["error"]
-
-
-@pytest.mark.parametrize("value", ["1", "true", "yes", "on", "TRUE", " 1 "])
-def test_every_affirmative_spelling_turns_the_probe_off(monkeypatch, value):
-    monkeypatch.setenv("MINERU_DISABLE_PROBE", value)
-    assert handler._probe_allowed() is False
-
-
-@pytest.mark.parametrize("value", ["0", "false", "no", "off", "OFF"])
-def test_an_explicit_negative_leaves_the_probe_on(monkeypatch, value):
-    monkeypatch.setenv("MINERU_DISABLE_PROBE", value)
-    assert handler._probe_allowed() is True
-
-
-@pytest.mark.parametrize("value", ["maybe", "typo", "disabled", "2"])
-def test_an_unrecognised_value_denies(monkeypatch, value):
-    """An operator who typed something into this variable meant to turn the
-    probe off. A typo must not be what publishes a filesystem dump."""
-    monkeypatch.setenv("MINERU_DISABLE_PROBE", value)
-    assert handler._probe_allowed() is False
-
-
-@pytest.mark.parametrize("value", ["", "   "])
-def test_a_blank_value_is_not_a_setting(monkeypatch, value):
-    monkeypatch.setenv("MINERU_DISABLE_PROBE", value)
-    assert handler._probe_allowed() is True
-
-
-def test_handler_probe_mode_enabled_by_default(monkeypatch):
-    """Unset means available, which is what this endpoint has always done."""
-    monkeypatch.delenv("MINERU_DISABLE_PROBE", raising=False)
-    result = asyncio.run(handler.handler({"input": {"probe": True}}))
-    assert result["ok"] is True
-
-
-def test_handler_probe_mode_returns_filesystem_dump():
-    result = asyncio.run(handler.handler({"input": {"probe": True}}))
-    assert result["ok"] is True
-    assert "probe" in result
-    assert "env" in result["probe"]
-    assert "paths" in result["probe"]
-    assert "models_found" in result["probe"]
-    # Surfaces the MinerU availability flag so a busted import doesn't hide
-    # behind a happy ok=true probe response.
-    assert "mineru_available" in result
-    assert isinstance(result["mineru_available"], bool)
-
-
-# -----------------------------------------------------------------------------
-# Progress updates — regression guard for the packaging/completion race.
-#
-# progress_update POSTs {"status": "IN_PROGRESS"} from a background thread
-# to the same endpoint the SDK posts the final result to. Any update emitted
-# after the parse phase runs milliseconds before the handler returns, so it
-# can land AFTER the COMPLETED post and overwrite the finished job back to
-# IN_PROGRESS — the job then appears stuck forever. The parse phase must
-# therefore be the last progress event of a request.
-# -----------------------------------------------------------------------------
-
-def test_no_progress_update_after_parse(monkeypatch):
-    async def fake_run(file_bytes, *, basename, work_dir, **kwargs):
-        out = work_dir / "out"
-        out.mkdir()
-        (out / f"{basename}.md").write_text("# fake\n", encoding="utf-8")
-        return out
-
-    monkeypatch.setattr("worker.parse.run_mineru", fake_run)
-
-    phases: list = []
-    monkeypatch.setattr(
-        "runpod.serverless.progress_update",
-        lambda job, data: phases.append(data.get("phase")),
-    )
-
-    result = asyncio.run(handler.handler({
-        "id": "race-regression-test",
-        "input": {"file_b64": "JVBERi0xLjQK", "basename": "doc", "transport": "inline"},
-    }))
-
-    assert result["ok"] is True
-    assert phases, "expected progress updates during the request"
-    assert phases[-1] == "parsing", (
-        f"last progress phase must be 'parsing'; a later update (got {phases!r}) "
-        f"races the COMPLETED result post and can strand the job IN_PROGRESS"
-    )
-
-
-# -----------------------------------------------------------------------------
-# _package_s3 — env-var validation only; the actual upload requires boto3 +
-# a live S3 endpoint and is not exercised here.
-# -----------------------------------------------------------------------------
-
-def test_package_s3_requires_bucket_env_vars(tmp_path, monkeypatch):
-    # Strip any leaked credentials from the test process.
-    for var in (
-        "BUCKET_ENDPOINT_URL",
-        "BUCKET_NAME",
-        "BUCKET_ACCESS_KEY_ID",
-        "BUCKET_SECRET_ACCESS_KEY",
-    ):
-        monkeypatch.delenv(var, raising=False)
-    out = tmp_path / "out"
-    out.mkdir()
-    _seed_mineru_output(out, "doc")
-    with pytest.raises(ValueError, match="BUCKET_"):
-        handler._package_s3(out, "doc")
-
-
-def test_package_s3_complains_about_each_missing_env_var(tmp_path, monkeypatch):
-    # All four names should be mentioned in the error.
-    for var in (
-        "BUCKET_ENDPOINT_URL",
-        "BUCKET_NAME",
-        "BUCKET_ACCESS_KEY_ID",
-        "BUCKET_SECRET_ACCESS_KEY",
-    ):
-        monkeypatch.delenv(var, raising=False)
-    out = tmp_path / "out"
-    out.mkdir()
-    _seed_mineru_output(out, "doc")
-    with pytest.raises(ValueError) as excinfo:
-        handler._package_s3(out, "doc")
-    msg = str(excinfo.value)
-    assert "BUCKET_ENDPOINT_URL" in msg
-    assert "BUCKET_NAME" in msg
-    assert "BUCKET_ACCESS_KEY_ID" in msg
-    assert "BUCKET_SECRET_ACCESS_KEY" in msg
-
-
 @pytest.mark.parametrize(
     ("env_value", "expected"),
     [
@@ -561,68 +471,3 @@ def test_presign_ttl_resolution(monkeypatch, env_value, expected):
     else:
         monkeypatch.setenv("BUCKET_PRESIGN_TTL_SECONDS", env_value)
     assert worker_package.presign_ttl_seconds() == expected
-
-
-def test_package_s3_signs_with_the_configured_lifetime(tmp_path, monkeypatch):
-    """The knob has to reach the signing call and the reported value, not just
-    resolve correctly on its own."""
-    # package_s3 imports boto3 lazily, so the patch goes on the module itself.
-    import boto3  # noqa: PLC0415
-
-    recorded = {}
-
-    class _FakeS3:
-        def put_object(self, **kwargs):
-            recorded["key"] = kwargs["Key"]
-
-        def generate_presigned_url(self, op, Params, ExpiresIn):  # noqa: N803
-            recorded["op"] = op
-            recorded["expires_in"] = ExpiresIn
-            return f"https://bucket.example/{Params['Key']}?signature=x"
-
-    monkeypatch.setattr(boto3, "client", lambda *a, **k: _FakeS3())
-    for var, val in (
-        ("BUCKET_ENDPOINT_URL", "https://bucket.example"),
-        ("BUCKET_NAME", "parses"),
-        ("BUCKET_ACCESS_KEY_ID", "id"),
-        ("BUCKET_SECRET_ACCESS_KEY", "secret"),
-        ("BUCKET_PRESIGN_TTL_SECONDS", "900"),
-    ):
-        monkeypatch.setenv(var, val)
-
-    out = tmp_path / "out"
-    out.mkdir()
-    _seed_mineru_output(out, "doc")
-    result = handler._package_s3(out, "doc")
-
-    assert recorded["expires_in"] == 900
-    assert result["tarball_url_expires_in"] == 900
-    assert result["bucket_key"] == recorded["key"]
-    assert result["bucket_bytes"] > 0
-
-
-def test_build_tarball_bytes_roundtrip(tmp_path):
-    out = tmp_path / "out"
-    out.mkdir()
-    _seed_mineru_output(out, "doc")
-    data = handler._build_tarball_bytes(out)
-    # Should be valid gzip-tar with the seeded files inside.
-    with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
-        names = set(tar.getnames())
-    assert "doc.md" in names
-    assert "doc_content_list.json" in names
-
-
-def test_build_zip_bytes_roundtrip(tmp_path):
-    import zipfile  # noqa: PLC0415
-
-    out = tmp_path / "out"
-    out.mkdir()
-    _seed_mineru_output(out, "doc")
-    data = handler._build_zip_bytes(out)
-    assert data[:4] == b"PK\x03\x04"  # zip magic
-    with zipfile.ZipFile(io.BytesIO(data)) as zf:
-        names = set(zf.namelist())
-    assert "doc.md" in names
-    assert "doc_content_list.json" in names
-    assert "images/fig1.png" in names

@@ -29,6 +29,10 @@ module.exports = {
         'build',    // build / Docker / deps → no release
         'ci',       // CI workflows → no release
         'chore',    // anything else → no release
+        'compat',   // breaking change to installability → minor bump,
+                    //   and it leads the release notes. See AGENTS.md.
+        'contract', // breaking change to the job contract → minor bump,
+                    //   and it leads the release notes. See AGENTS.md.
         'revert',   // → patch bump
         'style',    // formatting → no release
       ],

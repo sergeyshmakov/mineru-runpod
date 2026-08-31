@@ -295,19 +295,13 @@ def test_save_inline_empty_images_dict_skips_dir(tmp_path):
 # -----------------------------------------------------------------------------
 
 def _serve(monkeypatch, data: bytes) -> None:
-    """Make urllib.request.urlopen return `data` (no network, no file://; the
-    scheme guard rejects file://, so tests serve over a fake https URL)."""
-    class _Resp:
-        def read(self):
-            return data
+    """Return `data` from the shared reader's fetch, without touching the network.
 
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *exc):
-            return False
-
-    monkeypatch.setattr("urllib.request.urlopen", lambda url, *a, **k: _Resp())
+    Patched at this module's own binding rather than deeper: that is the seam the
+    client actually calls, and patching urllib below it stopped intercepting once
+    the fetch moved behind an opener with its own deadline thread.
+    """
+    monkeypatch.setattr("mineru_client.client.download", lambda url: data)
 
 
 def _md_tarball_bytes() -> bytes:
@@ -341,7 +335,7 @@ def test_save_s3_tarball_downloads_and_extracts_from_entry(tmp_path, monkeypatch
 
 def test_save_s3_tarball_rejects_non_http_url(tmp_path):
     """A file:// (or other non-HTTP) tarball_url is refused before fetching."""
-    with pytest.raises(MineruClientError, match="non-HTTP"):
+    with pytest.raises(MineruClientError, match="expected an http"):
         MineruClient.save_s3_tarball({"tarball_url": "file:///etc/passwd"}, tmp_path / "out")
 
 
@@ -409,26 +403,27 @@ def test_save_tarball_rejects_a_zip_member_outside_the_destination(tmp_path):
     assert not (tmp_path / "escaped.md").exists()
 
 
-def test_save_s3_tarball_passes_a_timeout(tmp_path, monkeypatch):
-    """urlopen must be called with a timeout so a stalled download can't hang forever."""
-    captured = {}
+def test_save_s3_tarball_goes_through_the_shared_fetch(tmp_path, monkeypatch):
+    """The deadline and the address policy live in the shared reader.
 
-    class _Resp:
-        def read(self):
-            return _md_tarball_bytes()
+    This client used to call ``urllib.request.urlopen`` itself with a timeout, and
+    the test here asserted that timeout was passed. Both moved: the fetch is now
+    bounded by a deadline the caller cannot outlive and refuses to connect to an
+    unroutable address, and neither property is this package's to re-implement.
+    What is still this package's to get wrong is routing around it, so that is
+    what is checked.
+    """
+    import runpod_doc_client
 
-        def __enter__(self):
-            return self
+    import mineru_client.client as client_module
 
-        def __exit__(self, *exc):
-            return False
+    assert client_module.download is runpod_doc_client.download
+    assert not hasattr(client_module, "_DOWNLOAD_TIMEOUT_SECONDS"), (
+        "a private fetch timeout here means a private fetch came back"
+    )
 
-    def fake_urlopen(url, *a, **k):
-        captured["timeout"] = k.get("timeout")
-        return _Resp()
-
-    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
-    MineruClient.save_s3_tarball(
+    _serve(monkeypatch, _md_tarball_bytes())
+    dest = MineruClient.save_s3_tarball(
         {"tarball_url": "https://bucket.example/fake.tar.gz"}, tmp_path / "out"
     )
-    assert isinstance(captured["timeout"], (int, float)) and captured["timeout"] > 0
+    assert (dest / "doc.md").read_bytes() == b"# from s3\n"

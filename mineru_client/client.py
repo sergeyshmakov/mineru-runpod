@@ -6,118 +6,62 @@ Stateless except for the endpoint id + api key. Safe to share across threads.
 from __future__ import annotations
 
 import base64
-import io
 import json
 import os
-import tarfile
-import zipfile
 from pathlib import Path
 from typing import Any, Iterable, Literal
 
 import runpod
+from runpod_doc_client import (
+    ResponseError,
+    decode_b64,
+    describe_dropped_response,
+    download,
+    extract,
+    limits,
+    require_fetchable_url,
+    safe_output_name,
+)
 
 
-class MineruClientError(RuntimeError):
-    """Raised when the remote handler returns ok=false, or transport fails."""
+MineruClientError = ResponseError
+"""Raised when the remote handler returns ok=false, or transport fails.
+
+An alias rather than a subclass. The shared reader raises ``ResponseError``
+from inside ``download`` and ``extract``, and a subclass here would leave
+``except MineruClientError`` not catching it -- which is the single-error-type
+property the shared package exists to provide.
+"""
 
 
-def _within(dest: Path, name: str) -> bool:
-    """Whether archive member ``name`` lands inside ``dest`` once resolved."""
-    target = (dest / name).resolve()
-    return target == dest or dest in target.parents
+# Truthy spellings accepted for the opt-in below. Matches what the worker already
+# accepts for MINERU_ALLOW_LOCAL_FETCH, so an operator who has set one does not
+# have to discover that the other spells it differently.
+_TRUTHY = frozenset({"1", "true", "yes", "on"})
 
 
-def _safe_output_name(name: str, *, what: str) -> str:
-    """Return ``name`` if it is usable as a single output filename.
+def _apply_fetch_policy() -> None:
+    """Honour MINERU_CLIENT_ALLOW_PRIVATE_FETCH before an archive fetch.
 
-    Result dicts name the files this module writes — the entry's ``basename``
-    becomes the markdown/JSON stem, and each key of ``images`` becomes a file
-    under ``images/``. Both are only ever plain filenames coming from a
-    worker, so anything carrying a directory component means the caller is
-    holding a result this module didn't produce, and guessing what they meant
-    is worse than saying so.
+    The shared reader refuses to fetch from an address that is not globally
+    routable, judged on the socket it actually connected to. That is the right
+    default for a client: the URL comes out of a *response*, so without the check
+    a worker could make the machine running this code open connections inside its
+    own network.
+
+    It is wrong for one documented deployment, though. An S3-compatible store on
+    a private network -- a self-hosted MinIO beside the endpoint is the case in
+    the docs -- serves presigned URLs on exactly the addresses the policy
+    rejects, and this used to work. Hence the opt-in, read per call so a process
+    can set it late, and named for the client because the worker's
+    MINERU_ALLOW_LOCAL_FETCH governs a different fetch in a different process.
+
+    Only ever widens. A caller who set the shared flag directly keeps it, which
+    matters because the error message tells them to do precisely that.
     """
-    if not name or name in (".", ".."):
-        raise MineruClientError(f"refusing {what} {name!r}: not a usable filename")
-    if name != Path(name).name or "/" in name or "\\" in name:
-        raise MineruClientError(
-            f"refusing {what} {name!r}: expected a plain filename"
-        )
-    return name
+    if os.environ.get("MINERU_CLIENT_ALLOW_PRIVATE_FETCH", "").strip().lower() in _TRUTHY:
+        limits.ALLOW_PRIVATE_FETCH_TARGETS = True
 
-
-def _safe_tar_extractall(tar, dest: Path) -> None:
-    """Extract a tar, rejecting members that escape ``dest`` or aren't regular
-    files/dirs — guards against path-traversal / absolute-path / symlink / device
-    archives (CVE-2007-4559). Then extracts with the stdlib ``data`` filter where
-    available (Python 3.11.4+/3.12) for defense-in-depth and to avoid the 3.14
-    default-filter deprecation; older patch releases fall back to the plain
-    extract, which the checks above already made safe.
-    """
-    dest = dest.resolve()
-    for member in tar.getmembers():
-        if not (member.isfile() or member.isdir()):
-            raise MineruClientError(
-                f"refusing unsafe tar member {member.name!r} (not a regular file or dir)"
-            )
-        if not _within(dest, member.name):
-            raise MineruClientError(
-                f"refusing tar member {member.name!r}: path escapes the destination"
-            )
-    try:
-        tar.extractall(dest, filter="data")
-    except TypeError:
-        tar.extractall(dest)
-
-
-# Socket timeout (seconds) for archive downloads — long enough for slow CDNs /
-# large outputs, short enough that a dead or stalled URL can't hang the caller
-# forever. Mirrors the worker's URL_FETCH_TIMEOUT_SECONDS.
-_DOWNLOAD_TIMEOUT_SECONDS = 120.0
-
-
-def _require_http_url(url: str) -> None:
-    """Reject non-HTTP(S) archive URLs before fetching. Worker presigned URLs are
-    always https; allowing file://, ftp://, etc. from a (possibly caller-supplied)
-    response would invite local-file reads / SSRF.
-    """
-    from urllib.parse import urlparse  # noqa: PLC0415
-
-    scheme = urlparse(url).scheme.lower()
-    if scheme not in ("http", "https"):
-        raise MineruClientError(
-            f"refusing to fetch archive from non-HTTP(S) URL (scheme {scheme!r})"
-        )
-
-
-def _extract_archive_bytes(data: bytes, dest_dir: str | Path) -> Path:
-    """Extract archive bytes into dest_dir, autodetecting ``.zip`` vs ``.tar.gz``.
-
-    The worker ships either container depending on ``archive_format`` (default
-    ``tar.gz``; ``zip`` when requested), under the same ``tarball_b64`` /
-    ``tarball_url`` keys — so callers can't assume the format. Both containers
-    are checked the same way before anything is written: members must land
-    inside ``dest_dir``. Tar additionally requires regular files/dirs
-    (``_safe_tar_extractall``, CVE-2007-4559 guard); the stdlib zip reader
-    already rewrites out-of-tree names, and the check here reports such an
-    archive instead of silently relocating its contents. Returns the
-    destination dir.
-    """
-    dest = Path(dest_dir)
-    dest.mkdir(parents=True, exist_ok=True)
-    if data[:4] == b"PK\x03\x04":  # zip local-file-header magic
-        with zipfile.ZipFile(io.BytesIO(data)) as zf:
-            resolved_dest = dest.resolve()
-            for name in zf.namelist():
-                if not _within(resolved_dest, name):
-                    raise MineruClientError(
-                        f"refusing zip member {name!r}: path escapes the destination"
-                    )
-            zf.extractall(dest)
-    else:
-        with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
-            _safe_tar_extractall(tar, dest)
-    return dest
 
 
 class MineruClient:
@@ -247,6 +191,10 @@ class MineruClient:
         except Exception as e:
             raise MineruClientError(f"endpoint transport failed: {e}") from e
 
+        if result is None:
+            # Not a handler bug: the gateway dropped the response. See
+            # `_no_output_message`.
+            raise MineruClientError(describe_dropped_response(transport, bulky_artifact="middle.json"))
         if not isinstance(result, dict):
             raise MineruClientError(f"unexpected handler return type: {type(result)}")
         if not result.get("ok", False):
@@ -323,7 +271,9 @@ class MineruClient:
             raise MineruClientError(
                 "result has no tarball_b64; was transport='tarball_b64'?"
             )
-        return _extract_archive_bytes(base64.b64decode(entry["tarball_b64"]), dest_dir)
+        return extract(
+            decode_b64(entry["tarball_b64"], what="tarball_b64"), dest_dir
+        )
 
     @staticmethod
     def save_s3_tarball(result: dict[str, Any], dest_dir: str | Path) -> Path:
@@ -341,15 +291,9 @@ class MineruClient:
             raise MineruClientError(
                 "result has no tarball_url; was transport='s3'?"
             )
-        # Lazy import so the client stays dependency-light for callers that
-        # only use the tarball_b64 / inline paths.
-        import urllib.request  # noqa: PLC0415
-        _require_http_url(entry["tarball_url"])
-        with urllib.request.urlopen(  # noqa: S310
-            entry["tarball_url"], timeout=_DOWNLOAD_TIMEOUT_SECONDS
-        ) as resp:
-            data = resp.read()
-        return _extract_archive_bytes(data, dest_dir)
+        _apply_fetch_policy()
+        require_fetchable_url(entry["tarball_url"])
+        return extract(download(entry["tarball_url"]), dest_dir)
 
     @staticmethod
     def save_inline(
@@ -370,14 +314,18 @@ class MineruClient:
         """
         entry = MineruClient._unwrap(result)
         if "markdown" not in entry:
+            present = sorted(k for k in entry if k != "basename")
             raise MineruClientError(
-                "result has no markdown; was transport='inline'?"
+                "result has no markdown; was transport='inline'? "
+                f"The entry carries: {present or 'nothing'}. "
+                "If you passed `formats`, markdown has to be in the list -- "
+                "filtering it out removes it from the response."
             )
         if basename is None:
             basename = entry.get("basename") or "doc"
         # Both the stem and the image keys come from the result dict, and both
         # become filenames below — check them before opening anything.
-        basename = _safe_output_name(basename, what="basename")
+        basename = safe_output_name(basename, what="basename")
         dest = Path(dest_dir)
         dest.mkdir(parents=True, exist_ok=True)
         (dest / f"{basename}.md").write_text(entry["markdown"], encoding="utf-8")
@@ -395,6 +343,8 @@ class MineruClient:
         if images:
             (dest / "images").mkdir(parents=True, exist_ok=True)
             for name, b64 in images.items():
-                safe_name = _safe_output_name(name, what="image name")
-                (dest / "images" / safe_name).write_bytes(base64.b64decode(b64))
+                safe_name = safe_output_name(name, what="image name")
+                (dest / "images" / safe_name).write_bytes(
+                    decode_b64(b64, what=f"image {name!r}")
+                )
         return dest

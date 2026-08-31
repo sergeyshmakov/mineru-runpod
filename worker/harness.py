@@ -27,6 +27,7 @@ from __future__ import annotations
 from typing import Any
 
 from runpod_doc_worker import config
+from runpod_doc_worker.transport import response_size as _response_size
 from runpod_doc_worker.config import DEFAULT_VOLUME_ROOTS
 from runpod_doc_worker.contract.artifacts import Artifact
 
@@ -91,6 +92,18 @@ config.configure(
 # three are worth shipping without — a corrupt content_list still leaves a
 # usable document, and one unreadable image should not cost a caller the other
 # forty. Those degrade instead, and say so in the response.
+
+# Refuse a response the RunPod gateway would discard rather than have it dropped.
+# Over ~20 MB the gateway returns COMPLETED with no `output` key at all, so the
+# caller receives None having paid for the parse -- see the harness's packaging
+# guide. Off by default there, because a library should not start raising from a
+# version bump; on here, because the alternative is a silent failure.
+#
+# BULKY_ARTIFACT names the heaviest optional output so the refusal can suggest the
+# smallest `formats` change that would fit.
+_response_size.ENFORCE_RESPONSE_CAP = True
+_response_size.BULKY_ARTIFACT = "middle.json"
+
 MANIFEST = (
     Artifact("markdown", ("{basename}.md",), kind="text", required=True),
     Artifact(

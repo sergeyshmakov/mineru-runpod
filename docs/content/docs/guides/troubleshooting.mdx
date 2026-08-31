@@ -259,16 +259,16 @@ are processed sequentially.
 
 See [Choosing a GPU](/guides/choosing-gpu/) for the VRAM math.
 
-## `unexpected handler return type: <class 'NoneType'>` after a successful parse
+## `the job reported COMPLETED but carried no output`
 
-**Symptom**: the client raises `MineruClientError: unexpected handler return type: <class 'NoneType'>` (or `run_sync` returns `None` directly). Worker logs show the handler **completed successfully** — `[mineru-worker] done: elapsed=Xs phase_ms={...}` — immediately followed by:
+**Symptom**: the client raises `MineruClientError: the job reported COMPLETED but carried no output`, followed by the cap and the ways out. Callers using the RunPod SDK directly see a bare `None` instead, with nothing naming size — which is what this client's message exists to replace. Worker logs show the handler **completed successfully** — `[mineru-worker] done: elapsed=Xs phase_ms={...}` — immediately followed by:
 
 ```
 "Failed to return job results. | 400, message='Bad Request',
  url='https://api.runpod.ai/v2/<endpoint>/job-done/<worker>/<request>?gpu=...&isStream=false'"
 ```
 
-**Cause**: RunPod's `/runsync` gateway caps the **response** payload at ~20 MB. The worker built a valid result; when it tried to POST it back via `/job-done`, the gateway returned HTTP 400 and discarded it. The SDK then sees no output → `None` → our client raises this error.
+**Cause**: RunPod's `/runsync` gateway caps the **response** payload at ~20 MB. The worker built a valid result; when it tried to POST it back via `/job-done`, the gateway returned HTTP 400 and discarded it. The SDK then sees no output and hands the client `None`, which it reports as the message above rather than as a Python type name.
 
 Triggers (measured on a real 82-page PDF):
 
@@ -320,11 +320,14 @@ Most common reasons:
 
 | Message | Cause | Fix |
 |---|---|---|
+| `the job reported COMPLETED but carried no output` | RunPod's gateway dropped the response for exceeding its size cap (20 MB on `/runsync`, 10 MB on `/run`) and still reported success — nothing in the reply names size. Most likely on the default `transport="tarball_b64"` with a long or scanned document, where `middle.json` carries per-character boxes | Any of: `transport="inline"` with `formats=["markdown", "content_list"]`; `transport="s3"` (needs the `BUCKET_*` vars — see [Output modes](/guides/output-modes/)); or a bounded `start_page` / `end_page` range, which is the only one that keeps every format |
 | `volume_path must be an absolute path` | A relative path was sent | Send the full path, e.g. `/runpod-volume/inputs/doc.pdf` |
 | `volume_path is outside the configured input roots` | The resolved path isn't under a directory the endpoint serves documents from. Also fires when `..` segments or a symlink lead out of one | Check for a typo; otherwise add the directory to `MINERU_VOLUME_ROOTS` (see [Network volumes](/guides/network-volumes/#what-volume_path-accepts)) |
 | `file_url must be an http(s) URL` | A scheme the worker doesn't fetch, or a bare hostname with no scheme | Use `http://` or `https://` |
 | `file_url must point at a publicly routable host` | The URL resolves to a loopback, link-local or private address | Host the document somewhere the worker can reach; or set `MINERU_ALLOW_LOCAL_FETCH=1` if it really is inside your own network, or if you're running the handler locally |
-| `server_url must be an http(s) URL` | Same shape check on the `*-http-client` backend field — often a `host:port` with no scheme | Write it out: `http://10.1.2.3:8000/v1` |
+| `refusing to fetch <url>: it connects to <address>, which is not a routable public address` | Raised **by the client, on your machine** — not by the worker. A presigned `tarball_url` pointed at a private or loopback address, which the client refuses by default because the URL arrives in a response it did not author | If your object store really is on a private network (a self-hosted MinIO beside the endpoint, or a local dev stack), set `MINERU_CLIENT_ALLOW_PRIVATE_FETCH=1` where your client runs. This is a *client* variable and has nothing to do with `MINERU_ALLOW_LOCAL_FETCH`, which governs the worker fetching `file_url` in a different process |
+| `server_url must be an http(s) URL` | Same shape check on the `*-http-client` backend field — often a `host:port` with no scheme | Write it out: `https://vllm.example.com/v1` |
+| `server_url must name a host listed in MINERU_ALLOWED_SERVER_HOSTS` | You set `MINERU_ENFORCE_TARGET_POLICY=1`, which requires every per-job `server_url` host to be named in advance — including public ones | Add the host to `MINERU_ALLOWED_SERVER_HOSTS` (comma-separated, exact host match). If the message says the list is empty, enforcement is on with nothing listed, which accepts no per-job `server_url` at all. Not `MINERU_ALLOW_LOCAL_FETCH` — that is for `file_url`, and it no longer reaches this field |
 | `lang must be a short script/language code` | A phrase or path where a code belongs | Use one of the codes in [Input formats](/guides/input-formats/#the-lang-parameter-pipeline-backend-only) |
 | `basename is too long for the filenames it produces` | The stem is within 128 characters but the generated filename exceeds 255 bytes. Filesystems count bytes, so a non-ASCII stem hits this well before 128 characters — a CJK stem is limited to 78 | Shorten `basename`; the message reports the byte count it produced |
 | `end_page must be >= start_page when set` | An inverted range | Swap them, or drop `end_page` for a full-document parse |
@@ -339,7 +342,7 @@ Most common reasons:
 
 **Fix**:
 - **Client-side**: pass a larger `timeout` to `parse_document(timeout=3600, ...)`
-- **Endpoint-side**: raise the endpoint's execution timeout — 3600 s for full books. Set it on the endpoint itself (RunPod console, or a `saveEndpoint` call): `deploy.py --execution-timeout` only reports the value it would want, because the SDK's `create_endpoint` exposes no parameter for it.
+- **Endpoint-side**: raise the endpoint's execution timeout — 3600 s for full books. `deploy.py --execution-timeout 3600` applies it: the SDK's `create_endpoint` takes no such parameter, so the script sets it afterwards through the REST API's `executionTimeoutMs` field. If that call fails the summary says `NOT SET` with the reason, and only then do you need the console. For an endpoint that already exists, change it there or with a `PATCH /v1/endpoints/{id}`.
 - **Per-page math (warm worker, GPU- and content-dependent)**: MinerU upstream cites ~0.5 s/page for the VLM backend on an A100. We measured **~1–10 s/page on an A5000 24 GB depending on content density** (uniform multi-page reports run fast; dense financial forms run slow). Pipeline ≈ 3–5 s/page across GPUs. A 1000-page book on pipeline = ~3000–5000 s; on VLM-on-A5000 ≈ ~1000–10000 s depending on content; on VLM-on-A100 ≈ ~500 s. **Add 90–130 s for the first call on a cold worker if VLM** (model load + vLLM warmup) — the cold-start tax is paid once per worker, not per page.
 
 ## Reading worker logs

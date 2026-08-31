@@ -65,7 +65,7 @@ This skips RunPod's auto-build entirely. Use it when you need custom base images
 | `idle_timeout` | `10 s` | Scale workers to zero after 10 s of inactivity |
 | `workers_min` | `0` | Pay only when processing |
 | `workers_max` | `3` | [Concurrency](/guides/concurrency/) cap (parallel workers); bump for production |
-| `execution_timeout` | `900 s` | Per-job cap; covers a several-hundred-page parse. `deploy.py` reports this value rather than setting it — the SDK's `create_endpoint` has no parameter for it, so set it on the endpoint after creation. |
+| `execution_timeout` | `900 s` | Per-job cap; covers a several-hundred-page parse. `deploy.py` applies it for you with a `PATCH` to the REST API, because the SDK's `create_endpoint` still has no parameter for it. If that call fails the summary line reads `execution timeout: NOT SET (…)` and names the reason — set it in the console when you see that, since the endpoint is otherwise on RunPod's own default rather than this one. |
 | `flashboot` | `true` | RunPod's fast cold-start tech |
 
 Override any of these via flags to `deploy.py` (e.g. `--gpu-ids AMPERE_24 --workers-max 5`).
