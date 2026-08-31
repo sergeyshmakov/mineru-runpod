@@ -362,10 +362,13 @@ async def handler(job: dict) -> dict:
 def __getattr__(name: str) -> object:
     # The two counters are in the surface below but forwarded, not aliased: an
     # int cannot share a rebinding. See `worker.lifecycle.jobs_since_boot`.
-    if name in ("_jobs_processed", "_pages_processed_total"):
+    if name in _lifecycle.FORWARDED:
         return getattr(_lifecycle, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
+
+# Writes, which the hook above cannot cover: `worker.lifecycle.forward_writes`.
+_lifecycle.forward_writes(__name__)
 
 MAX_INLINE_FILE_MB = _io.MAX_INLINE_FILE_MB
 MINERU_VERSION = _parse.MINERU_VERSION

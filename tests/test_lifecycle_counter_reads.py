@@ -87,3 +87,45 @@ def test_an_unknown_attribute_still_raises() -> None:
     every typo into a silent lifecycle lookup."""
     with pytest.raises(AttributeError):
         handler._not_a_real_lifecycle_name  # noqa: B018
+
+
+# -----------------------------------------------------------------------------
+# Writes, which the read forward does not cover on its own
+# -----------------------------------------------------------------------------
+
+def test_a_write_through_the_compat_name_reaches_the_counter() -> None:
+    """`handler._jobs_processed = 0` was how this repo's own tests reset the
+    counters before they moved, so the compatibility surface has to keep it
+    working rather than accept the assignment and drop it."""
+    handler._jobs_processed = 5
+    handler._pages_processed_total = 11
+    assert lifecycle._jobs_processed == 5
+    assert lifecycle._pages_processed_total == 11
+
+
+def test_a_write_does_not_freeze_the_read() -> None:
+    """The failure mode proper, and the reason a silent write is worse than a
+    loud one: an assignment landing in `vars(handler)` shadows the accessor for
+    the life of the process, so every later read returns the written value while
+    `_record_job` goes on updating the real counter."""
+    handler._jobs_processed = 5
+    lifecycle._jobs_processed = 9  # what _record_job does
+    assert handler._jobs_processed == 9
+    assert "_jobs_processed" not in vars(handler)
+
+
+def test_the_reset_then_record_pattern_still_works() -> None:
+    """The whole sequence an out-of-tree caller would write."""
+    handler._jobs_processed = 0
+    handler._pages_processed_total = 0
+    handler._record_job(3)
+    assert handler._jobs_processed == 1
+    assert handler._pages_processed_total == 3
+
+
+def test_an_unrelated_attribute_is_still_set_on_the_module() -> None:
+    """The forward covers two names. Anything else -- a monkeypatch of a helper,
+    say -- must land on `handler` as it always did."""
+    handler._probe_allowed_sentinel = object()
+    assert "_probe_allowed_sentinel" in vars(handler)
+    del handler._probe_allowed_sentinel

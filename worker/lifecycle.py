@@ -10,7 +10,9 @@ through this module, not by value.
 from __future__ import annotations
 
 import os
+import sys
 import threading
+import types
 from typing import Any
 
 from runpod_doc_worker.contract import degraded as _degraded
@@ -104,6 +106,45 @@ GAUGE_GETTERS = {
     "jobs_since_boot": jobs_since_boot,
     "pages_since_boot": pages_since_boot,
 }
+
+
+# -----------------------------------------------------------------------------
+# The compatibility alias in `handler`
+# -----------------------------------------------------------------------------
+#
+# The counters used to be module globals in `handler`, and `handler._jobs_processed
+# = 0` was how a caller reset them -- this repo's own lifecycle tests did exactly
+# that. PEP 562's module-level `__getattr__` keeps the *reads* working after the
+# move, and nothing covers the writes: a plain module has no assignment hook, so
+# the value lands in `vars(handler)`, where it shadows that `__getattr__` for the
+# life of the process. Every later read is then frozen at the written value while
+# `_record_job` goes on updating the real counter here -- a reset that reports
+# success, changes nothing, and quietly breaks reading too.
+#
+# Giving the module a type is the documented way to get a `__setattr__` for one.
+# Only these two names forward; everything else is set on the module as before,
+# because a blanket forward would send every `monkeypatch.setattr(handler, ...)`
+# somewhere its author did not mean.
+FORWARDED = ("_jobs_processed", "_pages_processed_total")
+
+
+class _ForwardingModule(types.ModuleType):
+    def __setattr__(self, name: str, value: object) -> None:
+        if name in FORWARDED:
+            globals()[name] = value
+        else:
+            super().__setattr__(name, value)
+
+
+def forward_writes(module_name: str) -> None:
+    """Make assignments to the aliased counter names on ``module_name`` land here.
+
+    Idempotent, so importing the entry point twice is not a way to lose the
+    forward. Reads are the caller's own `__getattr__`; this is only the write half.
+    """
+    module = sys.modules[module_name]
+    if not isinstance(module, _ForwardingModule):
+        module.__class__ = _ForwardingModule
 
 
 def _refresh_thresholds() -> tuple[int, int]:
