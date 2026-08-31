@@ -57,18 +57,29 @@ def main() -> int:
             runpod_rest.scale_to_zero(args.endpoint_id, api_key=api_key)
             runpod_rest.delete_endpoint(args.endpoint_id, api_key=api_key)
         except runpod_rest.RunpodApiError as e:
-            # Loud, and non-zero. This used to print to stderr and `return 0`,
-            # so a CI teardown read success while the endpoint kept billing.
-            print(
-                f"error: endpoint {args.endpoint_id} was NOT deleted: {e}",
-                file=sys.stderr,
-            )
-            print(
-                "  delete it in the RunPod console before it accrues more cost.",
-                file=sys.stderr,
-            )
-            return 1
-        print(f"  endpoint {args.endpoint_id} deleted")
+            if e.status == 404:
+                # Already gone, which is the state this command was asking for.
+                # Stopping here would strand the template on exactly the rerun
+                # that exists to finish deleting it: the endpoint delete
+                # succeeded last time, the template delete did not, and the
+                # operator reran the same command.
+                print(f"  endpoint {args.endpoint_id} was already absent")
+            else:
+                # Loud, and non-zero. This used to print to stderr and `return 0`,
+                # so a CI teardown read success while the endpoint kept billing.
+                # Anything that is not a 404 says nothing about whether the
+                # endpoint is gone, so it still stops the script.
+                print(
+                    f"error: endpoint {args.endpoint_id} was NOT deleted: {e}",
+                    file=sys.stderr,
+                )
+                print(
+                    "  delete it in the RunPod console before it accrues more cost.",
+                    file=sys.stderr,
+                )
+                return 1
+        else:
+            print(f"  endpoint {args.endpoint_id} deleted")
 
     if args.template_id and not args.keep_template:
         print(f"Deleting template {args.template_id} …")

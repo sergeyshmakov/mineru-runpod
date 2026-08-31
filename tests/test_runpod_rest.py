@@ -236,3 +236,45 @@ def test_deploy_applies_the_execution_timeout() -> None:
         "create_endpoint has no such parameter; passing it raises TypeError"
     )
     assert "NOT applied" not in source, "that text described the old behaviour"
+
+
+def test_the_error_carries_the_status_it_saw(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A caller has to tell "already gone" from "may still be running", and the
+    status is the only thing that says which. Parsing it back out of the message
+    is not a contract."""
+    def fake_urlopen(request, timeout=None):  # noqa: ARG001
+        raise urllib.error.HTTPError(
+            request.full_url, 404, "Not Found", {}, io.BytesIO(b"{}")
+        )
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    with pytest.raises(runpod_rest.RunpodApiError) as excinfo:
+        runpod_rest.delete_endpoint("missing", api_key=API_KEY)
+    assert excinfo.value.status == 404
+
+
+def test_a_call_that_never_got_a_response_has_no_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DNS and connect failures say nothing about whether the resource exists, so
+    the field is None rather than a number a caller could act on."""
+    def fake_urlopen(request, timeout=None):  # noqa: ARG001
+        raise urllib.error.URLError("dns failure")
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    with pytest.raises(runpod_rest.RunpodApiError) as excinfo:
+        runpod_rest.delete_endpoint("ep123", api_key=API_KEY)
+    assert excinfo.value.status is None
+
+
+def test_an_unexpected_success_status_is_reported_as_that_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        urllib.request, "urlopen", lambda request, timeout=None: FakeResponse(202)
+    )
+    with pytest.raises(runpod_rest.RunpodApiError) as excinfo:
+        runpod_rest.delete_endpoint("ep123", api_key=API_KEY)
+    assert excinfo.value.status == 202

@@ -44,7 +44,17 @@ _OK = (200, 204)
 
 
 class RunpodApiError(RuntimeError):
-    """A REST call did not return a success status."""
+    """A REST call did not return a success status.
+
+    ``status`` is the HTTP status when there was a response, and None when the
+    call never got one -- DNS, connect, timeout. A caller that needs to tell
+    "already gone" from "may still be running" reads this; the status is in the
+    message too, but a message is not a contract.
+    """
+
+    def __init__(self, message: str, *, status: int | None = None) -> None:
+        super().__init__(message)
+        self.status = status
 
 
 def call(
@@ -78,7 +88,9 @@ def call(
             payload = response.read()
     except urllib.error.HTTPError as e:
         detail = e.read().decode("utf-8", "replace")[:500]
-        raise RunpodApiError(f"{method} {path} returned {e.code}: {detail}") from e
+        raise RunpodApiError(
+            f"{method} {path} returned {e.code}: {detail}", status=e.code
+        ) from e
     except urllib.error.URLError as e:
         raise RunpodApiError(f"{method} {path} could not reach RunPod: {e.reason}") from e
     except (TimeoutError, OSError) as e:
@@ -92,7 +104,7 @@ def call(
         raise RunpodApiError(f"{method} {path} failed: {type(e).__name__}: {e}") from e
 
     if status not in _OK:
-        raise RunpodApiError(f"{method} {path} returned {status}")
+        raise RunpodApiError(f"{method} {path} returned {status}", status=status)
     if not payload:
         return None
     try:
