@@ -1,3 +1,47 @@
+## [1.11.0](https://github.com/sergeyshmakov/mineru-runpod/compare/v1.10.1...v1.11.0) (2026-08-31)
+
+### ⚠ Job Contract Changes (action may be required)
+
+* **schema:** enforcement requires an allow-listed server_url host ([e398a18](https://github.com/sergeyshmakov/mineru-runpod/commit/e398a18654c6e8200a3d42fd26da776a6f4419ed))
+
+### ⚠ Compatibility Changes (action may be required)
+
+* **client:** use the shared runpod-doc-client instead of private copies ([e05f1ab](https://github.com/sergeyshmakov/mineru-runpod/commit/e05f1ab6dd3442edb30be02dd913b25e82847062))
+
+### Features
+
+* **harness:** adopt v0.7.1 and refuse a response the gateway would discard ([47cd6b6](https://github.com/sergeyshmakov/mineru-runpod/commit/47cd6b66733f3d5a19237851dbab1a58af385306))
+
+### Bug Fixes
+
+* **client:** let an operator opt back in to fetching from a private address ([17c37c5](https://github.com/sergeyshmakov/mineru-runpod/commit/17c37c508aeada1a9e5e91749a7efe65deeb412d))
+* **client:** name the response-size cap when the gateway drops the output ([fc0b6f0](https://github.com/sergeyshmakov/mineru-runpod/commit/fc0b6f0e4860221619dbb4c80bacb509768a02ef))
+* **deploy:** delete endpoints for real, and apply the execution timeout ([ac092d6](https://github.com/sergeyshmakov/mineru-runpod/commit/ac092d65207d0b8b5a0dc00dae3eba2484e2301b))
+* **deps:** stop excluding lockfile-only vulnerabilities from security updates ([d24cd20](https://github.com/sergeyshmakov/mineru-runpod/commit/d24cd20ce979587c51eda03d88be09909dc8e81b))
+* **destroy:** tell an absent endpoint from one that may still be running ([e83abd4](https://github.com/sergeyshmakov/mineru-runpod/commit/e83abd486ab20a45aeb0306e097683dc7548715a))
+* **handler:** re-export _package_inline, and assert the whole compat surface ([b20c6d7](https://github.com/sergeyshmakov/mineru-runpod/commit/b20c6d798b9fadc17021e7ee7b3940ca8f2fe3b7))
+* **lifecycle:** forward writes to the compat counter names, not just reads ([84d7f0e](https://github.com/sergeyshmakov/mineru-runpod/commit/84d7f0e4e65ac5fe2e3000de8c08f5f8fca184c0))
+* **schema:** a caller cannot borrow the operator's local-fetch exemption ([9f673d6](https://github.com/sergeyshmakov/mineru-runpod/commit/9f673d6e5bc30662b0df4f070965cd9255092659))
+* **schema:** apply the outbound-target policy to server_url ([7dd6c06](https://github.com/sergeyshmakov/mineru-runpod/commit/7dd6c0687847fbd7fa0a4865bb793eb7af2159f0))
+* **schema:** make the server_url target policy opt-in ([fafe40d](https://github.com/sergeyshmakov/mineru-runpod/commit/fafe40d8e2325faac6db81dd159bfe644ccb9f4d))
+* **schema:** scope the private-server exemption to named hosts ([949976b](https://github.com/sergeyshmakov/mineru-runpod/commit/949976b7eec70a5b7a4663069b28b943f2c595ca))
+* **telemetry:** both since-boot gauges reported zero for the life of the process ([9eab0b1](https://github.com/sergeyshmakov/mineru-runpod/commit/9eab0b1d951336b6de736f0f59726173dea6fe68))
+* **telemetry:** every log a job produced was dropped by the exporter ([a124b5e](https://github.com/sergeyshmakov/mineru-runpod/commit/a124b5ee4dff3a5ae5ec7d71bed4bee244184c84))
+* **test:** declare PyYAML, and correct the timeout guidance the last commit invalidated ([4acdd04](https://github.com/sergeyshmakov/mineru-runpod/commit/4acdd040b35f737e5582ad33d0973bfdf7fadd23))
+
+### Refactoring
+
+* bring every file under a 500-line cap, and enforce it ([b7c8b48](https://github.com/sergeyshmakov/mineru-runpod/commit/b7c8b485b2258ec2c41715e8251aa12ab219e4a4))
+
+### Documentation
+
+* **agents:** never mark a change breaking without asking ([bb3b8d8](https://github.com/sergeyshmakov/mineru-runpod/commit/bb3b8d8f949a78ea05bc49ed8ea255219379f0ef))
+* **deploy:** say that deploy.py applies the execution timeout ([7e67499](https://github.com/sergeyshmakov/mineru-runpod/commit/7e67499b5eb06d5b3d84b7c1312ec8c77977c4cd))
+* **hub:** describe server_url enforcement as the allow-list it now is ([19a52a1](https://github.com/sergeyshmakov/mineru-runpod/commit/19a52a153d7ae1cc1ca1d26a973bcc883e8f7c4e))
+* **hub:** name the pinned MinerU series in the Hub listing ([5f51e56](https://github.com/sergeyshmakov/mineru-runpod/commit/5f51e566bb01764723d22492db4772c162078081))
+* **readme:** write down the versioning policy, and make it enforceable ([8192d49](https://github.com/sergeyshmakov/mineru-runpod/commit/8192d492eb1295b8e06ad112ef35c1dd38d02b60))
+* **reference:** give versioning its own page instead of a buried section ([e56c311](https://github.com/sergeyshmakov/mineru-runpod/commit/e56c3116fb4c891d45672931999c8e79e19134c6))
+
 ## [1.10.1](https://github.com/sergeyshmakov/mineru-runpod/compare/v1.10.0...v1.10.1) (2026-08-24)
 
 ### Bug Fixes
