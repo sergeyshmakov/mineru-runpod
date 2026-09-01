@@ -350,29 +350,29 @@ Most common reasons:
 The worker emits one JSON object per line by default (set `LOG_FORMAT=text`
 for human-readable output during local development). RunPod's log viewer
 shows them as-is. To filter in CloudWatch, Loki, Axiom, or any other JSON
-log sink, key off the `level`, `msg`, and any of the structured fields.
+log sink, key off the `level`, `message`, and any of the structured fields.
 
 Typical lines on a successful job:
 
 ```json
-{"ts":"2026-05-25T18:30:42.103Z","level":"info","logger":"mineru-worker","msg":"starting job","job_id":"queued-uuid-abc","backend":"vlm-auto-engine","lang":"en","start_page":0,"end_page":4,"gpu_name":"NVIDIA RTX 4090","compute_capability":"8.9"}
-{"ts":"2026-05-25T18:30:48.612Z","level":"info","logger":"mineru-worker","msg":"done","job_id":"queued-uuid-abc","elapsed_seconds":6.51,"phase_ms":{"fetch_input":12,"mineru_parse":6420,"package":79},"model_dir":"/root/.cache/huggingface/hub/.../snapshots/<hash>","refresh_worker":false}
+{"ts":"2026-05-25T18:30:42.103Z","level":"info","logger":"mineru-worker","message":"starting job","job_id":"queued-uuid-abc","backend":"vlm-auto-engine","lang":"en","start_page":0,"end_page":4,"gpu_name":"NVIDIA RTX 4090","compute_capability":"8.9"}
+{"ts":"2026-05-25T18:30:48.612Z","level":"info","logger":"mineru-worker","message":"done","job_id":"queued-uuid-abc","elapsed_seconds":6.51,"phase_ms":{"fetch_input":12,"mineru_parse":6420,"package":79},"model_dir":"/root/.cache/huggingface/hub/.../snapshots/<hash>","refresh_worker":false}
 ```
 
 On failure:
 
 ```json
-{"ts":"2026-05-25T18:30:42.789Z","level":"error","logger":"mineru-worker","msg":"job failed","job_id":"queued-uuid-abc","error_type":"ValueError","error_message":"input bytes do not match any supported format","phase_ms":{"fetch_input":8}}
+{"ts":"2026-05-25T18:30:42.789Z","level":"error","logger":"mineru-worker","message":"job failed","job_id":"queued-uuid-abc","error_type":"ValueError","error_message":"input bytes do not match any supported format","phase_ms":{"fetch_input":8}}
 ```
 
 On a job that succeeded but lost part of its output — a file MinerU wrote and
 the worker then could not read:
 
 ```json
-{"ts":"2026-05-25T18:30:48.400Z","level":"warning","logger":"mineru-worker","msg":"response degraded","job_id":"queued-uuid-abc","artifact":"content_list","file":"doc_content_list.json","reason":"unreadable","error_type":"JSONDecodeError"}
+{"ts":"2026-05-25T18:30:48.400Z","level":"warning","logger":"mineru-worker","message":"response degraded","job_id":"queued-uuid-abc","artifact":"content_list","file":"doc_content_list.json","reason":"unreadable","error_type":"JSONDecodeError"}
 ```
 
-`msg:"response degraded"` is one string for every such case, so a single alert
+`message:"response degraded"` is one string for every such case, so a single alert
 rule catches all of them — as does the `mineru.degraded.total` counter when
 [OpenTelemetry](/guides/observability/) is configured. The same information rides in the response itself
 under `degraded`, which is what tells you *which* document to reprocess — see
@@ -385,7 +385,7 @@ Key fields:
 |---|---|
 | `level` | `debug`, `info`, `warning`, `error` |
 | `logger` | Always `mineru-worker` for handler emissions |
-| `msg` | Stable identifier for the event — safe to alert on |
+| `message` | Stable identifier for the event — safe to alert on |
 | `job_id` | RunPod's job UUID. Use this to correlate all lines from one request, especially when a worker handles multiple jobs in sequence. `<unknown>` when a sync caller submitted without a queued ID |
 | `phase_ms` | Per-phase timings (`fetch_input`, `mineru_parse`, `package`) |
 | `backend`, `lang`, `start_page`, `end_page` | Echoed from the job input — handy for correlating with the request |
@@ -415,7 +415,7 @@ response flag.
 When SIGTERM arrives, the worker logs:
 
 ```json
-{"ts":"...","level":"warning","logger":"mineru-worker","msg":"sigterm received, draining current job"}
+{"ts":"...","level":"warning","logger":"mineru-worker","message":"sigterm received, draining current job"}
 ```
 
 **What happens to in-flight jobs**: they drain to completion. After
