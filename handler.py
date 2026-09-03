@@ -115,7 +115,7 @@ async def _handle_parse(
     )
 
     _note_shutdown("fetch_input")
-    _maybe_progress(job, {"phase": "fetching_input"})
+    await _maybe_progress(job, {"phase": "fetching_input"})
     t = time.monotonic()
     with _telemetry.span("mineru.fetch_input", phase="fetch_input"):
         file_bytes, source = await _io.resolve_input_bytes(cleaned)
@@ -142,7 +142,7 @@ async def _handle_parse(
         )
 
     _note_shutdown("parse")
-    _maybe_progress(job, {
+    await _maybe_progress(job, {
         "phase": "parsing",
         "input_bytes": len(file_bytes),
         "input_format": input_format,
@@ -182,10 +182,10 @@ async def _handle_parse(
         _telemetry.histogram_record("phase_duration", parse_seconds, phase="parse")
 
         _note_shutdown("package")
-        # No progress_update here: the SDK sends progress from a background
-        # thread to the same endpoint as the final result, and packaging
-        # finishes in milliseconds — an update this close to completion can
-        # land after the COMPLETED post and strand the job IN_PROGRESS.
+        # No progress update here: packaging carries nothing a caller can act
+        # on, and awaiting a post immediately before the result would add a
+        # round-trip to every job for that. Issue #4 dropped it because the
+        # unawaited post could strand the job; _maybe_progress now waits.
 
         t = time.monotonic()
         # `pages_requested` reflects the slice the caller asked for, NOT the

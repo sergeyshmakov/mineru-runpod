@@ -65,6 +65,25 @@ def test_handler_still_exposes_the_name(name: str) -> None:
     )
 
 
+def test_maybe_progress_is_a_coroutine_function() -> None:
+    """A shape change `hasattr` cannot see.
+
+    `_maybe_progress` became a coroutine so the progress POST is awaited rather
+    than fired into a background thread (issue #40). An out-of-tree caller that
+    still invokes it synchronously gets a `RuntimeWarning: coroutine was never
+    awaited` and a silent no-op -- and every other test in this file would keep
+    passing, because the name is still there.
+    """
+    import inspect
+
+    import handler
+
+    assert inspect.iscoroutinefunction(handler._maybe_progress), (
+        "handler._maybe_progress is no longer a coroutine function; the call "
+        "sites in _handle_parse await it"
+    )
+
+
 def test_the_shutdown_event_is_the_object_the_lifecycle_module_mutates() -> None:
     """Not merely present: the same object.
 
