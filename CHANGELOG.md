@@ -1,3 +1,9 @@
+## [1.13.0](https://github.com/sergeyshmakov/mineru-runpod/compare/v1.12.0...v1.13.0) (2026-09-03)
+
+### ⚠ Compatibility Changes (action may be required)
+
+* **progress:** wait for a progress update instead of racing the result ([390b1c6](https://github.com/sergeyshmakov/mineru-runpod/commit/390b1c6c84f73669ba7cb483a8728dc9fbddb314)), closes [#9](https://github.com/sergeyshmakov/mineru-runpod/issues/9) [#40](https://github.com/sergeyshmakov/mineru-runpod/issues/40)
+
 ## [1.12.0](https://github.com/sergeyshmakov/mineru-runpod/compare/v1.11.0...v1.12.0) (2026-09-03)
 
 ### ⚠ Job Contract Changes (action may be required)
