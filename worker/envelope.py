@@ -8,10 +8,12 @@ per-file entry, and a change to the response shape moves it.
 
 from __future__ import annotations
 
+import asyncio
 import os
 from typing import Any
 
-import runpod
+from runpod.http_client import AsyncClientSession
+from runpod.serverless.modules import rp_http
 
 from pathlib import Path
 
@@ -54,14 +56,74 @@ def _probe_allowed() -> bool:
 # -----------------------------------------------------------------------------
 # Progress + debug envelope
 # -----------------------------------------------------------------------------
+#
+# A progress update goes to the same job-results URL as the final COMPLETED
+# result, so one still in flight when the handler returns can be applied after
+# it and strand a finished job at IN_PROGRESS forever. That is issue #4 and,
+# once more at an earlier phase, issue #40.
+#
+# `runpod.serverless.progress_update` posts from a daemon thread nobody waits
+# for, which is what made the ordering a race in the first place. PR #9 answered
+# it by deleting the update closest to the end and keeping the two that were
+# "followed by seconds of real work" -- true of the PDF path, false of the
+# office path, where MinerU skips model inference and the parse lands in ~88 ms.
+#
+# So the wait is what is fixed here, not which phase is far enough from the end:
+# post it ourselves and await it, and the update is finished before the work
+# preceding completion even begins. That holds for any format, backend or
+# document size, none of which this has to know about any more.
+#
+# It is not absolute. Cancelling the wait cannot recall a POST already on the
+# wire -- aiohttp writes to the transport synchronously and closes gracefully,
+# which flushes -- so a POST that outlives the budget can still be applied late.
+# That needs RunPod's results API to be hung rather than merely slow, where
+# today a healthy endpoint losing a millisecond race is enough. The timeout logs
+# at warning because it is the only trace that window was entered.
 
-def _maybe_progress(job: dict, data: dict) -> None:
-    """Best-effort progress update. Tests / sync clients without a job id
-    shouldn't fail just because we tried to surface progress."""
+# One full FibonacciRetry(attempts=3) cycle inside `send_result` sleeps 2s + 3s,
+# so a 5s budget would guarantee severing the retry mid-flight and route every
+# degraded case into the late-POST window above. This covers the cycle plus
+# round-trip headroom. Latency knob, not a correctness one.
+_PROGRESS_BUDGET_SECONDS = 8.0
+
+
+async def _maybe_progress(job: dict, data: dict, *, budget: float | None = None) -> None:
+    """Post one progress update and wait for it, so it cannot outlive the job.
+
+    Best-effort in what it reports and strict in when it returns: a sync client
+    with no job id, or a worker RunPod gave no results URL, posts nothing rather
+    than failing the parse.
+    """
+    # No id means nothing to address -- `_handle_result` puts it in the URL and
+    # the X-Request-ID header. Checked here rather than left to the KeyError it
+    # would raise, which the SDK does not catch.
+    if not job.get("id") or rp_http.JOB_DONE_URL == "JOB_DONE_URL":
+        return
+    # Read at call time: a module-level default would freeze the value at import
+    # and quietly ignore a test that sets it.
+    budget = _PROGRESS_BUDGET_SECONDS if budget is None else budget
     try:
-        runpod.serverless.progress_update(job, data)
-    except Exception as e:  # noqa: BLE001
-        _logging.debug("progress_update failed", error=repr(e))
+        # The session is built per call: aiohttp binds one to the running loop,
+        # and `wait_for` sits inside it so teardown runs after the cancellation
+        # has been absorbed rather than during it.
+        async with AsyncClientSession() as session:
+            await asyncio.wait_for(
+                rp_http.send_result(
+                    session, {"status": "IN_PROGRESS", "output": data}, job
+                ),
+                budget,
+            )
+    # TimeoutError is an Exception on 3.11+, so this clause has to come first.
+    except asyncio.TimeoutError:
+        _logging.warning(
+            "progress update timed out",
+            phase=data.get("phase"),
+            budget_s=budget,
+        )
+    except Exception as e:  # noqa: BLE001 - never BaseException; cancellation must propagate
+        _logging.debug(
+            "progress update failed", phase=data.get("phase"), error=repr(e)
+        )
 
 
 def _build_debug(phase_ms: dict[str, int], gpu_info: dict[str, Any], **extra: Any) -> dict[str, Any]:

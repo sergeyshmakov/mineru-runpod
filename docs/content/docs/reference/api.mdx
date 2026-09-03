@@ -299,14 +299,16 @@ When the handler raises or returns an error, the response sets `ok: false` and i
 
 ## Progress updates (streaming)
 
-The handler emits `runpod.serverless.progress_update` events during a parse. Phases:
+The handler posts `{"status": "IN_PROGRESS", "output": ...}` events during a parse, which is what `/status` and `/stream` report while the job runs. Phases:
 
 ```json
 {"phase": "fetching_input"}
 {"phase": "parsing", "input_bytes": 1234567, "input_format": "pdf", "start_page": 0, "end_page": 99}
 ```
 
-There is deliberately no `packaging` phase event: packaging completes milliseconds before the final result is posted, and a progress update that close to completion can arrive after the `COMPLETED` status and overwrite it, leaving the job stuck `IN_PROGRESS`.
+Each update is **awaited before the parse continues**, rather than posted from a background thread the handler does not wait for. Progress travels to the same job-results endpoint as the final result, so an update still in flight at completion can be applied after the `COMPLETED` status and leave a finished job stuck `IN_PROGRESS`. Waiting for it is what keeps the two in order regardless of how fast the parse is — office inputs (DOCX/PPTX/XLSX) skip model inference and can finish in under 100 ms.
+
+There is deliberately no `packaging` phase event either: it would carry no information a caller can act on, and no update is emitted after the parse.
 
 With the RunPod SDK, submit asynchronously and stream from the returned job:
 
