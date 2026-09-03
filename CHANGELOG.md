@@ -1,3 +1,13 @@
+## [1.12.0](https://github.com/sergeyshmakov/mineru-runpod/compare/v1.11.0...v1.12.0) (2026-09-03)
+
+### ⚠ Job Contract Changes (action may be required)
+
+* **logging:** the structured log field `msg` becomes `message` ([3190d28](https://github.com/sergeyshmakov/mineru-runpod/commit/3190d28cb5336a37a7dca44be23d933a63705afc)), closes [#14](https://github.com/sergeyshmakov/mineru-runpod/issues/14) [#16](https://github.com/sergeyshmakov/mineru-runpod/issues/16) [#15](https://github.com/sergeyshmakov/mineru-runpod/issues/15)
+
+### Documentation
+
+* **troubleshooting:** the log field operators alert on is `message` ([cee13d8](https://github.com/sergeyshmakov/mineru-runpod/commit/cee13d8d8650084b9bc2ebb09f89ebb4d74242bb))
+
 ## [1.11.0](https://github.com/sergeyshmakov/mineru-runpod/compare/v1.10.1...v1.11.0) (2026-08-31)
 
 ### ⚠ Job Contract Changes (action may be required)
