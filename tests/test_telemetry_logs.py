@@ -117,7 +117,10 @@ def test_logging_mirrors_to_telemetry_when_enabled(monkeypatch):
 
     # The stdout JSON line still fired (primary channel).
     data = json.loads(buf.getvalue().strip())
-    assert data["msg"] == "hello"
+    # `message`, not `msg`: harness v0.9.0 renamed the field to the name RunPod's
+    # log viewer actually reads. Under the old spelling the viewer filled its
+    # LEVEL column and left MESSAGE empty on every structured line.
+    assert data["message"] == "hello"
     assert data["backend"] == "vlm-auto-engine"
 
     # The mirror fired with the same payload.
