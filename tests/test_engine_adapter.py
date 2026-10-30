@@ -312,3 +312,88 @@ def test_run_mineru_refuses_without_the_engine(monkeypatch, tmp_path):
         asyncio.run(parse.run_mineru(
             PDF, "doc", tmp_path, suffix="pdf", tier="flash", ocr_mode="auto", page_range="",
         ))
+
+
+# -----------------------------------------------------------------------------
+# File names as hints
+# -----------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    ("job_input", "hint"),
+    [
+        ({"file_b64": "AA==", "file_name": "table.csv"}, "table.csv"),
+        ({"file_url": "https://x.example/files/q3%20report.tsv?sig=abc"}, "q3 report.tsv"),
+        ({"file_url": "https://x.example/files/table.csv", "file_name": "real.tsv"}, "real.tsv"),
+        ({"volume_path": "/runpod-volume/in/page.mhtml"}, "page.mhtml"),
+        ({"file_url": "https://x.example/"}, None),
+        ({"file_b64": "AA=="}, None),
+    ],
+)
+def test_name_hint_prefers_the_callers_file_name(job_input, hint):
+    assert inputs.name_hint(job_input) == hint
+
+
+def test_the_detector_gets_the_extension_not_the_callers_name(monkeypatch):
+    seen: dict = {}
+    module = types.ModuleType("mineru.parser.file_type")
+
+    def guess_suffix_by_bytes(data, file_path=None):  # noqa: ARG001
+        seen["file_path"] = file_path
+        return "csv"
+
+    module.guess_suffix_by_bytes = guess_suffix_by_bytes
+    for name in ("mineru", "mineru.parser"):
+        monkeypatch.setitem(sys.modules, name, sys.modules.get(name) or types.ModuleType(name))
+    monkeypatch.setitem(sys.modules, "mineru.parser.file_type", module)
+    monkeypatch.setattr(parse, "MINERU_AVAILABLE", True)
+
+    assert inputs.detect_suffix(b"a,b\n1,2\n", "../../etc/q3 Report.CSV") == "csv"
+    assert seen["file_path"] == "input.csv"
+
+
+def test_without_mineru_a_hint_names_text_formats(monkeypatch):
+    monkeypatch.setattr(parse, "MINERU_AVAILABLE", False)
+    assert inputs.detect_suffix(b"a,b\n1,2\n", "table.csv") == "csv"
+    assert inputs.detect_suffix(b"a,b\n1,2\n", "notes.txt") is None
+    # Content still decides where it can: a PDF stays a PDF.
+    assert inputs.detect_suffix(PDF, "table.csv") == "pdf"
+
+
+@pytest.mark.parametrize("file_name", ["table.csv", "Report.PDF", "page.mhtml", "q3 report.tsv"])
+def test_file_name_accepts_a_parseable_name(file_name):
+    assert schema.validate_input({"file_b64": "AA==", "file_name": file_name})["file_name"] == file_name
+
+
+@pytest.mark.parametrize(
+    ("file_name", "message"),
+    [
+        ("notes.txt", "extension MinerU parses"),
+        ("noextension", "extension MinerU parses"),
+        ("dir/table.csv", "not a path"),
+        ("..\table.csv", "not a path"),
+        ("tab\tle.csv", "not a path"),
+        ("", "not a path"),
+        ("x" * 252 + ".csv", "not a path"),
+    ],
+)
+def test_file_name_refuses_anything_but_a_parseable_name(file_name, message):
+    with pytest.raises(ValueError, match=message):
+        schema.validate_input({"file_b64": "AA==", "file_name": file_name})
+
+
+def test_a_csv_named_by_the_caller_parses_natively(monkeypatch):
+    captured = _capture_run(monkeypatch)
+    monkeypatch.setattr(parse, "MINERU_AVAILABLE", False)
+    result = asyncio.run(handler.handler({"id": "j", "input": {
+        "file_b64": _b64(b"name,qty\nalpha,1\n"), "file_name": "stock.csv", "tier": "advanced",
+    }}))
+    assert result["ok"] is True, result
+    assert (captured["suffix"], captured["tier"]) == ("csv", "flash")
+
+
+def test_an_unnamed_text_input_is_told_to_name_itself(monkeypatch):
+    _capture_run(monkeypatch)
+    monkeypatch.setattr(parse, "MINERU_AVAILABLE", False)
+    result = asyncio.run(handler.handler({"id": "j", "input": {"file_b64": _b64(b"name,qty\nalpha,1\n")}}))
+    assert result["ok"] is False
+    assert "set file_name" in result["error"]

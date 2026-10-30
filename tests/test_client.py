@@ -153,6 +153,12 @@ def test_parse_document_defaults_leave_the_range_to_the_worker(fake_endpoint):
     assert "page_range" not in payload and "server_url" not in payload
 
 
+def test_parse_document_forwards_file_name(fake_endpoint):
+    client = MineruClient(endpoint_id="ep-1", api_key="x")
+    client.parse_document(file_b64="YQ==", file_name="table.csv")
+    assert client._endpoint.last_payload["file_name"] == "table.csv"
+
+
 def test_parse_document_forwards_server_url(fake_endpoint):
     client = MineruClient(endpoint_id="ep-1", api_key="x")
     client.parse_document(file_url="https://x", server_url="https://vlm.example/v1")

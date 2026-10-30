@@ -89,6 +89,7 @@ class MineruClient:
         file_url: str | None = None,
         file_b64: str | None = None,
         volume_path: str | None = None,
+        file_name: str | None = None,
         tier: Literal["flash", "basic", "standard", "advanced"] = "standard",
         ocr_mode: Literal["auto", "txt", "ocr"] = "auto",
         page_range: str | None = None,
@@ -106,8 +107,11 @@ class MineruClient:
 
         Input formats (detected by the worker, by content):
             PDF, images, Office (DOC/DOCX/PPT/PPTX/XLS/XLSX), RTF, OpenDocument,
-            EPUB, OFD and HTML. Everything but PDFs and images is parsed
-            natively at the flash tier, whatever ``tier`` says.
+            EPUB, OFD, HTML and CSV/TSV. Everything but PDFs and images is
+            parsed natively at the flash tier, whatever ``tier`` says. Text
+            formats (CSV, TSV, HTML fragments) need ``file_name`` (e.g.
+            "table.csv") unless the URL or volume path already ends in the
+            extension; only the extension is used.
 
         Tiers (MinerU 4.1.x), for PDFs and images:
             "flash"     The PDF's own text layer; no models.
@@ -170,6 +174,8 @@ class MineruClient:
         }
         if page_range is not None:
             payload["page_range"] = page_range
+        if file_name is not None:
+            payload["file_name"] = file_name
         if server_url is not None:
             payload["server_url"] = server_url
         if file_url is not None:

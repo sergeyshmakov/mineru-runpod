@@ -133,13 +133,14 @@ async def _handle_parse(
 
     # MinerU decides the format from content, and native formats run at flash
     # whatever tier was asked for; the response reports what actually ran.
-    input_format = _inputs.detect_suffix(file_bytes)
+    input_format = _inputs.detect_suffix(file_bytes, _inputs.name_hint(cleaned))
     if input_format is None:
         raise ValueError(
             "input bytes do not match any format MinerU parses (PDF, an image, "
-            "Office/OpenDocument, RTF, EPUB, OFD, HTML, CSV). Check that file_b64 "
-            "was base64-encoded correctly and that file_url returned the file "
-            "body (not an error page)."
+            "Office/OpenDocument, RTF, EPUB, OFD, HTML, CSV/TSV). Text formats "
+            "need a name to go by: set file_name (e.g. 'table.csv'). Otherwise "
+            "check that file_b64 was base64-encoded correctly and that file_url "
+            "returned the file body (not an error page)."
         )
     if page_range and input_format != "pdf":
         raise ValueError(f"page_range applies to PDFs only; the input is {input_format}")

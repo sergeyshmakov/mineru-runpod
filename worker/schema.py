@@ -14,6 +14,7 @@ from runpod_doc_worker.contract import artifacts as _artifacts
 from runpod_doc_worker.transport import net as _net
 from runpod_doc_worker.transport import package as _package
 
+from worker import inputs as _inputs
 from worker.harness import DEFAULT_FORMATS, MANIFEST
 
 # Suffix of the operator flag that turns the outbound-target policy on for the
@@ -72,6 +73,9 @@ MAX_BASENAME_LEN = 128
 # the longest filename a job produces. A test keeps the two in step.
 LONGEST_ARTEFACT_SUFFIX = "_structured_content.json"
 
+# A logical file name, as MinerU's own API takes one; only its extension is used.
+MAX_FILE_NAME_LEN = 255
+
 # Filesystems bound a path component in bytes, not characters, and the charset
 # rule above accepts unicode alphanumerics: 80 CJK characters already pass the
 # character limit while producing a name over this once the suffix is added.
@@ -101,6 +105,7 @@ INPUT_SCHEMA: dict[str, dict[str, Any]] = {
     "tier":           {"type": str,  "required": False, "default": "standard"},
     "ocr_mode":       {"type": str,  "required": False, "default": "auto"},
     "page_range":     {"type": str,  "required": False, "default": ""},
+    "file_name":      {"type": str,  "required": False, "default": None},
     "server_url":     {"type": str,  "required": False, "default": None},
     "transport":      {"type": str,  "required": False, "default": "tarball_b64"},
     "formats":        {"type": list, "required": False, "default": list(DEFAULT_FORMATS)},
@@ -293,6 +298,23 @@ def validate_input(job_input: dict) -> dict:
                 f"(MINERU_MAX_PAGES_PER_JOB)"
             )
     cleaned["page_range"] = page_range
+
+    # `file_name` is a hint for formats content cannot settle (CSV against TSV,
+    # an HTML fragment against plain text). It is a name, not a path, and only
+    # its extension is ever used, so anything else in it is a caller mistake.
+    if (file_name := cleaned.get("file_name")) is not None:
+        if not 0 < len(file_name) <= MAX_FILE_NAME_LEN or any(
+            c in "/\\" or not c.isprintable() for c in file_name
+        ):
+            _fail(
+                f"file_name must be a file name (not a path) of at most "
+                f"{MAX_FILE_NAME_LEN} characters; got {file_name!r}"
+            )
+        if _inputs.suffix_of(file_name) not in _inputs.PARSEABLE_SUFFIXES:
+            _fail(
+                f"file_name must end in an extension MinerU parses "
+                f"({', '.join(sorted(_inputs.PARSEABLE_SUFFIXES))}); got {file_name!r}"
+            )
 
     # XOR over the three transports. The handler also relies on this — only
     # one of file_url/file_b64/volume_path may be set per job.
