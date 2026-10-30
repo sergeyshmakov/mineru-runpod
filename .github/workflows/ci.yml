@@ -41,6 +41,40 @@ jobs:
       - name: Run tests
         run: pytest tests/ -v
 
+  engine:
+    # The rest of the suite runs without MinerU and stubs the parse. This job
+    # installs the pinned release and runs it for real, on CPU, at the flash
+    # tier (no models, no GPU) -- see tests/test_engine_real.py.
+    name: Engine (real MinerU, CPU)
+    runs-on: ubuntu-latest
+    env:
+      MINERU_HOME: /tmp/mineru-home
+      MINERU_TELEMETRY_DISABLED: "1"
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install the worker's test deps and the pinned MinerU
+        # The pin is read from requirements.txt so this job cannot drift from
+        # the image. Extras are dropped: the base package is the CPU engine.
+        run: |
+          python -m pip install --upgrade pip
+          MINERU_PIN="$(grep -E '^mineru\[' requirements.txt | sed -E 's/\[[^]]*\]//')"
+          echo "installing $MINERU_PIN"
+          pip install -e ".[test]" "$MINERU_PIN"
+
+      - name: MinerU imports
+        # Fails here, loudly, rather than letting the engine tests skip.
+        run: python -c "import mineru.parser, mineru.version as v; print('mineru', v.__version__)"
+
+      - name: Run the suite with the engine installed
+        run: pytest tests/ -v
+
   lint-dockerfile:
     name: Hadolint
     runs-on: ubuntu-latest

@@ -26,3 +26,11 @@ for key in ("RUNPOD_WEBHOOK_POST_OUTPUT", "RUNPOD_WEBHOOK_POST_STREAM"):
 # harness directly runs against its defaults — a different env prefix and
 # different input roots — and passes or fails for the wrong reason.
 import worker  # noqa: E402, F401
+
+
+def pytest_configure(config):  # noqa: D103 - pytest hook
+    config.addinivalue_line(
+        "markers",
+        "engine: runs the real MinerU engine (CPU, flash tier); skipped unless "
+        "MinerU is installed, as in the `engine` CI job",
+    )
