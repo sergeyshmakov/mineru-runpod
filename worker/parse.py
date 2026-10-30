@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -58,6 +59,29 @@ class _OutputWriter:
         self.write(path, data.encode("utf-8"))
 
 
+def _render(target: str, in_memory: Any, saved: Any) -> tuple[str, str | bytes]:
+    """One of MinerU's render targets: (file suffix, content).
+
+    The in-memory document still carries its images, so HTML comes out
+    self-contained and DOCX/EPUB/PDF embed them; LaTeX cannot embed, so it is
+    rendered from the saved copy and references the `images/` files beside it.
+    PDF keeps the source's page layout where it has one (MinerU's AUTO).
+    """
+    from mineru import render as r  # type: ignore[import-not-found]  # noqa: PLC0415
+
+    if target == "html":
+        return ".html", r.render_html(in_memory)
+    if target == "latex":
+        return ".tex", r.render_latex(saved)
+    if target == "docx":
+        return ".docx", r.render_docx(in_memory)
+    if target == "epub":
+        return ".epub", r.render_epub(in_memory)
+    if target == "pdf":
+        return ".pdf", r.render_pdf(in_memory, layout=r.PdfLayout.AUTO)
+    raise ValueError(f"unknown render target {target!r}")
+
+
 def _vlm_config(server_url: str | None) -> Any:
     """The process's VLM settings with a per-job remote endpoint swapped in.
 
@@ -81,12 +105,15 @@ async def run_mineru(
     ocr_mode: str,
     page_range: str,
     server_url: str | None = None,
+    renders: Iterable[str] = (),
 ) -> Path:
     """Parse one document and write its artifacts; returns the output directory.
 
     The source is written under its own directory, beside rather than inside
     the output one, because the archive transports ship everything in the
-    output directory.
+    output directory. `renders` names the extra targets to write (see
+    `worker.harness.RENDER_FORMATS`); a render that fails fails the job, as
+    in MinerU's own API, rather than shipping without what was asked for.
     """
     if not MINERU_AVAILABLE:
         raise RuntimeError(f"mineru is not importable: {MINERU_VERSION}")
@@ -113,4 +140,11 @@ async def run_mineru(
         (f"{basename}_content_list_v2.json", render_content_list_v2(saved)),
     ):
         (out_dir / name).write_text(json.dumps(content, ensure_ascii=False, indent=2), encoding="utf-8")
+    for target in renders:
+        ext, content = _render(target, result.middle_json, saved)
+        path = out_dir / f"{basename}{ext}"
+        if isinstance(content, bytes):
+            path.write_bytes(content)
+        else:
+            path.write_text(content, encoding="utf-8")
     return out_dir

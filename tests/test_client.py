@@ -435,3 +435,34 @@ def test_save_s3_tarball_goes_through_the_shared_fetch(tmp_path, monkeypatch):
         {"tarball_url": "https://bucket.example/fake.tar.gz"}, tmp_path / "out"
     )
     assert (dest / "doc.md").read_bytes() == b"# from s3\n"
+
+
+def test_save_inline_writes_the_renders(tmp_path):
+    import base64
+
+    entry = {
+        "basename": "rep",
+        "markdown": "# r",
+        "content_list_v2": [[{"type": "text"}]],
+        "structured_content": {"pages": []},
+        "html": "<p>r</p>",
+        "latex": "\\section{r}",
+        "docx": {"rep.docx": base64.b64encode(b"PK-docx").decode()},
+        "pdf": {"rep.pdf": base64.b64encode(b"%PDF").decode()},
+    }
+    MineruClient.save_inline(entry, tmp_path)
+    assert (tmp_path / "rep.html").read_text(encoding="utf-8") == "<p>r</p>"
+    assert (tmp_path / "rep.tex").read_text(encoding="utf-8") == "\\section{r}"
+    assert (tmp_path / "rep.docx").read_bytes() == b"PK-docx"
+    assert (tmp_path / "rep.pdf").read_bytes() == b"%PDF"
+    assert (tmp_path / "rep_content_list_v2.json").exists()
+    assert (tmp_path / "rep_structured_content.json").exists()
+
+
+def test_save_inline_refuses_a_render_name_that_is_a_path(tmp_path):
+    import base64
+
+    entry = {"markdown": "# r", "docx": {"../escape.docx": base64.b64encode(b"x").decode()}}
+    with pytest.raises(Exception):
+        MineruClient.save_inline(entry, tmp_path / "out")
+    assert not (tmp_path / "escape.docx").exists()

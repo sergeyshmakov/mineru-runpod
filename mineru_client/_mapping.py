@@ -15,6 +15,8 @@ Mapping summary (MinerU → worker):
     model_version  -> tier              (pipeline->basic, vlm->advanced,
                                          MinerU-HTML->flash)
     is_ocr         -> ocr_mode          (True->"ocr", False->"auto")
+    extra_formats  -> formats           (docx/html/latex renders, added to
+                                         the archive full_zip_url points at)
     page_ranges    -> page_range        ("2,4-6" as is, "2--2" -> "2-r2")
     enable_formula, enable_table, language: accepted, no effect — the
                       open-source MinerU 4 engine has no such switches
@@ -40,6 +42,9 @@ MODEL_VERSION_TO_TIER: dict[str, str] = {
     "vlm": "advanced",
     "MinerU-HTML": "flash",
 }
+
+# The cloud API's `extra_formats` values; each is a worker render target.
+EXTRA_FORMATS: tuple[str, ...] = ("docx", "html", "latex")
 
 # RunPod job status -> MinerU task state. RunPod's terminal states beyond
 # COMPLETED (FAILED / TIMED_OUT / CANCELLED) all collapse to MinerU `failed`.
@@ -123,14 +128,15 @@ def build_worker_payload(
 ) -> dict[str, Any]:
     """Build the worker ``input`` payload from MinerU ``create_task`` params.
 
-    Raises ValueError for features the worker can't honour (``extra_formats``,
-    an unreadable ``page_ranges``) so the caller fails fast with an actionable
-    message rather than getting a silently-wrong parse.
+    Raises ValueError for anything the worker can't honour (an unknown
+    ``extra_formats`` value, an unreadable ``page_ranges``) so the caller fails
+    fast with an actionable message rather than getting a silently-wrong parse.
     """
-    if extra_formats:
+    unknown = sorted(set(extra_formats or ()) - set(EXTRA_FORMATS))
+    if unknown:
         raise ValueError(
-            "extra_formats (docx/html/latex) is not produced by the RunPod MinerU "
-            "worker; it emits markdown + content_list + middle + images only."
+            f"extra_formats {unknown} not one of {list(EXTRA_FORMATS)}, the "
+            f"formats the MinerU cloud API offers"
         )
     payload: dict[str, Any] = {
         "file_url": url,
@@ -143,6 +149,10 @@ def build_worker_payload(
     }
     if page_ranges is not None:
         payload["page_range"] = to_page_range(page_ranges)
+    # Markdown and JSON are always in the archive, as on the cloud API; listing
+    # a render adds it.
+    if extra_formats:
+        payload["formats"] = list(dict.fromkeys(extra_formats))
     return payload
 
 

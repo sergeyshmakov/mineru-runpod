@@ -144,10 +144,11 @@ def _measure_output_bytes(response: dict[str, Any], transport: str) -> int:
 
     Per-transport sizing:
       * tarball_b64 — the b64 string IS the payload; len() is exact.
-      * inline      — markdown text + image bytes dominate the JSON-encoded
-                      response; sum those (json overhead for content_list/
-                      middle is ignored). Cheap and within ~10% of the true
-                      response size on real documents.
+      * inline      — the text artifacts (markdown, html, latex) and the
+                      base64 maps (images and the binary renders) dominate the
+                      JSON-encoded response; sum those (json overhead for the
+                      content lists / middle is ignored). Cheap and within ~10%
+                      of the true response size on real documents.
       * s3          — package_s3 records the uploaded tarball size in
                       `bucket_bytes`; the worker shipped exactly that.
     Returns 0 when the response shape doesn't include the expected fields
@@ -164,14 +165,22 @@ def _measure_output_bytes(response: dict[str, Any], transport: str) -> int:
     if transport == "s3":
         return int(entry.get("bucket_bytes") or 0)
     if transport == "inline":
-        md = entry.get("markdown") or ""
-        images = entry.get("images") or {}
-        md_bytes = len(md.encode("utf-8")) if isinstance(md, str) else 0
-        image_bytes = sum(
-            len(v) for v in images.values() if isinstance(v, str)
-        ) if isinstance(images, dict) else 0
-        return md_bytes + image_bytes
+        total = 0
+        for key in _INLINE_TEXT_KEYS:
+            text = entry.get(key)
+            total += len(text.encode("utf-8")) if isinstance(text, str) else 0
+        for key in _INLINE_B64_KEYS:
+            mapping = entry.get(key)
+            if isinstance(mapping, dict):
+                total += sum(len(v) for v in mapping.values() if isinstance(v, str))
+        return total
     return 0
+
+
+# Inline keys whose size the egress measurement counts: text artifacts by their
+# UTF-8 length, base64 maps by their encoded length (what actually ships).
+_INLINE_TEXT_KEYS = ("markdown", "html", "latex")
+_INLINE_B64_KEYS = ("images", "docx", "epub", "pdf")
 
 
 def _package_inline(

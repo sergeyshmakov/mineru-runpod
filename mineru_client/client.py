@@ -139,11 +139,13 @@ class MineruClient:
                            Use this when outputs would exceed RunPod's
                            gateway response cap (~20 MB).
 
-        Formats (inline transport only):
+        Formats:
             Subset of ["markdown", "content_list", "middle", "images",
-            "content_list_v2", "structured_content"]. Omit to get the first
-            four. A bare string is wrapped to a one-list for ergonomics. For
-            tarball_b64 and s3 the archive carries every artifact regardless.
+            "content_list_v2", "structured_content", "html", "latex", "docx",
+            "epub", "pdf"]. Omit to get the first four inline. The last five are
+            renders, produced only when listed — for every transport: an
+            archive (tarball_b64 / s3) always carries the first six and adds
+            the renders asked for. A bare string is wrapped to a one-list.
         """
         provided = sum(1 for x in (file_url, file_b64, volume_path) if x)
         if provided != 1:
@@ -302,8 +304,8 @@ class MineruClient:
         dest_dir: str | Path,
         basename: str | None = None,
     ) -> Path:
-        """Write the inline format keys (markdown / content_list / middle /
-        images) onto disk.
+        """Write the inline format keys (markdown, the JSON renderings, images
+        and any requested render) onto disk under the worker's own file names.
 
         Accepts either the full response wrapper or a single result entry.
         Any format absent from the entry (because the caller filtered with
@@ -340,6 +342,21 @@ class MineruClient:
                 json.dumps(entry.get("middle") or {}, indent=2, ensure_ascii=False),
                 encoding="utf-8",
             )
+        for key, suffix in (("content_list_v2", "_content_list_v2.json"),
+                            ("structured_content", "_structured_content.json")):
+            if key in entry:
+                (dest / f"{basename}{suffix}").write_text(
+                    json.dumps(entry[key], indent=2, ensure_ascii=False), encoding="utf-8"
+                )
+        for key, suffix in (("html", ".html"), ("latex", ".tex")):
+            if isinstance(entry.get(key), str):
+                (dest / f"{basename}{suffix}").write_text(entry[key], encoding="utf-8")
+        # The binary renders arrive as {filename: base64}, one file each; the
+        # name is the worker's, but it becomes a path here, so it is checked.
+        for key in ("docx", "epub", "pdf"):
+            for name, b64 in (entry.get(key) or {}).items():
+                safe_name = safe_output_name(name, what=f"{key} name")
+                (dest / safe_name).write_bytes(decode_b64(b64, what=f"{key} {name!r}"))
         images = entry.get("images") or {}
         if images:
             (dest / "images").mkdir(parents=True, exist_ok=True)

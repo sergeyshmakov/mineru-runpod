@@ -176,6 +176,7 @@ async def _handle_parse(
                 ocr_mode=cleaned["ocr_mode"],
                 page_range=page_range,
                 server_url=cleaned.get("server_url"),
+                renders=[f for f in cleaned["formats"] if f in _harness.RENDER_FORMATS],
             )
         parse_seconds = time.monotonic() - t
         phase_ms["mineru_parse"] = int(parse_seconds * 1000)

@@ -114,7 +114,19 @@ MANIFEST = (
     Artifact("images", ("images/*",), kind="b64map"),
     Artifact("content_list_v2", ("{basename}_content_list_v2.json",), kind="json", default=[]),
     Artifact("structured_content", ("{basename}_structured_content.json",), kind="json"),
+    # MinerU's other render targets, written only when `formats` asks for
+    # them (see RENDER_FORMATS). HTML embeds its images; LaTeX references the
+    # `images/` files; the binary ones arrive inline as {filename: base64}.
+    Artifact("html", ("{basename}.html",), kind="text"),
+    Artifact("latex", ("{basename}.tex",), kind="text"),
+    Artifact("docx", ("{basename}.docx",), kind="b64map"),
+    Artifact("epub", ("{basename}.epub",), kind="b64map"),
+    Artifact("pdf", ("{basename}.pdf",), kind="b64map"),
 )
+
+# The manifest keys that cost a render, so are produced only on request — for
+# every transport: an archive carries the core artifacts plus these, if asked.
+RENDER_FORMATS = ("html", "latex", "docx", "epub", "pdf")
 
 # What an inline response carries when the caller does not choose: the four
 # keys it has always carried. The archive transports ship every artifact

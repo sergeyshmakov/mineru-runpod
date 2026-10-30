@@ -92,7 +92,13 @@ def test_formats_empty_list_rejected():
 
 def test_formats_unknown_member_rejected():
     with pytest.raises(ValueError, match="formats entry"):
-        validate_input({"file_b64": "AA==", "formats": ["markdown", "pdf"]})
+        validate_input({"file_b64": "AA==", "formats": ["markdown", "odt"]})
+
+
+def test_formats_accepts_the_render_targets():
+    renders = ["html", "latex", "docx", "epub", "pdf"]
+    cleaned = validate_input({"file_b64": "AA==", "formats": ["markdown", *renders]})
+    assert cleaned["formats"] == ["markdown", *renders]
 
 
 def test_formats_non_string_member_rejected():

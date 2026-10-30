@@ -24,7 +24,8 @@ for the worker's richer native features (inline markdown, volume_path, format
 filtering, every tier, a per-job VLM ``server_url``) use ``MineruClient`` directly.
 
 Faithfulness notes / known gaps (raise rather than silently mis-parse):
-    - extra_formats (docx/html/latex): unsupported.
+    - extra_formats (docx/html/latex): rendered by the worker and added to
+      the archive full_zip_url points at.
     - model_version maps to the nearest worker tier: pipeline->basic,
       vlm->advanced, MinerU-HTML->flash (MinerU 4 parses HTML natively).
     - enable_formula / enable_table / language: accepted, no effect (MinerU 4

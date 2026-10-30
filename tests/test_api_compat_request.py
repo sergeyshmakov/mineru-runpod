@@ -108,9 +108,18 @@ def test_build_payload_translates_all_fields():
     assert payload["page_range"] == "2-6,9"
 
 
-def test_build_payload_rejects_extra_formats():
+def test_build_payload_turns_extra_formats_into_renders():
+    payload = m.build_worker_payload(url="https://x", extra_formats=["docx", "latex", "docx"])
+    assert payload["formats"] == ["docx", "latex"]
+
+
+def test_build_payload_rejects_an_unknown_extra_format():
     with pytest.raises(ValueError, match="extra_formats"):
-        m.build_worker_payload(url="https://x", extra_formats=["docx", "latex"])
+        m.build_worker_payload(url="https://x", extra_formats=["pptx"])
+
+
+def test_build_payload_without_extra_formats_leaves_formats_to_the_worker():
+    assert "formats" not in m.build_worker_payload(url="https://x")
 
 
 @pytest.mark.parametrize(
