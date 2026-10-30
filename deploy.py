@@ -43,7 +43,7 @@ import runpod_rest
 
 
 DEFAULTS = {
-    "name": "mineru-2.5-vlm",
+    "name": "mineru-4",
     # ADA_24 (RTX 4090) is the default: faster wall-clock per page than
     # AMPERE_24 (A5000/3090), cheaper per page despite higher $/hr, and
     # has better RunPod pool availability. See docs/guides/choosing-gpu.mdx
@@ -150,10 +150,9 @@ def _build_parser() -> argparse.ArgumentParser:
         default=DEFAULTS["container_disk_gb"],
         help=(
             f"per-worker container disk (default: {DEFAULTS['container_disk_gb']} GB). "
-            f"The baked weights alone are ~17.5 GB — MinerU2.5-Pro is 2.3 GB and "
-            f"PDF-Extract-Kit-1.0 is 15.1 GB, pulled whole — on top of the "
-            f"vllm-openai base. A pull was measured at ~27 GB, so 50 GB leaves "
-            f"less working room than it looks; confirm with `df -h` in a real "
+            f"The baked weights are ~3.2 GB — the MinerU2.5-Pro VLM (2.3 GB) "
+            f"and MinerU's 4.x small-model bundle (0.9 GB) — on top of the "
+            f"vllm-openai base. Confirm the working room with `df -h` in a real "
             f"worker before parsing books that produce multi-GB tarballs."
         ),
     )

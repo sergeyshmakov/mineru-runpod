@@ -12,11 +12,12 @@ request params and response dicts here and route them onto the worker.
 
 Mapping summary (MinerU → worker):
     url            -> file_url
-    model_version  -> backend           (pipeline->pipeline, vlm->vlm-auto-engine)
-    enable_formula -> formula_enable
-    enable_table   -> table_enable
-    language       -> lang              (pipeline-backend only, like MinerU)
-    page_ranges    -> start_page/end_page  (single contiguous 1-based range)
+    model_version  -> tier              (pipeline->basic, vlm->advanced,
+                                         MinerU-HTML->flash)
+    is_ocr         -> ocr_mode          (True->"ocr", False->"auto")
+    page_ranges    -> page_range        ("2,4-6" as is, "2--2" -> "2-r2")
+    enable_formula, enable_table, language: accepted, no effect — the
+                      open-source MinerU 4 engine has no such switches
 
 And MinerU's task lifecycle onto RunPod's:
     POST /extract/task        -> endpoint.run()      (returns a job id == task_id)
@@ -29,11 +30,15 @@ from __future__ import annotations
 from typing import Any
 
 
-# MinerU `model_version` -> worker `backend`. MinerU exposes three values;
-# `MinerU-HTML` has no equivalent on this worker (no HTML-specialised model).
-MODEL_VERSION_TO_BACKEND: dict[str, str] = {
-    "pipeline": "pipeline",
-    "vlm": "vlm-auto-engine",
+# MinerU `model_version` -> worker `tier`, the nearest MinerU 4 equivalent of
+# what the cloud runs for each. `vlm` is the VLM reading layout and content
+# itself, which is the `advanced` tier; `pipeline` is the small models alone,
+# `basic`. `MinerU-HTML` is the cloud's HTML parser; MinerU 4 parses HTML
+# natively, at flash.
+MODEL_VERSION_TO_TIER: dict[str, str] = {
+    "pipeline": "basic",
+    "vlm": "advanced",
+    "MinerU-HTML": "flash",
 }
 
 # RunPod job status -> MinerU task state. RunPod's terminal states beyond
@@ -48,84 +53,69 @@ RUNPOD_STATUS_TO_STATE: dict[str, str] = {
 }
 
 
-def model_version_to_backend(model_version: str | None) -> str:
-    """Translate a MinerU ``model_version`` to a worker ``backend``.
+def model_version_to_tier(model_version: str | None) -> str:
+    """Translate a MinerU ``model_version`` to a worker ``tier``.
 
-    Raises ValueError on ``MinerU-HTML`` (unsupported) or any unknown value.
+    Raises ValueError on an unknown value.
     """
     mv = model_version or "pipeline"
-    if mv == "MinerU-HTML":
-        raise ValueError(
-            "model_version 'MinerU-HTML' is not supported by the RunPod MinerU "
-            "worker (no HTML-specialised model). Use 'pipeline' or 'vlm'."
-        )
     try:
-        return MODEL_VERSION_TO_BACKEND[mv]
+        return MODEL_VERSION_TO_TIER[mv]
     except KeyError:
         raise ValueError(
             f"unknown model_version {mv!r}; expected one of "
-            f"{sorted(MODEL_VERSION_TO_BACKEND)}. For the worker's richer native "
-            f"backends (hybrid-*, *-http-client) use MineruClient directly."
+            f"{sorted(MODEL_VERSION_TO_TIER)}. For the worker's own tiers "
+            f"(flash/basic/standard/advanced) use MineruClient directly."
         ) from None
 
 
-def parse_page_ranges(page_ranges: str) -> tuple[int, int]:
-    """Translate a MinerU ``page_ranges`` string to ``(start_page, end_page)``.
+def to_page_range(page_ranges: str) -> str:
+    """Translate a MinerU cloud ``page_ranges`` string to the worker's ``page_range``.
 
-    MinerU page ranges are **1-based** page numbers; the worker uses **0-based**
-    inclusive ``start_page`` / ``end_page``. Only a single contiguous range is
-    supported, because the worker takes one slice per job:
+    Both are 1-based and comma-separated; they differ only in how a range
+    counts from the end. The cloud writes ``2--2`` (page 2 to the second from
+    last), MinerU 4 writes ``2-r2``:
 
-        "5"    -> (4, 4)     # the 5th page only
-        "2-6"  -> (1, 5)     # pages 2..6 inclusive
+        "5"      -> "5"
+        "2,4-6"  -> "2,4-6"
+        "2--2"   -> "2-r2"
 
-    Multi-range (``"2,4-6"``), open-ended (``"2-"``) and relative-to-end
-    (``"2--2"``) forms raise ValueError — the worker can't express them.
+    Anything else raises ValueError, so a caller learns about a range the
+    worker would read differently before the job is submitted.
     """
-    s = (page_ranges or "").strip()
+    s = "".join((page_ranges or "").split())
     if not s:
         raise ValueError("page_ranges is empty; omit it to parse the whole document")
-    if "," in s:
-        raise ValueError(
-            f"page_ranges {page_ranges!r} selects non-contiguous pages; the RunPod "
-            f"worker parses one contiguous slice per job. Submit separate tasks, "
-            f"or use a single range like '2-6'."
-        )
 
-    def _page(num: str) -> int:
-        if not num.isdigit():
+    def _page(num: str, part: str) -> int:
+        if not num.isdigit() or int(num) < 1 or num != str(int(num)):
             raise ValueError(
-                f"page_ranges {page_ranges!r} is not a simple 1-based range; "
-                f"open-ended ('2-') and relative-to-end ('2--2') forms are not "
-                f"supported. Use 'N' or 'N-M' with positive page numbers."
+                f"page_ranges part {part!r} is not a 1-based page or range; "
+                f"use 'N', 'N-M' or 'N--K' (K counted from the end)"
             )
-        n = int(num)
-        if n < 1:
-            raise ValueError(f"page_ranges page numbers are 1-based; got {n}")
-        return n
+        return int(num)
 
-    if "-" in s:
-        parts = s.split("-")
-        if len(parts) != 2:
-            raise ValueError(
-                f"page_ranges {page_ranges!r} is not a simple 'N-M' range"
-            )
-        start, end = _page(parts[0]), _page(parts[1])
-        if end < start:
-            raise ValueError(f"page_ranges {page_ranges!r}: end precedes start")
-        return start - 1, end - 1
-
-    page = _page(s)
-    return page - 1, page - 1
+    parts: list[str] = []
+    for part in s.split(","):
+        if "--" in part:
+            first, _, from_end = part.partition("--")
+            parts.append(f"{_page(first, part)}-r{_page(from_end, part)}")
+        elif "-" in part:
+            first, _, last = part.partition("-")
+            start, end = _page(first, part), _page(last, part)
+            if end < start:
+                raise ValueError(f"page_ranges part {part!r}: end precedes start")
+            parts.append(f"{start}-{end}")
+        else:
+            parts.append(str(_page(part, part)))
+    return ",".join(parts)
 
 
 def build_worker_payload(
     *,
     url: str,
     model_version: str = "pipeline",
-    enable_formula: bool = True,
-    enable_table: bool = True,
-    language: str = "ch",
+    is_ocr: bool = False,
     page_ranges: str | None = None,
     extra_formats: list[str] | None = None,
     transport: str = "s3",
@@ -133,9 +123,9 @@ def build_worker_payload(
 ) -> dict[str, Any]:
     """Build the worker ``input`` payload from MinerU ``create_task`` params.
 
-    Raises ValueError for features the worker can't honour (``MinerU-HTML``,
-    ``extra_formats``, non-contiguous ``page_ranges``) so the caller fails fast
-    with an actionable message rather than getting a silently-wrong parse.
+    Raises ValueError for features the worker can't honour (``extra_formats``,
+    an unreadable ``page_ranges``) so the caller fails fast with an actionable
+    message rather than getting a silently-wrong parse.
     """
     if extra_formats:
         raise ValueError(
@@ -144,19 +134,15 @@ def build_worker_payload(
         )
     payload: dict[str, Any] = {
         "file_url": url,
-        "backend": model_version_to_backend(model_version),
-        "formula_enable": bool(enable_formula),
-        "table_enable": bool(enable_table),
-        "lang": language,
+        "tier": model_version_to_tier(model_version),
+        "ocr_mode": "ocr" if is_ocr else "auto",
         "transport": transport,
         # Request a real .zip so full_zip_url matches the official cloud API
         # (the worker defaults to .tar.gz; the compat client overrides to zip).
         "archive_format": archive_format,
     }
     if page_ranges is not None:
-        start_page, end_page = parse_page_ranges(page_ranges)
-        payload["start_page"] = start_page
-        payload["end_page"] = end_page
+        payload["page_range"] = to_page_range(page_ranges)
     return payload
 
 

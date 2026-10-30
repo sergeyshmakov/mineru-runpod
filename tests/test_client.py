@@ -94,23 +94,17 @@ def test_parse_document_forwards_options(fake_endpoint):
     })
     client.parse_document(
         file_url="https://example.com/p.pdf",
-        start_page=10,
-        end_page=20,
-        lang="ja",
-        backend="vlm-auto-engine",
-        formula_enable=False,
-        table_enable=False,
+        page_range="11-21",
+        tier="advanced",
+        ocr_mode="ocr",
         transport="inline",
         basename="custom",
     )
     payload = client._endpoint.last_payload
     assert payload["file_url"] == "https://example.com/p.pdf"
-    assert payload["start_page"] == 10
-    assert payload["end_page"] == 20
-    assert payload["lang"] == "ja"
-    assert payload["backend"] == "vlm-auto-engine"
-    assert payload["formula_enable"] is False
-    assert payload["table_enable"] is False
+    assert payload["page_range"] == "11-21"
+    assert payload["tier"] == "advanced"
+    assert payload["ocr_mode"] == "ocr"
     assert payload["transport"] == "inline"
     assert payload["basename"] == "custom"
     # No legacy `return` key — the field is gone.
@@ -151,10 +145,18 @@ def test_parse_document_from_file_inlines_bytes(fake_endpoint, tmp_path):
     assert base64.b64decode(payload["file_b64"]) == b"%PDF-1.4\n%%EOF"
 
 
-def test_parse_document_http_client_requires_server_url(fake_endpoint):
+def test_parse_document_defaults_leave_the_range_to_the_worker(fake_endpoint):
     client = MineruClient(endpoint_id="ep-1", api_key="x")
-    with pytest.raises(ValueError, match="server_url"):
-        client.parse_document(file_url="https://x", backend="vlm-http-client")
+    client.parse_document(file_url="https://x")
+    payload = client._endpoint.last_payload
+    assert (payload["tier"], payload["ocr_mode"]) == ("standard", "auto")
+    assert "page_range" not in payload and "server_url" not in payload
+
+
+def test_parse_document_forwards_server_url(fake_endpoint):
+    client = MineruClient(endpoint_id="ep-1", api_key="x")
+    client.parse_document(file_url="https://x", server_url="https://vlm.example/v1")
+    assert client._endpoint.last_payload["server_url"] == "https://vlm.example/v1"
 
 
 def test_parse_document_forwards_s3_transport(fake_endpoint):

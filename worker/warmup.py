@@ -1,8 +1,9 @@
 """Eager warmup at worker boot.
 
-Moves the ~60-100s vLLM + MinerU cold-start tax from first-request
-latency to worker-boot latency. The first user request then lands on
-a fully warm engine and finishes in ~6 s parse time.
+Moves the vLLM + MinerU cold-start tax from first-request latency to
+worker-boot latency. The first user request then lands on a fully warm
+engine: MinerU 4 caches the vLLM engine and its local models per process,
+so the throwaway parse here is what loads them.
 
 The payoff compounds, but only on hosts the worker has visited
 before. FlashBoot is process-snapshot based and **per (host,
@@ -17,19 +18,15 @@ request always lands on a warm engine. The variable is whether the
 *worker boot* paid 110 s or 7 s, which is invisible to the caller's
 wall-clock on a snapshot-restored boot.
 
-**Critical asyncio invariant.** vLLM's `AsyncLLMEngine` creates IPC
-primitives (transports, queues) bound to the asyncio loop that owned
-the warmup call. If that loop is torn down (e.g., via `asyncio.run()`
-returning) and a different loop later tries to talk to the engine,
-the parent's view of the engine subprocess is dead even though the
-subprocess is still running. Symptom: `EngineDeadError` ~75ms into
-the first real request.
-
-Production callers MUST use ``warmup_async()`` from inside the same
-asyncio loop that will later serve requests (see
-``handler._bootstrap_main()`` for the composition pattern). The
-synchronous ``warmup()`` wrapper exists only for tests / local debug
-where a fresh loop per call is fine because tests mock the engine.
+**Which loop.** MinerU 3.x bound vLLM's engine to the asyncio loop that
+created it, so a warmup run under its own ``asyncio.run()`` left the
+serving loop talking to a dead engine (`EngineDeadError` ~75 ms into the
+first request). That is why ``handler._bootstrap_main()`` runs warmup and
+serving under one loop. MinerU 4 gives the engine its own thread and loop
+(``mineru.model.vlm.async_runtime.AsyncVlmPredictor``), so the constraint no
+longer comes from the engine; the composition stays because it is tested and
+costs nothing. ``warmup_async()`` remains the production entry point; the
+synchronous ``warmup()`` wrapper is for tests and local debugging.
 
 Failure is non-fatal. A worker that can't warm up still serves
 requests (just slowly on the first one, falling back to lazy load).
@@ -68,13 +65,12 @@ def _truthy(value: str) -> bool:
 async def warmup_async() -> None:
     """Run one throwaway parse at boot to load model + compile kernels.
 
-    Reads ``MINERU_SKIP_WARMUP`` / ``MINERU_WARMUP_BACKEND`` /
-    ``MINERU_WARMUP_LANG`` from the environment. Never raises — the
-    caller proceeds to serve requests whether this succeeds or not.
+    Reads ``MINERU_SKIP_WARMUP`` / ``MINERU_WARMUP_TIER`` from the
+    environment. Never raises — the caller proceeds to serve requests
+    whether this succeeds or not.
 
-    **Must be called from an already-running asyncio loop** that will
-    also handle subsequent requests. See module docstring for the
-    asyncio-boundary rationale.
+    Called from the loop that will serve requests; see the module
+    docstring for why that is no longer load-bearing.
     """
     if _truthy(os.environ.get("MINERU_SKIP_WARMUP", "")):
         _log("MINERU_SKIP_WARMUP set, skipping warmup")
@@ -86,24 +82,26 @@ async def warmup_async() -> None:
         _log(f"fixture not found at {WARMUP_FIXTURE_PATH}, skipping warmup")
         return
 
-    backend = os.environ.get("MINERU_WARMUP_BACKEND", "vlm-auto-engine")
-    lang = os.environ.get("MINERU_WARMUP_LANG", "en")
-    _log(f"starting (backend={backend} lang={lang} fixture={WARMUP_FIXTURE_PATH})")
+    # The tier most callers use, so the models it needs are the ones loaded.
+    # flash and basic never load the VLM; warming them leaves it for the
+    # first standard/advanced request.
+    tier = os.environ.get("MINERU_WARMUP_TIER", "").strip() or "standard"
+    _log(f"starting (tier={tier} fixture={WARMUP_FIXTURE_PATH})")
     start = time.monotonic()
 
     # Local import to keep this module light when telemetry isn't wired up
     # (e.g. some test contexts that import warmup standalone).
     from worker import telemetry as _telemetry  # noqa: PLC0415
 
-    with _telemetry.span("mineru.warmup", **{"mineru.backend": backend, "mineru.lang": lang}):
+    with _telemetry.span("mineru.warmup", **{"mineru.tier": tier}):
         try:
             fixture_bytes = WARMUP_FIXTURE_PATH.read_bytes()
-            await _warmup_once(fixture_bytes, backend=backend, lang=lang)
+            await _warmup_once(fixture_bytes, tier=tier)
         except Exception as exc:  # noqa: BLE001
             elapsed = time.monotonic() - start
             _telemetry.record_exception(exc)
             _telemetry.histogram_record(
-                "warmup_duration", elapsed, backend=backend, status="error",
+                "warmup_duration", elapsed, tier=tier, status="error",
             )
             _log(f"failed after {elapsed:.1f}s: {type(exc).__name__}: {exc}")
             _log("worker will continue with lazy-load fallback")
@@ -111,7 +109,7 @@ async def warmup_async() -> None:
 
         elapsed = time.monotonic() - start
         _telemetry.histogram_record(
-            "warmup_duration", elapsed, backend=backend, status="ok",
+            "warmup_duration", elapsed, tier=tier, status="ok",
         )
         _log(f"done in {elapsed:.1f}s")
 
@@ -119,16 +117,14 @@ async def warmup_async() -> None:
 def warmup() -> None:
     """Synchronous wrapper around :func:`warmup_async`.
 
-    Provided for tests, local debugging, and any sync caller that knows
-    it doesn't need to share an asyncio loop with downstream consumers
-    of the engine. **Do not use from production worker boot** — the
-    `asyncio.run()` here tears down the loop that would own vLLM's
-    engine handle, causing EngineDeadError on the first real request.
+    Provided for tests and local debugging. Production boot uses
+    :func:`warmup_async` inside the serving loop instead (see the module
+    docstring).
     """
     asyncio.run(warmup_async())
 
 
-async def _warmup_once(file_bytes: bytes, *, backend: str, lang: str) -> None:
+async def _warmup_once(file_bytes: bytes, *, tier: str) -> None:
     """Drive a single-page parse against a throwaway tempdir.
 
     Imports `worker.parse` lazily so this module stays importable from
@@ -142,12 +138,8 @@ async def _warmup_once(file_bytes: bytes, *, backend: str, lang: str) -> None:
             file_bytes,
             basename="warmup",
             work_dir=work_dir,
-            input_format="pdf",
-            start_page=0,
-            end_page=0,
-            lang=lang,
-            backend=backend,
-            server_url=None,
-            formula_enable=False,
-            table_enable=False,
+            suffix="pdf",
+            tier=tier,
+            ocr_mode="auto",
+            page_range="1",
         )

@@ -116,7 +116,7 @@ def test_warmup_records_duration_histogram(monkeypatch, tmp_path):
     assert warmup_samples, "warmup_duration histogram not recorded"
     name, value, attrs = warmup_samples[0]
     assert value >= 0.0
-    assert attrs["backend"] == "vlm-auto-engine"
+    assert attrs["tier"] == "standard"
     assert attrs["status"] == "ok"
 
 

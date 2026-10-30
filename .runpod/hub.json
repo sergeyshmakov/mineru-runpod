@@ -1,6 +1,6 @@
 {
   "title": "MinerU Document Parser",
-  "description": "Convert PDFs, images, and Office documents into clean Markdown and structured JSON using MinerU 3.4's vision-language model.",
+  "description": "Convert PDFs, images, Office files, EPUB and HTML into clean Markdown and structured JSON with MinerU 4.1, the official document parser, on RunPod Serverless.",
   "type": "serverless",
   "category": "language",
   "iconUrl": "https://raw.githubusercontent.com/sergeyshmakov/mineru-runpod/main/.runpod/icon.png",
@@ -21,40 +21,6 @@
           "type": "huggingface",
           "description": "Only needed for gated or private models on Hugging Face. The default MinerU model is public, so most users can skip this.",
           "required": false
-        }
-      },
-      {
-        "key": "MINERU_MODEL_SOURCE",
-        "input": {
-          "name": "MinerU model source",
-          "type": "string",
-          "description": "Where MinerU pulls weights from. Use Hugging Face by default, ModelScope for a faster mirror in China, or Local for offline setups.",
-          "default": "huggingface",
-          "options": [
-            {
-              "label": "HuggingFace (default)",
-              "value": "huggingface"
-            },
-            {
-              "label": "ModelScope (faster in China)",
-              "value": "modelscope"
-            },
-            {
-              "label": "Local (advanced — needs mineru.json)",
-              "value": "local"
-            }
-          ],
-          "advanced": true
-        }
-      },
-      {
-        "key": "MINERU_VL_MODEL_NAME",
-        "input": {
-          "name": "VLM model override",
-          "type": "string",
-          "description": "Override the VLM model name. Only applies to the http-client backends. The auto-engine backends always load MinerU's default model.",
-          "default": "opendatalab/MinerU2.5-Pro-2605-1.2B",
-          "advanced": true
         }
       },
       {
@@ -218,11 +184,21 @@
         }
       },
       {
+        "key": "MINERU_VIRTUAL_VRAM_SIZE",
+        "input": {
+          "name": "VRAM MinerU sizes itself for (GB)",
+          "type": "string",
+          "description": "MinerU gives vLLM 6 GB / this value of the card (min 0.1). Set 12 on a 24 GB card to give vLLM half. Empty = detected VRAM. See the scaling guide.",
+          "default": "",
+          "advanced": true
+        }
+      },
+      {
         "key": "MINERU_PROCESSING_WINDOW_SIZE",
         "input": {
-          "name": "MinerU pipeline batch window (pages)",
+          "name": "MinerU page window (pages)",
           "type": "string",
-          "description": "Pages per pipeline batch window. Lower reduces VRAM, higher trades VRAM for throughput. Pipeline backend only. Empty = default 64.",
+          "description": "Pages MinerU renders and analyses per window on the basic, standard and advanced tiers. Lower uses less memory. Empty = MinerU default 64.",
           "default": "",
           "advanced": true
         }
@@ -242,7 +218,7 @@
         "input": {
           "name": "MinerU PDF render threads",
           "type": "string",
-          "description": "CPU threads for PDF rasterization. Raise on high-vCPU pods for image-heavy PDFs. Empty = default 4.",
+          "description": "CPU threads for PDF rasterization. Raise on high-vCPU pods for image-heavy PDFs. Empty = MinerU default 3.",
           "default": "",
           "advanced": true
         }
@@ -258,22 +234,30 @@
         }
       },
       {
-        "key": "MINERU_WARMUP_BACKEND",
+        "key": "MINERU_WARMUP_TIER",
         "input": {
-          "name": "Backend to warm at boot",
+          "name": "Tier to warm at boot",
           "type": "string",
-          "description": "Which backend the boot warmup loads. Should match the backend most callers will use. Default vlm-auto-engine.",
-          "default": "vlm-auto-engine",
-          "advanced": true
-        }
-      },
-      {
-        "key": "MINERU_WARMUP_LANG",
-        "input": {
-          "name": "Language hint for boot warmup",
-          "type": "string",
-          "description": "Language hint passed to the warmup parse. Only meaningful for pipeline backend; VLM ignores lang. Default en.",
-          "default": "en",
+          "description": "Which tier the boot warmup parses with, so its models are loaded before the first job. Match what most callers use. Default standard.",
+          "default": "standard",
+          "options": [
+            {
+              "label": "flash (no models)",
+              "value": "flash"
+            },
+            {
+              "label": "basic (small models)",
+              "value": "basic"
+            },
+            {
+              "label": "standard (small models + VLM, default)",
+              "value": "standard"
+            },
+            {
+              "label": "advanced (small models + VLM)",
+              "value": "advanced"
+            }
+          ],
           "advanced": true
         }
       },

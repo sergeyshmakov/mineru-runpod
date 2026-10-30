@@ -51,9 +51,19 @@ def test_archive_format_invalid_value_rejected():
 # formats
 # -----------------------------------------------------------------------------
 
-def test_formats_default_is_all_four():
+def test_formats_default_is_the_four_inline_keys():
+    """The inline default stays the four keys 1.x shipped; the newer JSON
+    renderings are opt-in there (the archive transports carry everything)."""
     cleaned = validate_input({"file_b64": "AA=="})
-    assert cleaned["formats"] == list(VALID_FORMATS)
+    assert cleaned["formats"] == ["markdown", "content_list", "middle", "images"]
+
+
+def test_formats_accepts_the_newer_renderings():
+    cleaned = validate_input(
+        {"file_b64": "AA==", "formats": ["content_list_v2", "structured_content"]}
+    )
+    assert cleaned["formats"] == ["content_list_v2", "structured_content"]
+    assert set(cleaned["formats"]) <= set(VALID_FORMATS)
 
 
 def test_formats_single_member_subset_accepted():

@@ -258,9 +258,10 @@ def test_progress_payload_is_the_status_envelope_the_api_expects(monkeypatch):
     assert set(captured[0][0]) == {"status", "output"}, "no extra top-level keys"
     assert captured[0][0]["output"] == {"phase": "fetching_input"}
     assert set(captured[1][0]["output"]) == {
-        "phase", "input_bytes", "input_format", "start_page", "end_page",
+        "phase", "input_bytes", "input_format", "tier", "page_range",
     }
     assert captured[1][0]["output"]["input_format"] == "pdf"
+    assert captured[1][0]["output"]["tier"] == "standard"
     # The job dict is passed through, not copied: _handle_result reads job["id"].
     assert all(passed is job for _, passed in captured)
 

@@ -3,13 +3,13 @@
 Two clients, same endpoint:
 
 - ``MineruClient`` — the native client. Full access to the worker's own request /
-  response shape (inline markdown, volume_path, format filtering, every backend).
+  response shape (inline markdown, volume_path, format filtering, every tier).
   Use this for new code.
 
     from mineru_client import MineruClient
 
     client = MineruClient(endpoint_id="...", api_key="...")
-    result = client.parse_document(file_url="https://...", start_page=0, end_page=99)
+    result = client.parse_document(file_url="https://...", page_range="1-100")
     entry = MineruClient.first(result)            # one-element results list
     client.save_tarball(result, dest_dir="./out") # also accepts an entry
 
@@ -24,7 +24,7 @@ Two clients, same endpoint:
     done = client.wait_for_task(task_id)
     client.download_results(done, "./out")
 
-Accepts PDF, image (PNG/JPEG/GIF/BMP/TIFF/WebP), DOCX, PPTX, XLSX.
+Accepts PDF, images, Office and OpenDocument files, RTF, EPUB, OFD and HTML.
 """
 
 from .api_compat import MineruApiClient

@@ -49,66 +49,63 @@ def fake_endpoint(monkeypatch):
     return _FakeEndpoint
 
 
-def test_model_version_pipeline_and_vlm():
-    assert m.model_version_to_backend("pipeline") == "pipeline"
-    assert m.model_version_to_backend("vlm") == "vlm-auto-engine"
-    assert m.model_version_to_backend(None) == "pipeline"
-
-
-def test_model_version_html_unsupported():
-    with pytest.raises(ValueError, match="MinerU-HTML"):
-        m.model_version_to_backend("MinerU-HTML")
+@pytest.mark.parametrize(
+    "model_version,tier",
+    [("pipeline", "basic"), ("vlm", "advanced"), ("MinerU-HTML", "flash"), (None, "basic")],
+)
+def test_model_version_maps_to_the_nearest_tier(model_version, tier):
+    assert m.model_version_to_tier(model_version) == tier
 
 
 def test_model_version_unknown():
     with pytest.raises(ValueError, match="unknown model_version"):
-        m.model_version_to_backend("gpt-9")
+        m.model_version_to_tier("gpt-9")
 
 
 @pytest.mark.parametrize(
     "raw,expected",
-    [("5", (4, 4)), ("1", (0, 0)), ("2-6", (1, 5)), ("10-10", (9, 9))],
+    [
+        ("5", "5"),
+        ("2-6", "2-6"),
+        ("2,4-6", "2,4-6"),
+        (" 2 , 4 - 6 ", "2,4-6"),
+        ("2--2", "2-r2"),
+        ("1,3--1", "1,3-r1"),
+    ],
 )
-def test_page_ranges_single_contiguous(raw, expected):
-    assert m.parse_page_ranges(raw) == expected
+def test_page_ranges_become_the_worker_grammar(raw, expected):
+    assert m.to_page_range(raw) == expected
 
 
-@pytest.mark.parametrize("raw", ["2,4-6", "2-", "2--2", "", "  ", "-3", "0", "abc", "5-2"])
+@pytest.mark.parametrize("raw", ["2-", "", "  ", "-3", "0", "abc", "5-2", "01", "2---2", "1,,2"])
 def test_page_ranges_rejected(raw):
     with pytest.raises(ValueError):
-        m.parse_page_ranges(raw)
+        m.to_page_range(raw)
 
 
 def test_build_payload_defaults():
     payload = m.build_worker_payload(url="https://x/p.pdf")
     assert payload == {
         "file_url": "https://x/p.pdf",
-        "backend": "pipeline",
-        "formula_enable": True,
-        "table_enable": True,
-        "lang": "ch",
+        "tier": "basic",
+        "ocr_mode": "auto",
         "transport": "s3",
         "archive_format": "zip",
     }
-    # page slice omitted when page_ranges is None → worker applies its default
-    assert "start_page" not in payload and "end_page" not in payload
+    # range omitted when page_ranges is None → the worker parses the whole document
+    assert "page_range" not in payload
 
 
 def test_build_payload_translates_all_fields():
     payload = m.build_worker_payload(
         url="https://x/p.pdf",
         model_version="vlm",
-        enable_formula=False,
-        enable_table=False,
-        language="en",
-        page_ranges="2-6",
+        is_ocr=True,
+        page_ranges="2-6,9",
     )
-    assert payload["backend"] == "vlm-auto-engine"
-    assert payload["formula_enable"] is False
-    assert payload["table_enable"] is False
-    assert payload["lang"] == "en"
-    assert payload["start_page"] == 1
-    assert payload["end_page"] == 5
+    assert payload["tier"] == "advanced"
+    assert payload["ocr_mode"] == "ocr"
+    assert payload["page_range"] == "2-6,9"
 
 
 def test_build_payload_rejects_extra_formats():
@@ -153,10 +150,10 @@ def test_create_task_builds_payload_and_returns_task_id(fake_endpoint):
 
     body = client._endpoint.last_run
     assert body["input"]["file_url"] == "https://x/p.pdf"
-    assert body["input"]["backend"] == "vlm-auto-engine"
+    assert body["input"]["tier"] == "advanced"
     assert body["input"]["transport"] == "s3"
     assert body["input"]["archive_format"] == "zip"
-    assert body["input"]["start_page"] == 1 and body["input"]["end_page"] == 5
+    assert body["input"]["page_range"] == "2-6"
     assert "webhook" not in body
 
 
@@ -174,10 +171,27 @@ def test_create_task_requires_url(fake_endpoint):
         client.create_task("")
 
 
-def test_create_task_rejects_unsupported_model(fake_endpoint):
+def test_create_task_rejects_unknown_model(fake_endpoint):
     client = MineruApiClient(endpoint_id="ep-1", api_key="x")
-    with pytest.raises(ValueError, match="MinerU-HTML"):
-        client.create_task("https://x", model_version="MinerU-HTML")
+    with pytest.raises(ValueError, match="unknown model_version"):
+        client.create_task("https://x", model_version="gpt-9")
+
+
+def test_create_task_accepts_the_switches_mineru_4_dropped(fake_endpoint):
+    """enable_formula / enable_table / language are part of the cloud API's
+    signature but have nothing to drive in MinerU 4: accepted, never sent."""
+    client = MineruApiClient(endpoint_id="ep-1", api_key="x")
+    client.create_task(
+        "https://x/p.pdf", enable_formula=False, enable_table=False, language="en"
+    )
+    payload = client._endpoint.last_run["input"]
+    assert not {"formula_enable", "table_enable", "lang", "language"} & set(payload)
+
+
+def test_create_task_forwards_is_ocr(fake_endpoint):
+    client = MineruApiClient(endpoint_id="ep-1", api_key="x")
+    client.create_task("https://x/p.pdf", is_ocr=True)
+    assert client._endpoint.last_run["input"]["ocr_mode"] == "ocr"
 
 
 def test_create_task_accepts_no_cache_and_cache_tolerance(fake_endpoint):

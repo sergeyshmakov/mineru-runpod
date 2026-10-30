@@ -128,14 +128,45 @@ def test_handler_failure_response_reports_compacted_text(monkeypatch):
     assert "https://files.example.com/doc.pdf" in result["error"]
 
 
-def test_validate_input_rejects_unknown_backend():
-    with pytest.raises(ValueError, match="backend must be one of"):
-        handler._validate_input({"file_b64": "AA==", "backend": "magic-engine"})
+def test_validate_input_defaults_to_the_standard_tier():
+    cleaned = handler._validate_input({"file_b64": "AA=="})
+    assert (cleaned["tier"], cleaned["ocr_mode"], cleaned["page_range"]) == ("standard", "auto", "")
 
 
-def test_validate_input_http_client_requires_server_url():
-    with pytest.raises(ValueError, match="server_url"):
-        handler._validate_input({"file_b64": "AA==", "backend": "vlm-http-client"})
+@pytest.mark.parametrize("tier", ["flash", "basic", "standard", "advanced"])
+def test_validate_input_accepts_every_tier(tier):
+    assert handler._validate_input({"file_b64": "AA==", "tier": tier})["tier"] == tier
+
+
+def test_validate_input_rejects_unknown_tier():
+    with pytest.raises(ValueError, match="tier must be one of"):
+        handler._validate_input({"file_b64": "AA==", "tier": "magic"})
+
+
+@pytest.mark.parametrize("field", ["backend", "effort", "lang", "start_page", "formula_enable"])
+def test_validate_input_rejects_the_mineru_3_fields(field):
+    """The 1.x fields are gone rather than mapped, and a payload that still
+    sends one fails loudly instead of running at a different quality."""
+    with pytest.raises(ValueError, match=f"{field} is not a valid input option"):
+        handler._validate_input({"file_b64": "AA==", field: "pipeline"})
+
+
+@pytest.mark.parametrize("ocr_mode", ["auto", "txt", "ocr"])
+def test_validate_input_accepts_every_ocr_mode(ocr_mode):
+    assert handler._validate_input({"file_b64": "AA==", "ocr_mode": ocr_mode})["ocr_mode"] == ocr_mode
+
+
+def test_validate_input_rejects_unknown_ocr_mode():
+    with pytest.raises(ValueError, match="ocr_mode must be one of"):
+        handler._validate_input({"file_b64": "AA==", "ocr_mode": "both"})
+
+
+@pytest.mark.parametrize("tier", ["flash", "basic"])
+def test_validate_input_rejects_server_url_on_a_tier_without_a_vlm(tier):
+    with pytest.raises(ValueError, match="server_url only applies"):
+        handler._validate_input(
+            {"file_b64": "AA==", "tier": tier, "server_url": "http://vllm.internal:8000"}
+        )
 
 
 def test_validate_input_rejects_overlong_basename():
@@ -150,9 +181,9 @@ def test_validate_input_accepts_basename_at_the_limit():
 
 # The charset rule accepts unicode alphanumerics, and a filesystem bounds a name
 # in bytes — so the character limit alone does not keep the generated filenames
-# legal. 78 CJK characters plus the longest suffix is exactly 255 bytes.
+# legal. 77 CJK characters plus the longest suffix is exactly 255 bytes.
 def test_validate_input_accepts_a_multibyte_basename_that_fits():
-    basename = "文" * 78
+    basename = "文" * 77
     cleaned = handler._validate_input({"file_b64": "AA==", "basename": basename})
     assert cleaned["basename"] == basename
     from worker import schema
@@ -164,12 +195,12 @@ def test_validate_input_accepts_a_multibyte_basename_that_fits():
 
 def test_validate_input_rejects_a_multibyte_basename_that_overruns_the_name():
     with pytest.raises(ValueError, match="too long for the filenames it produces"):
-        handler._validate_input({"file_b64": "AA==", "basename": "文" * 79})
+        handler._validate_input({"file_b64": "AA==", "basename": "文" * 78})
 
 
 def test_validate_input_rejects_the_reported_cjk_basename():
-    # 80 CJK characters pass the 128-character rule and produce 261 bytes.
-    with pytest.raises(ValueError, match="261 bytes"):
+    # 80 CJK characters pass the 128-character rule and produce 264 bytes.
+    with pytest.raises(ValueError, match="264 bytes"):
         handler._validate_input({"file_b64": "AA==", "basename": "文" * 80})
 
 
@@ -178,76 +209,75 @@ def test_validate_input_backfills_an_empty_basename():
     assert cleaned["basename"] == "doc"
 
 
-@pytest.mark.parametrize("lang", ["en", "ch", "east_slavic", "zh-Hans"])
-def test_validate_input_accepts_real_lang_codes(lang):
-    assert handler._validate_input({"file_b64": "AA==", "lang": lang})["lang"] == lang
+@pytest.mark.parametrize(
+    ("page_range", "expected"),
+    [
+        ("5", "5"),
+        ("1-5,8", "1-5,8"),
+        ("r3-r1", "r3-r1"),
+        ("2-r2", "2-r2"),
+        (" 1 - 3 , 5 ", "1-3,5"),
+        ("all", ""),
+        ("ALL", ""),
+        ("", ""),
+    ],
+)
+def test_validate_input_accepts_mineru_page_ranges(page_range, expected):
+    cleaned = handler._validate_input({"file_b64": "AA==", "page_range": page_range})
+    assert cleaned["page_range"] == expected
 
 
 @pytest.mark.parametrize(
-    "lang",
-    [
-        "en us", "../en", "e" * 33, "en/ch",
-        # A `$` anchor also matches just before a final newline, so these have
-        # to be rejected by the anchoring rather than by the character class.
-        "en\n", "east_slavic\n", "en\r\n", "en\n\n",
-    ],
+    "page_range",
+    ["0", "1-", "-3", "a-b", "1~3", "1,,2", "r0", "01", "1-2-3", "1.5"],
 )
-def test_validate_input_rejects_malformed_lang(lang):
-    with pytest.raises(ValueError, match="lang must be a short"):
-        handler._validate_input({"file_b64": "AA==", "lang": lang})
+def test_validate_input_rejects_malformed_page_ranges(page_range):
+    with pytest.raises(ValueError, match="page_range must be"):
+        handler._validate_input({"file_b64": "AA==", "page_range": page_range})
 
 
-def test_validate_input_rejects_end_page_before_start_page():
-    with pytest.raises(ValueError, match="end_page must be >= start_page"):
-        handler._validate_input({"file_b64": "AA==", "start_page": 10, "end_page": 4})
-
-
-def test_validate_input_allows_a_single_page_range():
-    cleaned = handler._validate_input(
-        {"file_b64": "AA==", "start_page": 4, "end_page": 4}
-    )
-    assert (cleaned["start_page"], cleaned["end_page"]) == (4, 4)
-
-
-def test_validate_input_keeps_the_open_ended_range():
-    cleaned = handler._validate_input({"file_b64": "AA==", "start_page": 10})
-    assert cleaned["end_page"] == -1
+def test_validate_input_rejects_a_reversed_page_range():
+    with pytest.raises(ValueError, match="ends before it starts"):
+        handler._validate_input({"file_b64": "AA==", "page_range": "10-4"})
 
 
 def test_page_ceiling_is_off_by_default(monkeypatch):
     monkeypatch.delenv("MINERU_MAX_PAGES_PER_JOB", raising=False)
-    cleaned = handler._validate_input(
-        {"file_b64": "AA==", "start_page": 0, "end_page": 4999}
-    )
-    assert cleaned["end_page"] == 4999
+    cleaned = handler._validate_input({"file_b64": "AA==", "page_range": "1-5000"})
+    assert cleaned["page_range"] == "1-5000"
 
 
 def test_page_ceiling_rejects_a_larger_range(monkeypatch):
     monkeypatch.setenv("MINERU_MAX_PAGES_PER_JOB", "50")
     with pytest.raises(ValueError, match="allows at most 50"):
-        handler._validate_input({"file_b64": "AA==", "start_page": 0, "end_page": 50})
+        handler._validate_input({"file_b64": "AA==", "page_range": "1-51"})
 
 
 def test_page_ceiling_allows_a_range_at_the_limit(monkeypatch):
     monkeypatch.setenv("MINERU_MAX_PAGES_PER_JOB", "50")
-    cleaned = handler._validate_input(
-        {"file_b64": "AA==", "start_page": 10, "end_page": 59}
-    )
-    assert cleaned["end_page"] == 59
+    cleaned = handler._validate_input({"file_b64": "AA==", "page_range": "11-60"})
+    assert cleaned["page_range"] == "11-60"
 
 
-def test_page_ceiling_does_not_apply_to_an_open_ended_range(monkeypatch):
+def test_page_ceiling_counts_overlapping_parts_once(monkeypatch):
     monkeypatch.setenv("MINERU_MAX_PAGES_PER_JOB", "5")
-    cleaned = handler._validate_input({"file_b64": "AA=="})
-    assert cleaned["end_page"] == -1
+    cleaned = handler._validate_input({"file_b64": "AA==", "page_range": "1-5,3-5"})
+    assert cleaned["page_range"] == "1-5,3-5"
+
+
+@pytest.mark.parametrize("page_range", ["", "r10-r1", "1-3,r1"])
+def test_page_ceiling_does_not_apply_to_an_unsized_range(page_range, monkeypatch):
+    """The whole document, or anything counted from its end, has no size until
+    MinerU opens it."""
+    monkeypatch.setenv("MINERU_MAX_PAGES_PER_JOB", "5")
+    cleaned = handler._validate_input({"file_b64": "AA==", "page_range": page_range})
+    assert cleaned["page_range"] == page_range
 
 
 def test_page_ceiling_ignores_a_malformed_value(monkeypatch):
     monkeypatch.setenv("MINERU_MAX_PAGES_PER_JOB", "fifty")
-    cleaned = handler._validate_input(
-        {"file_b64": "AA==", "start_page": 0, "end_page": 999}
-    )
-    assert cleaned["end_page"] == 999
+    cleaned = handler._validate_input({"file_b64": "AA==", "page_range": "1-1000"})
+    assert cleaned["page_range"] == "1-1000"
 
 
 def test_resolve_b64_rejects_oversized_encoded_payload():
@@ -268,7 +298,6 @@ def test_validate_input_rejects_non_http_server_url():
     with pytest.raises(ValueError, match="server_url must be an http"):
         handler._validate_input({
             "file_b64": "AA==",
-            "backend": "vlm-http-client",
             "server_url": "vllm.internal:8000",
         })
 
@@ -289,7 +318,6 @@ def test_a_private_server_url_is_accepted_by_default():
     """
     cleaned = handler._validate_input({
         "file_b64": "AA==",
-        "backend": "vlm-http-client",
         "server_url": "http://10.1.2.3:8000",
     })
     assert cleaned["server_url"] == "http://10.1.2.3:8000"
@@ -301,7 +329,6 @@ def test_the_shape_check_still_applies_by_default():
     with pytest.raises(ValueError, match="server_url"):
         handler._validate_input({
             "file_b64": "AA==",
-            "backend": "vlm-http-client",
             "server_url": "vllm.internal:8000",
         })
 
@@ -323,7 +350,6 @@ def test_the_policy_refuses_private_server_urls_when_enabled(url, monkeypatch):
     with pytest.raises(ValueError, match="MINERU_ALLOWED_SERVER_HOSTS"):
         handler._validate_input({
             "file_b64": "AA==",
-            "backend": "vlm-http-client",
             "server_url": url,
         })
 
@@ -342,7 +368,6 @@ def test_an_allowlisted_private_host_is_permitted(monkeypatch):
     monkeypatch.setenv("MINERU_ALLOWED_SERVER_HOSTS", "10.1.2.3")
     cleaned = handler._validate_input({
         "file_b64": "AA==",
-        "backend": "vlm-http-client",
         "server_url": "http://10.1.2.3:8000",
     })
     assert cleaned["server_url"] == "http://10.1.2.3:8000"
@@ -364,7 +389,6 @@ def test_the_allowlist_permits_only_what_it_names(url, monkeypatch):
     with pytest.raises(ValueError, match="MINERU_ALLOWED_SERVER_HOSTS"):
         handler._validate_input({
             "file_b64": "AA==",
-            "backend": "vlm-http-client",
             "server_url": url,
         })
 
@@ -376,7 +400,6 @@ def test_the_allowlist_does_not_match_by_suffix(monkeypatch):
     with pytest.raises(ValueError):
         handler._validate_input({
             "file_b64": "AA==",
-            "backend": "vlm-http-client",
             "server_url": "http://evil-vllm.internal:8000",
         })
 
@@ -390,7 +413,6 @@ def test_the_allowlist_is_case_insensitive_and_tolerates_spacing(monkeypatch):
     )
     cleaned = handler._validate_input({
         "file_b64": "AA==",
-        "backend": "vlm-http-client",
         "server_url": "http://vllm.internal:8000",
     })
     assert cleaned["server_url"] == "http://vllm.internal:8000"
@@ -411,7 +433,6 @@ def test_a_public_server_url_needs_listing_once_the_policy_is_on(monkeypatch):
     url = "https://8.8.8.8/v1"
     payload = {
         "file_b64": "AA==",
-        "backend": "vlm-http-client",
         "server_url": url,
     }
 
@@ -426,30 +447,19 @@ def test_a_public_server_url_needs_listing_once_the_policy_is_on(monkeypatch):
     monkeypatch.setenv("MINERU_ALLOWED_SERVER_HOSTS", "8.8.8.8")
     assert handler._validate_input(dict(payload))["server_url"] == url
 
-def test_validate_input_defaults_effort_to_none():
-    cleaned = handler._validate_input({"file_b64": "AA=="})
-    assert cleaned["effort"] is None
-
-
-def test_validate_input_accepts_effort_with_hybrid_backend():
-    cleaned = handler._validate_input(
-        {"file_b64": "AA==", "backend": "hybrid-auto-engine", "effort": "high"}
-    )
-    assert cleaned["effort"] == "high"
-
-
-def test_validate_input_rejects_invalid_effort_value():
-    with pytest.raises(ValueError, match="effort must be one of"):
-        handler._validate_input(
-            {"file_b64": "AA==", "backend": "hybrid-auto-engine", "effort": "turbo"}
-        )
-
-
-def test_validate_input_rejects_effort_on_non_hybrid_backend():
-    with pytest.raises(ValueError, match="effort is only valid with a hybrid"):
-        handler._validate_input(
-            {"file_b64": "AA==", "backend": "vlm-auto-engine", "effort": "high"}
-        )
+@pytest.mark.parametrize(
+    ("server_url", "message"),
+    [
+        ("http://user:secret@vllm.internal:8000", "credentials"),
+        ("http://vllm.internal:8000/v1?key=1", "query or fragment"),
+        ("http://vllm.internal:8000/v1#frag", "query or fragment"),
+    ],
+)
+def test_server_url_follows_mineru_endpoint_rules(server_url, message):
+    """MinerU refuses these for a VLM endpoint; refusing them here fails the
+    job before the download instead of at the first VLM call."""
+    with pytest.raises(ValueError, match=message):
+        handler._validate_input({"file_b64": "AA==", "server_url": server_url})
 
 
 @pytest.mark.parametrize(

@@ -3,8 +3,8 @@
 Verifies the warmup module:
 - honors MINERU_SKIP_WARMUP
 - skips gracefully when the fixture is missing
-- calls run_mineru with the expected single-page / no-formula / no-table args
-- reads MINERU_WARMUP_BACKEND and MINERU_WARMUP_LANG from env
+- calls run_mineru with the expected single-page args
+- reads MINERU_WARMUP_TIER from env
 - never propagates exceptions (warmup failure must not block worker boot)
 """
 
@@ -101,21 +101,17 @@ def test_warmup_calls_run_mineru_with_warmup_shaped_args(monkeypatch, capsys, tm
 
     assert captured["file_bytes"].startswith(b"%PDF")
     assert captured["basename"] == "warmup"
-    assert captured["start_page"] == 0
-    assert captured["end_page"] == 0
-    assert captured["formula_enable"] is False
-    assert captured["table_enable"] is False
-    assert captured["server_url"] is None
-    assert captured["input_format"] == "pdf"
-    # Defaults applied because env not set:
-    assert captured["backend"] == "vlm-auto-engine"
-    assert captured["lang"] == "en"
+    assert captured["page_range"] == "1"
+    assert captured["suffix"] == "pdf"
+    assert captured["ocr_mode"] == "auto"
+    assert captured.get("server_url") is None
+    # The default, because the env is not set: the tier that loads the VLM.
+    assert captured["tier"] == "standard"
 
 
-def test_warmup_respects_env_backend_and_lang(monkeypatch, tmp_path):
+def test_warmup_respects_env_tier(monkeypatch, tmp_path):
     _seed_fixture(monkeypatch, tmp_path)
-    monkeypatch.setenv("MINERU_WARMUP_BACKEND", "pipeline")
-    monkeypatch.setenv("MINERU_WARMUP_LANG", "east_slavic")
+    monkeypatch.setenv("MINERU_WARMUP_TIER", "advanced")
 
     captured: dict = {}
 
@@ -128,8 +124,26 @@ def test_warmup_respects_env_backend_and_lang(monkeypatch, tmp_path):
     monkeypatch.setattr("worker.parse.run_mineru", fake_run)
     warmup_module.warmup()
 
-    assert captured["backend"] == "pipeline"
-    assert captured["lang"] == "east_slavic"
+    assert captured["tier"] == "advanced"
+
+
+def test_a_blank_warmup_tier_falls_back_to_standard(monkeypatch, tmp_path):
+    """The Hub form sends an empty string for an untouched field."""
+    _seed_fixture(monkeypatch, tmp_path)
+    monkeypatch.setenv("MINERU_WARMUP_TIER", "  ")
+
+    captured: dict = {}
+
+    async def fake_run(file_bytes, *, basename, work_dir, **kwargs):
+        captured.update(kwargs)
+        out = work_dir / "fake-out"
+        out.mkdir()
+        return out
+
+    monkeypatch.setattr("worker.parse.run_mineru", fake_run)
+    warmup_module.warmup()
+
+    assert captured["tier"] == "standard"
 
 
 # -----------------------------------------------------------------------------
@@ -156,7 +170,7 @@ def test_warmup_failure_is_nonfatal(monkeypatch, capsys, tmp_path):
 
 
 def test_warmup_failure_in_filesystem_io_is_nonfatal(monkeypatch, capsys, tmp_path):
-    """Even pre-aio_do_parse failures (e.g., unreadable fixture) must not propagate."""
+    """Even failures before the parse proper (e.g., unreadable fixture) must not propagate."""
     bad_fixture = tmp_path / "fixture.pdf"
     bad_fixture.write_bytes(b"")  # Empty file — read_bytes works, but parse fails later.
     monkeypatch.setattr(warmup_module, "WARMUP_FIXTURE_PATH", bad_fixture)

@@ -3,13 +3,15 @@
 The MinerU-specific pieces this orchestrates live in the worker/ package:
   worker.harness   — what this worker declares about itself to the harness
   worker.schema    — input validation
+  worker.inputs    — the input's format and the tier MinerU will run on it
+  worker.models    — MinerU's model readiness, for debug and the probe
   worker.parse     — MinerU lazy import + async parse call
   worker.telemetry — optional OpenTelemetry export
   worker.warmup    — one throwaway parse at boot
 
 The engine-agnostic ones come from the runpod_doc_worker package, which
 worker.harness configures for this worker:
-  transport.io      — fetch raw bytes from URL / b64 / volume + format detection
+  transport.io      — fetch raw bytes from URL / b64 / volume
   transport.net     — target checks for the URL job inputs (used by io/schema)
   transport.package — tarball / inline / s3 response packaging
   obs.logging       — JSON / text structured logging
@@ -64,6 +66,8 @@ from runpod_doc_worker.transport import package as _package
 # modules so the declaration is visible here rather than arriving as a side
 # effect of importing one of the others.
 from worker import harness as _harness  # noqa: F401
+from worker import inputs as _inputs
+from worker import models as _models
 from worker import parse as _parse
 from worker import schema as _schema
 from worker import telemetry as _telemetry
@@ -86,7 +90,7 @@ async def _handle_probe(started: float, gpu_info: dict[str, Any], phase_ms: dict
         "elapsed_seconds": round(time.monotonic() - started, 2),
         "mineru_version": _parse.MINERU_VERSION,
         "mineru_available": _parse.MINERU_AVAILABLE,
-        "probe": _debug.probe_filesystem(),
+        "probe": _models.probe_payload(),
         "debug": _build_debug(phase_ms, gpu_info),
     }
 
@@ -98,18 +102,13 @@ async def _handle_parse(
     gpu_info: dict[str, Any],
     phase_ms: dict[str, int],
 ) -> dict[str, Any]:
-    # rp_validator's strict typing forces end_page to be an int; translate
-    # the -1 sentinel back to None so MinerU treats it as "until end of doc".
-    end_page_val = cleaned["end_page"]
-    end_page = None if end_page_val is None or end_page_val < 0 else int(end_page_val)
-    backend = cleaned["backend"]
+    page_range = cleaned["page_range"]
 
     _logging.info(
         "starting job",
-        backend=backend,
-        lang=cleaned["lang"],
-        start_page=cleaned["start_page"],
-        end_page=end_page,
+        tier=cleaned["tier"],
+        ocr_mode=cleaned["ocr_mode"],
+        page_range=page_range,
         gpu_name=gpu_info.get("name"),
         compute_capability=gpu_info.get("compute_capability"),
     )
@@ -132,22 +131,27 @@ async def _handle_parse(
     )
     _telemetry.histogram_record("input_size_bytes", float(len(file_bytes)))
 
-    input_format = _io.detect_format(file_bytes)
-    if input_format == "unknown":
+    # MinerU decides the format from content, and native formats run at flash
+    # whatever tier was asked for; the response reports what actually ran.
+    input_format = _inputs.detect_suffix(file_bytes)
+    if input_format is None:
         raise ValueError(
-            "input bytes do not match any supported format "
-            "(PDF, PNG/JPEG/GIF/BMP/TIFF/WebP image, or DOCX/PPTX/XLSX). "
-            "Check that file_b64 was base64-encoded correctly and that "
-            "file_url returned the file body (not an error page)."
+            "input bytes do not match any format MinerU parses (PDF, an image, "
+            "Office/OpenDocument, RTF, EPUB, OFD, HTML, CSV). Check that file_b64 "
+            "was base64-encoded correctly and that file_url returned the file "
+            "body (not an error page)."
         )
+    if page_range and input_format != "pdf":
+        raise ValueError(f"page_range applies to PDFs only; the input is {input_format}")
+    tier = _inputs.effective_tier(input_format, cleaned["tier"])
 
     _note_shutdown("parse")
     await _maybe_progress(job, {
         "phase": "parsing",
         "input_bytes": len(file_bytes),
         "input_format": input_format,
-        "start_page": cleaned["start_page"],
-        "end_page": end_page,
+        "tier": tier,
+        "page_range": page_range,
     })
 
     with tempfile.TemporaryDirectory(prefix="mineru-job-") as tmp:
@@ -157,25 +161,20 @@ async def _handle_parse(
             "mineru.parse",
             phase="parse",
             **{
-                "mineru.backend": backend,
+                "mineru.tier": tier,
                 "mineru.input_format": input_format,
-                "mineru.start_page": cleaned["start_page"],
-                "mineru.end_page": end_page if end_page is not None else -1,
+                "mineru.page_range": page_range,
             },
         ):
             output_dir = await _parse.run_mineru(
                 file_bytes,
                 basename=cleaned["basename"],
                 work_dir=work_dir,
-                input_format=input_format,
-                start_page=cleaned["start_page"],
-                end_page=end_page,
-                lang=cleaned["lang"],
-                backend=backend,
+                suffix=input_format,
+                tier=tier,
+                ocr_mode=cleaned["ocr_mode"],
+                page_range=page_range,
                 server_url=cleaned.get("server_url"),
-                formula_enable=cleaned["formula_enable"],
-                table_enable=cleaned["table_enable"],
-                effort=cleaned["effort"],
             )
         parse_seconds = time.monotonic() - t
         phase_ms["mineru_parse"] = int(parse_seconds * 1000)
@@ -188,12 +187,10 @@ async def _handle_parse(
         # unawaited post could strand the job; _maybe_progress now waits.
 
         t = time.monotonic()
-        # `pages_requested` reflects the slice the caller asked for, NOT the
-        # number MinerU actually produced (MinerU may emit fewer if the doc
-        # is shorter than end_page). -1 == "full document".
-        pages_requested = (
-            (end_page - cleaned["start_page"] + 1) if end_page is not None else -1
-        )
+        # `pages_requested` reflects the range the caller asked for, NOT the
+        # number MinerU actually produced (it drops pages past the end).
+        # -1 == the whole document, or a range counted from the end.
+        pages_requested = _schema.count_pages(page_range)
         transport = cleaned["transport"]
         formats = cleaned["formats"]
         # Our own report, rather than reading `degraded` back off the entry:
@@ -242,7 +239,7 @@ async def _handle_parse(
             )
 
         response["debug"] = _build_debug(
-            phase_ms, gpu_info, backend=backend, input_format=input_format
+            phase_ms, gpu_info, tier=tier, input_format=input_format
         )
 
         # Cumulative refresh check — outside the lock so logging happens
@@ -268,17 +265,17 @@ async def _handle_parse(
         # `elapsed_seconds` is for the human-readable response only.
         job_seconds = time.monotonic() - started
         _telemetry.counter_add(
-            "jobs_total", status="ok", backend=backend, input_format=input_format,
+            "jobs_total", status="ok", tier=tier, input_format=input_format,
         )
         if bumped_pages > 0:
-            _telemetry.counter_add("pages_total", bumped_pages, backend=backend)
+            _telemetry.counter_add("pages_total", bumped_pages, tier=tier)
         _telemetry.histogram_record(
             "job_duration", job_seconds,
-            backend=backend, input_format=input_format,
+            tier=tier, input_format=input_format,
         )
         if bumped_pages > 0 and job_seconds > 0:
             _telemetry.histogram_record(
-                "pages_per_second", bumped_pages / job_seconds, backend=backend,
+                "pages_per_second", bumped_pages / job_seconds, tier=tier,
             )
 
         _logging.info(
@@ -342,6 +339,7 @@ async def handler(job: dict) -> dict:
                     traceback.format_exc(limit=5), limit=4000
                 ),
                 "debug": _build_debug(phase_ms, gpu_info),
+                **_lifecycle.refresh_after_failure(exc),
             }
 
 
@@ -396,15 +394,13 @@ def _bootstrap_main() -> None:
 
     Replicates ``runpod.serverless.worker.run_worker()`` but folds the
     eager warmup into the same asyncio loop that JobScaler.run() will
-    use. The standard ``runpod.serverless.start()`` call chain creates
-    a fresh event loop *inside* JobScaler.start() — if our warmup runs
-    before that and creates its own loop via ``asyncio.run()``, vLLM's
-    AsyncLLMEngine handle is bound to the warmup loop. When the
-    JobScaler's loop starts and the first request tries to use the
-    engine, the parent's view of the engine subprocess is dead
-    (EngineDeadError ~75ms in). Composing both phases under one
-    ``asyncio.run()`` keeps the engine handle alive across the
-    warmup → serve transition.
+    use. It exists because MinerU 3.x bound vLLM's engine to the loop
+    that created it: a warmup under its own ``asyncio.run()`` left the
+    serving loop with a dead engine (EngineDeadError ~75ms in). MinerU 4
+    runs the engine on its own thread and loop, so that reason is gone;
+    the composition stays because it is tested and costs nothing, and
+    returning to ``runpod.serverless.start()`` is tracked in
+    backlog/drop-runpod-internals-bypass.md.
 
     NOTE: This reaches into ``runpod.serverless.modules.rp_scale`` and
     ``rp_ping`` — undocumented internals of the runpod-python SDK.
@@ -446,8 +442,8 @@ def _bootstrap_main() -> None:
         # before serving; we run them async in the same loop).
         await run_fitness_checks()
 
-        # 2. Eager warmup. Same loop as the serve loop below — see
-        # worker/warmup.py docstring for the asyncio invariant.
+        # 2. Eager warmup, on the same loop as the serve loop below —
+        # see worker/warmup.py for why that no longer matters on 4.x.
         await _warmup.warmup_async()
 
         # 3. Heartbeat is a background thread, not async. Start it

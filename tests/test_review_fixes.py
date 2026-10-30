@@ -62,26 +62,35 @@ _INT_FIELDS = sorted(
 )
 
 
-def test_the_schema_still_declares_int_fields() -> None:
-    """Without this, an empty _INT_FIELDS would make the test below vacuous and
-    pass while guarding nothing."""
-    assert _INT_FIELDS, "INPUT_SCHEMA declares no int field; the guard is untested"
+@pytest.fixture
+def an_int_field(monkeypatch):
+    """The 2.x schema declares no int field (pages are a `page_range` string),
+    so the guard is exercised on one added the way a later field would be."""
+    monkeypatch.setitem(
+        schema.INPUT_SCHEMA,
+        "max_pages",
+        {"type": int, "required": False, "default": 0},
+    )
+    return "max_pages"
 
 
-@pytest.mark.parametrize("field", _INT_FIELDS)
 @pytest.mark.parametrize("value", [True, False])
 def test_a_boolean_is_refused_wherever_an_int_is_declared(
-    field: str, value: bool
+    an_int_field: str, value: bool
 ) -> None:
     """rp_validator skips its declared type check when the value is an instance
-    of the default's type, and `isinstance(True, int)` is True — so `true` reached
-    the page resolver and was used as index 1."""
+    of the default's type, and `isinstance(True, int)` is True — so `true` once
+    reached the page resolver and was used as index 1."""
+    assert _INT_FIELDS == [], "a real int field exists; parametrize over it instead"
     with pytest.raises(ValueError, match="must be an integer, not a boolean"):
-        schema.validate_input({"file_b64": "ZmFrZQ==", field: value})
+        schema.validate_input({"file_b64": "ZmFrZQ==", an_int_field: value})
 
 
-def test_real_page_numbers_still_pass() -> None:
-    cleaned = schema.validate_input(
-        {"file_b64": "ZmFrZQ==", "start_page": 1, "end_page": 4}
-    )
-    assert (cleaned["start_page"], cleaned["end_page"]) == (1, 4)
+def test_a_boolean_page_range_is_refused() -> None:
+    with pytest.raises(ValueError):
+        schema.validate_input({"file_b64": "ZmFrZQ==", "page_range": True})
+
+
+def test_real_page_ranges_still_pass() -> None:
+    cleaned = schema.validate_input({"file_b64": "ZmFrZQ==", "page_range": "2-5"})
+    assert cleaned["page_range"] == "2-5"

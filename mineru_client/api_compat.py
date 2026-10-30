@@ -21,15 +21,18 @@ constructor; the migration is import + constructor + auth.
 
 This is a *trial / comparison* on-ramp, not a permanent production interface:
 for the worker's richer native features (inline markdown, volume_path, format
-filtering, the hybrid / http-client backends) use ``MineruClient`` directly.
+filtering, every tier, a per-job VLM ``server_url``) use ``MineruClient`` directly.
 
 Faithfulness notes / known gaps (raise rather than silently mis-parse):
-    - model_version 'MinerU-HTML' and extra_formats (docx/html/latex): unsupported.
-    - page_ranges: single contiguous 1-based range only ('5' or '2-6').
+    - extra_formats (docx/html/latex): unsupported.
+    - model_version maps to the nearest worker tier: pipeline->basic,
+      vlm->advanced, MinerU-HTML->flash (MinerU 4 parses HTML natively).
+    - enable_formula / enable_table / language: accepted, no effect (MinerU 4
+      has no such switches).
     - full_zip_url is a presigned **.zip** (the compat client requests
       archive_format='zip', matching the cloud API); requires the endpoint to be
       deployed with BUCKET_* env vars (transport='s3').
-    - is_ocr / no_cache / cache_tolerance: accepted but no-op (no worker knob).
+    - no_cache / cache_tolerance: accepted but no-op (no worker-side cache).
     - callback: rejected — a RunPod webhook's payload (the raw /status envelope)
       differs from MinerU's signed {checksum, content} callback, so a MinerU
       callback handler can't consume it; poll with get_task()/wait_for_task().
@@ -122,9 +125,11 @@ class MineruApiClient:
         {"task_id": ...}}``. The ``task_id`` is the RunPod job id; poll it with
         :meth:`get_task`.
 
-        ``is_ocr`` / ``seed`` / ``no_cache`` / ``cache_tolerance`` are accepted
-        for signature compatibility with the official API but have no worker-side
-        effect (the worker has no result cache). ``callback`` is **rejected**: a
+        ``enable_formula`` / ``enable_table`` / ``language`` / ``seed`` /
+        ``no_cache`` / ``cache_tolerance`` are accepted for signature
+        compatibility with the official API but have no worker-side effect: the
+        open-source MinerU 4 engine has no formula, table or OCR-language switch,
+        and the worker has no result cache. ``callback`` is **rejected**: a
         RunPod webhook delivers a different, unsigned payload (the raw /status
         envelope) than MinerU's signed ``{checksum, content}`` callback, so an
         existing MinerU callback handler can't parse or verify it — poll with
@@ -145,9 +150,7 @@ class MineruApiClient:
         payload = build_worker_payload(
             url=url,
             model_version=model_version,
-            enable_formula=enable_formula,
-            enable_table=enable_table,
-            language=language,
+            is_ocr=is_ocr,
             page_ranges=page_ranges,
             extra_formats=extra_formats,
             transport=self._wait_transport,

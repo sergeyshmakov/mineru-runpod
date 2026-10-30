@@ -183,6 +183,22 @@ def _record_job(pages: int) -> str | None:
         return None
 
 
+def refresh_after_failure(exc: BaseException) -> dict[str, bool]:
+    """``{"refresh_worker": True}`` when ``exc`` leaves this worker unable to parse again.
+
+    MinerU keeps one VLM engine per process and latches a dead one: after an
+    ``EngineDeadError`` every later job here fails the same way, so the only
+    useful thing left is to ask RunPod for a fresh worker. Matched by name
+    because the handler must not import MinerU, and vLLM's own exception
+    shares it.
+    """
+    if type(exc).__name__ != "EngineDeadError":
+        return {}
+    _logging.error("vlm engine is dead; signaling worker recycle")
+    _telemetry.counter_add("refresh_total", reason="engine_dead")
+    return {"refresh_worker": True}
+
+
 def _record_degradation(lost: _degraded.Report) -> None:
     """Count what a successful response could not carry.
 

@@ -1,17 +1,20 @@
 # Container-side dependencies. Consumers do NOT need these — they only need
 # the mineru_client subpackage which has its own pyproject.toml.
 
-# MinerU with vLLM backend support. Pinned minor-locked (>=3.4.0,<3.5.0)
-# because MinerU has a history of changing the default VLM model name on
-# minor-version bumps (3.1→3.2 swapped 2604→2605 and broke us once), and
-# the offline runtime cache cannot follow that without a coordinated
-# Dockerfile rebuild. The 3.4.x default VLM is MinerU2.5-Pro-2605-1.2B
-# (unchanged since 3.2) and the pipeline OCR is now PP-OCRv6 — both live
-# inside the two baked HF repos, so a rebuild picks them up with no bake
-# change. Bump deliberately: when crossing minors, re-verify the baked
-# models against the new library default in the same commit. Requires
-# vllm >=0.10.1.1,<0.22.0 — satisfied by the Dockerfile FROM tag.
-mineru[core,vllm]>=3.4.0,<3.5.0
+# MinerU with Torch small models. Pinned minor-locked (>=4.1.3,<4.2.0)
+# because MinerU has a history of changing its default models on minor
+# releases (3.1→3.2 swapped the VLM and broke us once), and the offline
+# image cannot follow that without a coordinated Dockerfile rebuild. The
+# 4.1.x line uses opendatalab/MinerU2.5-Pro-2605-1.2B (the VLM) and
+# opendatalab/MinerU-4_models_torch (the small models); the Dockerfile
+# bakes exactly what `mineru-kit models download --tier standard` lists
+# for that combination. Bump deliberately: when crossing minors, re-check
+# `mineru/model/registry.py` in the new release in the same commit.
+#
+# `torch`, not `full`: `full` would install MinerU's own vLLM. MinerU 4.1
+# requires vllm >=0.19.1,<0.31.0, satisfied by the Dockerfile FROM tag, and
+# the image keeps the vLLM it was built on (as upstream's own image does).
+mineru[torch]>=4.1.3,<4.2.0
 
 # RunPod serverless SDK — provides runpod.serverless.start() and async helpers.
 runpod>=1.7.0
@@ -38,8 +41,8 @@ httpx>=0.27
 # Xet storage backend client used by huggingface_hub for chunk-based
 # parallel downloads. Auto-detected when installed; the Dockerfile bake
 # step sets HF_XET_HIGH_PERFORMANCE=1 to saturate bandwidth and CPU
-# during the model snapshot pull. Replaces the deprecated hf_transfer.
-# Runtime stays offline so this is build-time only.
+# during the model download. Runtime stays offline, so this is build-time
+# only.
 hf-xet>=1.0
 
 # OpenTelemetry stack. Dormant unless OTEL_EXPORTER_OTLP_ENDPOINT is set

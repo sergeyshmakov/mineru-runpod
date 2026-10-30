@@ -4,8 +4,7 @@
       "name": "parse_one_page_via_volume",
       "input": {
         "volume_path": "/worker/test-fixture.pdf",
-        "start_page": 0,
-        "end_page": 0,
+        "page_range": "1",
         "transport": "tarball_b64",
         "basename": "smoke"
       },

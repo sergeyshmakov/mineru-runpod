@@ -142,21 +142,22 @@ def test_manifest_covers_what_mineru_writes(tmp_path):
     assert "fig1.png" in out["images"]
 
 
-def test_content_list_falls_back_to_the_versioned_name(tmp_path):
-    """MinerU renamed this file; a build writing only the newer name still
-    fills the same response key."""
-    (tmp_path / "doc_content_list_v2.json").write_text('[{"type": "text"}]', encoding="utf-8")
-    out = artifacts.resolve(MANIFEST, tmp_path, "doc", keys=["content_list"])
-    assert out["content_list"] == [{"type": "text"}]
+def test_each_content_list_version_has_its_own_key(tmp_path):
+    """MinerU 4 renders Content List V1 and V2 as two documents, and the worker
+    writes both; neither stands in for the other."""
+    (tmp_path / "doc_content_list.json").write_text('["v1"]', encoding="utf-8")
+    (tmp_path / "doc_content_list_v2.json").write_text('[["v2"]]', encoding="utf-8")
+    out = artifacts.resolve(
+        MANIFEST, tmp_path, "doc", keys=["content_list", "content_list_v2"]
+    )
+    assert out["content_list"] == ["v1"]
+    assert out["content_list_v2"] == [["v2"]]
 
 
-def test_the_current_content_list_name_wins(tmp_path):
-    """With both present, the unversioned name is the one read — the patterns
-    are ordered fallbacks, not alternatives."""
-    (tmp_path / "doc_content_list.json").write_text('["current"]', encoding="utf-8")
-    (tmp_path / "doc_content_list_v2.json").write_text('["older"]', encoding="utf-8")
+def test_a_missing_v1_content_list_is_not_filled_from_v2(tmp_path):
+    (tmp_path / "doc_content_list_v2.json").write_text('[["v2"]]', encoding="utf-8")
     out = artifacts.resolve(MANIFEST, tmp_path, "doc", keys=["content_list"])
-    assert out["content_list"] == ["current"]
+    assert out["content_list"] == []
 
 
 def test_absent_optional_artifacts_keep_their_declared_defaults(tmp_path):
@@ -172,9 +173,9 @@ def test_absent_optional_artifacts_keep_their_declared_defaults(tmp_path):
 
 def test_an_absent_markdown_has_no_default_to_fall_back_on(tmp_path):
     """Being required is exactly this: there is no value that would stand in
-    for the document's text. worker.parse refuses first — it looks for the .md
-    before packaging is reached — so this is the second of two checks, not the
-    only one."""
+    for the document's text. worker.parse writes it from MinerU's result before
+    packaging is reached, so an absent one means something went wrong in
+    between."""
     with pytest.raises(artifacts.ArtifactError, match="markdown"):
         artifacts.resolve(MANIFEST, tmp_path, "doc", keys=["markdown"])
 

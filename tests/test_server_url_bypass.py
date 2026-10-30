@@ -65,7 +65,6 @@ def _parse(server_url: str) -> dict:
     return schema.validate_input(
         {
             "file_url": "https://example.com/a.pdf",
-            "backend": "vlm-http-client",
             "server_url": server_url,
         }
     )

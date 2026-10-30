@@ -17,11 +17,11 @@ from runpod.serverless.modules import rp_http
 
 from pathlib import Path
 
-from runpod_doc_worker.obs import debug as _debug
 from runpod_doc_worker.obs import logging as _logging
 from runpod_doc_worker.transport import package as _package
 
 from worker import harness as _harness
+from worker import models as _models
 
 # -----------------------------------------------------------------------------
 # Probe policy
@@ -129,7 +129,7 @@ async def _maybe_progress(job: dict, data: dict, *, budget: float | None = None)
 def _build_debug(phase_ms: dict[str, int], gpu_info: dict[str, Any], **extra: Any) -> dict[str, Any]:
     return {
         "gpu": gpu_info,
-        "model_dir": _debug.find_model_dir(),
+        "model_dir": _models.vlm_model_dir(),
         "phase_ms": phase_ms,
         **extra,
     }

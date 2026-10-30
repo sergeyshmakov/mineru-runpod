@@ -59,39 +59,42 @@ config.configure(
         # which the boot warmup parses. MINERU_VOLUME_ROOTS still replaces
         # the whole list at runtime.
         volume_roots=DEFAULT_VOLUME_ROOTS + ("/worker",),
-        # Which weights actually loaded — Pro-2605 vs an older or unexpected
-        # variant — reported in every response's `debug.model_dir`.
-        model_globs=("models--opendatalab--MinerU*",),
-        # Resolved by the `probe: true` response to diagnose a cache that is
-        # present but not where MinerU's library looks: the VLM backend's
-        # model and the pipeline backend's.
-        probe_model_ids=(
-            "opendatalab/MinerU2.5-Pro-2605-1.2B",
-            "opendatalab/PDF-Extract-Kit-1.0",
+        # No model globs or probe ids: the harness looks for them in the
+        # Hugging Face hub cache (`models--*`), and MinerU 4 keeps its weights
+        # as plain directories under its own model root instead. The worker
+        # reports them itself, from MinerU's registry — see `worker.models`.
+        model_globs=(),
+        probe_model_ids=(),
+        # Things an operator can get wrong in a way that looks like a missing
+        # model. MINERU_VL_MODEL_NAME is a 3.x variable that MinerU 4 rejects
+        # alongside a per-job `server_url`; an endpoint deployed from the 1.x
+        # form still carries it, so the probe says so.
+        probe_env_keys=(
+            "MINERU_HOME",
+            "MINERU_MODEL_SOURCE",
+            "MINERU_MODEL_SMALL_BACKEND",
+            "MINERU_MODEL_VLM_ENGINE",
+            "MINERU_VL_MODEL_NAME",
         ),
-        # Both are things an operator can get wrong in a way that looks like
-        # a missing model, so the probe reports them alongside the HF ones.
-        probe_env_keys=("MINERU_MODEL_SOURCE", "MINERU_VL_MODEL_NAME"),
         log_mirror=_telemetry_mirror,
     )
 )
 
 
-# What MinerU writes into the output directory, and what each file becomes in
-# an inline response. Declaration order is the canonical output order: it is
-# what `formats` defaults to and what worker.schema validates against, so a
-# key added here reaches the input contract with it.
+# What `worker.parse` writes into the output directory, and what each file
+# becomes in an inline response. Declaration order is the canonical output
+# order and what worker.schema validates `formats` against, so a key added
+# here reaches the input contract with it. `DEFAULT_FORMATS` below is the
+# inline default.
 #
-# content_list carries two patterns because MinerU renamed the file: the
-# current name first, the older one as a fallback, and the first that matches
-# wins. Its default is a list rather than the {} the kind would derive,
-# because callers index it.
+# The content lists' defaults are lists rather than the {} the kind would
+# derive, because callers index them.
 #
 # markdown is required: it is what a caller asked for, and an empty string in
-# its place is worth less to them than a failed job they can retry. The other
-# three are worth shipping without — a corrupt content_list still leaves a
-# usable document, and one unreadable image should not cost a caller the other
-# forty. Those degrade instead, and say so in the response.
+# its place is worth less to them than a failed job they can retry. The others
+# are worth shipping without — a corrupt content_list still leaves a usable
+# document, and one unreadable image should not cost a caller the other forty.
+# Those degrade instead, and say so in the response.
 
 # Refuse a response the RunPod gateway would discard rather than have it dropped.
 # Over ~20 MB the gateway returns COMPLETED with no `output` key at all, so the
@@ -106,12 +109,15 @@ _response_size.BULKY_ARTIFACT = "middle.json"
 
 MANIFEST = (
     Artifact("markdown", ("{basename}.md",), kind="text", required=True),
-    Artifact(
-        "content_list",
-        ("{basename}_content_list.json", "{basename}_content_list_v2.json"),
-        kind="json",
-        default=[],
-    ),
+    Artifact("content_list", ("{basename}_content_list.json",), kind="json", default=[]),
     Artifact("middle", ("{basename}_middle.json",), kind="json"),
     Artifact("images", ("images/*",), kind="b64map"),
+    Artifact("content_list_v2", ("{basename}_content_list_v2.json",), kind="json", default=[]),
+    Artifact("structured_content", ("{basename}_structured_content.json",), kind="json"),
 )
+
+# What an inline response carries when the caller does not choose: the four
+# keys it has always carried. The archive transports ship every artifact
+# regardless; adding the two newer JSON renderings to the inline default
+# would only bring a large document closer to the response cap.
+DEFAULT_FORMATS = ("markdown", "content_list", "middle", "images")

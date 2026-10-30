@@ -89,13 +89,10 @@ class MineruClient:
         file_url: str | None = None,
         file_b64: str | None = None,
         volume_path: str | None = None,
-        start_page: int = 0,
-        end_page: int | None = None,
-        lang: str = "en",
-        backend: str = "vlm-auto-engine",
+        tier: Literal["flash", "basic", "standard", "advanced"] = "standard",
+        ocr_mode: Literal["auto", "txt", "ocr"] = "auto",
+        page_range: str | None = None,
         server_url: str | None = None,
-        formula_enable: bool = True,
-        table_enable: bool = True,
         transport: Literal["tarball_b64", "inline", "s3"] = "tarball_b64",
         formats: Iterable[str] | str | None = None,
         basename: str = "doc",
@@ -107,21 +104,26 @@ class MineruClient:
         a single-file job has a one-element ``results`` list. Use
         ``MineruClient.first(result)`` to grab the entry without indexing.
 
-        Input formats (auto-detected by the worker):
-            PDF, image (PNG/JPEG/GIF/BMP/TIFF/WebP), DOCX, PPTX, XLSX.
+        Input formats (detected by the worker, by content):
+            PDF, images, Office (DOC/DOCX/PPT/PPTX/XLS/XLSX), RTF, OpenDocument,
+            EPUB, OFD and HTML. Everything but PDFs and images is parsed
+            natively at the flash tier, whatever ``tier`` says.
 
-        Backends (MinerU 3.4.x):
-            "pipeline"           PP-OCRv6 + layout/formula/table. Multilingual OCR.
-                                  Best for non-Latin scripts; respects `lang`.
-            "vlm-auto-engine"    VLM via vLLM (default). Fast on EN/CH; ignores `lang`.
-            "vlm-http-client"    VLM via external vLLM server (`server_url` required).
-            "hybrid-auto-engine" Pipeline + VLM auto-routed based on page content.
-            "hybrid-http-client" Hybrid with external VLM server.
+        Tiers (MinerU 4.1.x), for PDFs and images:
+            "flash"     The PDF's own text layer; no models.
+            "basic"     Small models for layout, OCR, formulas and tables.
+            "standard"  Small models + the VLM (default).
+            "advanced"  The VLM leads layout and content; slowest, best on
+                        hard documents.
 
-        For non-English/Chinese scripts (e.g. Russian/Cyrillic), use
-        `backend="pipeline"` with a script-family `lang` code such as
-        `"east_slavic"` (Russian/Ukrainian/Belarusian), `"cyrillic"`,
-        `"arabic"`, or `"devanagari"`. These are not ISO language codes.
+        MinerU 4's OCR model covers Chinese, Japanese, English and Latin-script
+        languages; scanned pages in other scripts (Cyrillic, Arabic, ...)
+        need a VLM tier (standard or advanced).
+
+        ``ocr_mode``: "auto" lets MinerU decide per page, "txt" trusts the text
+        layer, "ocr" OCRs everything. ``page_range`` (PDFs only) is MinerU's
+        1-based grammar: "1-5,8", "r3-r1" (r1 is the last page). ``server_url``
+        points the VLM tiers at an external OpenAI-compatible VLM server.
 
         Transport:
             "tarball_b64"  (default) base64-encoded .tar.gz inside the entry
@@ -134,20 +136,15 @@ class MineruClient:
                            gateway response cap (~20 MB).
 
         Formats (inline transport only):
-            Subset of ["markdown", "content_list", "middle", "images"].
-            Omit to get all four. A bare string is wrapped to a one-list
-            for ergonomics. For tarball_b64 and s3 the archive carries all
-            four artifacts regardless.
+            Subset of ["markdown", "content_list", "middle", "images",
+            "content_list_v2", "structured_content"]. Omit to get the first
+            four. A bare string is wrapped to a one-list for ergonomics. For
+            tarball_b64 and s3 the archive carries every artifact regardless.
         """
         provided = sum(1 for x in (file_url, file_b64, volume_path) if x)
         if provided != 1:
             raise ValueError(
                 "exactly one of file_url / file_b64 / volume_path must be set"
-            )
-        if backend.endswith("-http-client") and not server_url:
-            raise ValueError(
-                f"backend={backend!r} requires `server_url` pointing at an "
-                f"external vLLM OpenAI-compatible server"
             )
 
         # Client-side sugar: accept a bare string for a single format. The
@@ -161,20 +158,18 @@ class MineruClient:
             formats_list = list(formats)
 
         # Build the payload field-by-field, skipping None values. The handler's
-        # rp_validator declares fields with typed schemas (e.g. end_page must be
-        # int) and rejects JSON null even when the field is "optional". Letting
-        # the handler apply its own defaults is safer than transmitting None.
+        # rp_validator declares fields with typed schemas (e.g. page_range must
+        # be a string) and rejects JSON null even when the field is "optional".
+        # Letting the handler apply its own defaults is safer than transmitting
+        # None.
         payload: dict[str, Any] = {
-            "start_page": start_page,
-            "lang": lang,
-            "backend": backend,
-            "formula_enable": formula_enable,
-            "table_enable": table_enable,
+            "tier": tier,
+            "ocr_mode": ocr_mode,
             "transport": transport,
             "basename": basename,
         }
-        if end_page is not None:
-            payload["end_page"] = end_page
+        if page_range is not None:
+            payload["page_range"] = page_range
         if server_url is not None:
             payload["server_url"] = server_url
         if file_url is not None:

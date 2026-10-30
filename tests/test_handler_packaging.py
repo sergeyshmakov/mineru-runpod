@@ -60,10 +60,9 @@ def test_validate_input_rejects_invalid_transport_value():
 
 def test_validate_input_defaults_applied():
     cleaned = handler._validate_input({"file_b64": "AA=="})
-    assert cleaned["start_page"] == 0
-    assert cleaned["end_page"] == -1
-    assert cleaned["lang"] == "en"
-    assert cleaned["backend"] == "vlm-auto-engine"
+    assert cleaned["tier"] == "standard"
+    assert cleaned["ocr_mode"] == "auto"
+    assert cleaned["page_range"] == ""
     assert cleaned["transport"] == "tarball_b64"
     assert cleaned["formats"] == ["markdown", "content_list", "middle", "images"]
     assert cleaned["basename"] == "doc"
