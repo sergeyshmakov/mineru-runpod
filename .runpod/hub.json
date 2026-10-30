@@ -262,6 +262,76 @@
         }
       },
       {
+        "key": "MINERU_LLM_AIDED_FEATURES_TITLE_LEVELING",
+        "input": {
+          "name": "LLM-aided heading levels",
+          "type": "string",
+          "description": "Ask an OpenAI-compatible LLM to assign heading levels in PDFs (skipped when a job sets page_range). Sends heading text to that LLM. Needs the LLM URL, model and key.",
+          "default": "false",
+          "options": [
+            {
+              "label": "Off (default)",
+              "value": "false"
+            },
+            {
+              "label": "On",
+              "value": "true"
+            }
+          ],
+          "advanced": true
+        }
+      },
+      {
+        "key": "MINERU_LLM_AIDED_FEATURES_CROSS_PAGE_TABLE_CELL_MERGE",
+        "input": {
+          "name": "LLM-aided cross-page table merge",
+          "type": "string",
+          "description": "Ask an OpenAI-compatible LLM to join table cells split across PDF pages. Sends table text to that LLM. Needs the LLM URL, model and key.",
+          "default": "false",
+          "options": [
+            {
+              "label": "Off (default)",
+              "value": "false"
+            },
+            {
+              "label": "On",
+              "value": "true"
+            }
+          ],
+          "advanced": true
+        }
+      },
+      {
+        "key": "MINERU_LLM_AIDED_BASE_URL",
+        "input": {
+          "name": "LLM-aided: API base URL",
+          "type": "string",
+          "description": "OpenAI-compatible base URL for the LLM-aided features, e.g. https://api.openai.com/v1. Required when either feature is on.",
+          "default": "",
+          "advanced": true
+        }
+      },
+      {
+        "key": "MINERU_LLM_AIDED_MODEL",
+        "input": {
+          "name": "LLM-aided: model",
+          "type": "string",
+          "description": "Model name the LLM-aided features request from that API. Required when either feature is on.",
+          "default": "",
+          "advanced": true
+        }
+      },
+      {
+        "key": "MINERU_LLM_AIDED_API_KEY",
+        "input": {
+          "name": "LLM-aided: API key",
+          "type": "string",
+          "description": "API key for that LLM API. Required when either feature is on. Stored on the worker, never exposed to jobs.",
+          "default": "",
+          "advanced": true
+        }
+      },
+      {
         "key": "OTEL_EXPORTER_OTLP_ENDPOINT",
         "input": {
           "name": "OTLP/HTTP endpoint (telemetry trigger)",

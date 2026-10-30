@@ -59,3 +59,19 @@ def test_the_hub_listing_names_the_engine_series_in_the_pin() -> None:
         f"hub.json should name the pinned series (MinerU {series}); it says: "
         f"{hub_json['description']!r}"
     )
+
+
+def test_mineru_boolean_switches_never_default_to_empty():
+    """MinerU 4 maps every MINERU_<PATH> env var onto its config and parses
+    booleans strictly: an empty string fails config loading, and with it every
+    job on the endpoint. A Hub form sets an untouched field to its default, so
+    a switch MinerU reads must default to an explicit "false"."""
+    env = {
+        entry["key"]: entry["input"]
+        for entry in json.loads((_RUNPOD_DIR / "hub.json").read_text(encoding="utf-8"))["config"]["env"]
+    }
+    switches = [k for k in env if k.startswith("MINERU_LLM_AIDED_FEATURES_")]
+    assert switches, "the LLM-aided switches are gone; update this test"
+    for key in switches:
+        assert env[key]["default"] == "false", key
+        assert {o["value"] for o in env[key]["options"]} == {"false", "true"}, key
