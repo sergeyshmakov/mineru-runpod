@@ -11,6 +11,8 @@ tags:
   - Document parsing
 ---
 
+> **Written for template 1.x (MinerU 3.4).** The parameter mapping and several gaps below changed in 2.x; see [Upgrading to 2.x](/getting-started/upgrade-to-2/) and [Migrate from the MinerU API](/getting-started/migrate-from-mineru-api/).
+
 If you're calling the [official MinerU API](https://mineru.net/apiManage/docs) (`mineru.net/api/v4`) in production, you may hit its daily quota of 1,000 high-priority pages, its 200 MB / 200-page file limits, or a regional data requirement. You can deploy the open-source MinerU runtime on RunPod Serverless, choose your own bucket, and keep a compatible create-task / poll / download loop. It is not a drop-in copy: the hosted service and your endpoint can run different versions, models, and configuration.
 
 The cloud API is the right way to *try* MinerU. Once you're parsing real volume, self-hosting changes the economics and the data path. Here's why, what it costs, and how to move your code over.

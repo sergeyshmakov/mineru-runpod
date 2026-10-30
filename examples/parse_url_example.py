@@ -27,8 +27,7 @@ def main() -> int:
     )
     result = client.parse_document(
         file_url=url,
-        start_page=0,
-        end_page=4,            # first 5 pages, for a quick smoke test
+        page_range="1-5",      # first 5 pages (1-based), for a quick smoke test
         transport="tarball_b64",
         basename="example",
     )

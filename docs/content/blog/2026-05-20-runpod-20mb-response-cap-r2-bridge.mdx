@@ -11,6 +11,8 @@ tags:
   - Troubleshooting
 ---
 
+> **Written for template 1.x (MinerU 3.4).** Fields used here (`backend`, `start_page`/`end_page`) changed in 2.x; see [Upgrading to 2.x](/getting-started/upgrade-to-2/).
+
 If your RunPod serverless worker logs say `done` but your client raises `unexpected handler return type: <class 'NoneType'>`, you've hit RunPod's bidirectional 20 MB payload cap on `/runsync`. The handler succeeded. The gateway dropped the response on the way back because the payload was too large.
 
 The fix is two steps. Set `transport: "s3"` on the job, and configure four env vars on the endpoint pointing at a Cloudflare R2 bucket. The worker uploads the result to R2 and returns a small presigned URL. Your client downloads from R2 directly, so the archive does not cross the gateway response.

@@ -11,6 +11,8 @@ tags:
   - Document parsing
 ---
 
+> **Written for template 1.x (MinerU 3.4).** The `start_page`/`end_page` fields used here are a 1-based `page_range` in 2.x; see [Upgrading to 2.x](/getting-started/upgrade-to-2/).
+
 [ECMA-376](https://ecma-international.org/publications-and-standards/standards/ecma-376/) Part 1 (the *Office Open XML File Formats — Fundamentals and Markup Language Reference*) is **5,039 pages** of dense, table-heavy, XML-schema-laden specification in a single 35 MB PDF. It is the document that defines `.docx`, `.xlsx`, and `.pptx` down to the attribute. If you want a machine-readable, clause-addressable version of it, you have to parse all 5,039 pages, and almost everything about that page count makes a naive approach fall over.
 
 This is the story of parsing the whole thing through the [mineru-runpod](https://github.com/sergeyshmakov/mineru-runpod) serverless worker. The headline result: **36 batches, 5,039 pages, 46,637 content blocks, 4,174 tables, full contiguous coverage, ~$1.15 of GPU time.** The interesting part is not the total. It's *how you cut a 5,000-page document into pieces without breaking it*, which it turns out is a decision about clause structure, not page numbers.

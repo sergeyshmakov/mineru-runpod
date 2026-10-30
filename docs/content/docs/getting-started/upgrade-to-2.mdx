@@ -1,0 +1,274 @@
+---
+title: Upgrading to 2.x
+description: What changes for a 1.x endpoint and its callers when mineru-runpod moves to MinerU 4.1, and how to move payloads, endpoint settings, dashboards and clients across.
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+import { Tab, Tabs } from "fumadocs-ui/components/tabs";
+
+mineru-runpod 2.0 moves the worker from MinerU 3.4 to MinerU 4.1. The template's major version moves only when MinerU has a major release (see [Versioning](/reference/versioning/)), and this one changes the job contract, the output, the endpoint settings and the metric labels. This page is for anyone running 1.x: what changed, and what to change on your side.
+
+<Callout type="warn" title="Move the endpoint and its callers together">
+1.x and 2.x payloads are not interchangeable: each endpoint rejects the other's fields by name. That includes `mineru-client`. The 1.x `MineruClient` always sends `backend`, `lang`, `start_page`, `formula_enable` and `table_enable`, and the 2.x one always sends `tier` and `ocr_mode`. Upgrade the endpoint and every caller in one step, or deploy a 2.x endpoint beside the 1.x one and move callers across.
+</Callout>
+
+## What changed and why
+
+MinerU 4 is a rewrite rather than an update. Four quality tiers replace the backends and their switches, the SDK and the intermediate `middle` format are new, a new small-model bundle replaces PDF-Extract-Kit, and MinerU now parses Office, OpenDocument, RTF, EPUB, OFD, HTML and CSV/TSV documents itself.
+
+mineru-runpod is a port of official MinerU to RunPod Serverless. It exposes what upstream MinerU exposes, under upstream's names, and does not decide how MinerU should be used: it adds no parsing modes, models or language packs of its own, and when upstream drops a capability, the template drops it too. Questions about parsing quality belong upstream, at [opendatalab/MinerU](https://github.com/opendatalab/MinerU).
+
+That principle explains the shape of 2.0. 1.x's job fields mirrored MinerU 3's parameters, and 2.x's are MinerU 4's: `tier`, `ocr_mode`, `page_range` and `file_name`. No layer translates the old fields, and where MinerU 4 removed something, per-language OCR included, the template has not added it back.
+
+Some of MinerU 4 is left out by design: its local document library and the CLI built on it, its HTTP API server and router, its Gradio web UI and its file-parse server. On a serverless endpoint, RunPod's queue and this job contract already cover what they do.
+
+The image changed too. It is built on vLLM 0.21 for CUDA 12.9 and bakes the same `MinerU2.5-Pro-2605-1.2B` VLM as 1.13.0, plus MinerU 4's small-model bundle: about 3.2 GB of weights, where 1.x baked about 17.5 GB.
+
+## Checklist
+
+1. Rewrite job payloads: [Rewrite the job payload](#rewrite-the-job-payload).
+2. Upgrade `mineru-client` along with the endpoint: [Python clients](#python-clients).
+3. Remove `MINERU_VL_MODEL_NAME`, `MINERU_MODEL_SOURCE`, `MINERU_WARMUP_BACKEND` and `MINERU_WARMUP_LANG` from the endpoint: [Endpoint settings](#endpoint-settings).
+4. Make sure workers only land on hosts with a CUDA 12.9 or newer driver: [Host CUDA driver](#host-cuda-driver).
+5. Update code that reads `middle`, or that adds its own offset to `page_idx`: [Output changes](#output-changes).
+6. Move dashboards and alerts from the `backend` label to `tier`: [Observability](#observability).
+7. Send scanned documents in scripts other than Latin, Chinese and Japanese to `standard` or `advanced`: [Scanned documents in other scripts](#scanned-documents-in-other-scripts).
+
+## Rewrite the job payload
+
+| 1.x field | 2.x | Notes |
+|---|---|---|
+| `backend` | `tier` | See [Backends to tiers](#backends-to-tiers) |
+| `effort` | `tier` | Hybrid at `medium` is closest to `standard`, at `high` to `advanced` |
+| `start_page`, `end_page` | `page_range` | Two 0-based integers become one 1-based string; see [Page ranges](#page-ranges) |
+| `lang` | removed | MinerU 4 has no OCR language switch |
+| `formula_enable`, `table_enable` | removed | MinerU 4 always extracts formulas and tables |
+| `server_url` | `server_url` | Now accepted only with `standard` or `advanced` |
+| — | `ocr_mode` | New: `auto` (MinerU decides from the document), `txt` (trust the PDF's text layer) or `ocr` (OCR every page) |
+| — | `file_name` | New: an extension hint for formats the content cannot settle, such as CSV against TSV |
+
+`file_url`, `file_b64`, `volume_path`, `transport`, `formats`, `basename`, `archive_format` and `probe` keep their meaning. A removed field fails the job with `Unexpected input. backend is not a valid input option.`, one such sentence per removed field, so a payload you missed shows up on its first job instead of parsing differently.
+
+<Tabs groupId="major" items={["1.x", "2.x"]}>
+<Tab value="1.x">
+
+```json
+{
+  "input": {
+    "file_url":   "https://example.com/report.pdf",
+    "backend":    "hybrid-auto-engine",
+    "effort":     "high",
+    "start_page": 10,
+    "lang":       "en"
+  }
+}
+```
+
+</Tab>
+<Tab value="2.x">
+
+```json
+{
+  "input": {
+    "file_url":   "https://example.com/report.pdf",
+    "tier":       "advanced",
+    "page_range": "11-r1"
+  }
+}
+```
+
+</Tab>
+</Tabs>
+
+The full contract is in the [API reference](/reference/api/).
+
+### Backends to tiers
+
+The mapping is approximate. MinerU's own advice is: "Do not infer new quality defaults from old backend names." Treat this table as a starting point and compare tiers on your own documents.
+
+| 1.x `backend` | Nearest 2.x `tier` | Notes |
+|---|---|---|
+| `pipeline` | `basic` | Small models only, no VLM |
+| `hybrid-auto-engine` | `standard` | Small models plus the VLM, with the local layout model guiding it |
+| `hybrid-auto-engine` with `effort: "high"` | `advanced` | Adds image analysis |
+| `vlm-auto-engine` (the 1.x default) | `advanced` | The VLM does its own layout, as it did in 1.x; compare `standard` too |
+| `vlm-http-client` | `advanced` with `server_url` | |
+| `hybrid-http-client` | `standard` with `server_url` | `advanced` for what `effort: "high"` did |
+| (none) | `flash` | New: the PDF's text layer with no models, or MinerU's Flash OCR on scans |
+
+If you ran the 1.x default, compare `standard` and `advanced` before choosing. `standard` is MinerU's default and asks less of the VLM; `advanced` is the slowest tier. Calls that relied on the 1.x default now get `standard`.
+
+{/* MEASURE: s/page and peak VRAM for standard and advanced on ADA_24 over a fixed document set, next to 1.x vlm-auto-engine on the same set */}
+
+Native documents (Office, OpenDocument, RTF, EPUB, OFD, HTML, CSV/TSV) run at `flash` whatever tier you ask for, and `debug.tier` says so.
+
+### Page ranges
+
+`page_range` is MinerU's own grammar: 1-based, inclusive, comma-separated, with `rN` counting from the end (`r1` is the last page). 1.x's `start_page` and `end_page` were 0-based, so add one to each:
+
+| 1.x | 2.x `page_range` |
+|---|---|
+| `"start_page": 0, "end_page": 4` | `"1-5"` |
+| `"start_page": 4, "end_page": 4` | `"5"` |
+| `"start_page": 10`, with `end_page` omitted or negative | `"11-r1"` |
+| Neither field | Omit `page_range` (the whole document) |
+
+In code: `f"{start_page + 1}-{end_page + 1}"`, or `f"{start_page + 1}-r1"` when the range ran to the end.
+
+A string can also say what two integers could not: several ranges in one job (`"1-5,8"`) and pages counted from the end (`"r3-r1"`, the last three). Three things behave differently from 1.x:
+
+- **PDFs only.** `page_range` is rejected for every other input, images included.
+- **`page_idx` is absolute.** In 1.x, `page_idx` counted from `start_page`, so the first parsed page was 0. In 2.x it is the page's 0-based number in the original document: `"3"` gives `page_idx` 2, and `"11-20"` gives 10 to 19. If you parse a large PDF in batches and add each batch's start page to `page_idx`, stop, or you will count the offset twice. Image file names, such as `images/page_10_image_2.png`, use the same absolute number.
+- **Page counting.** `pages_requested`, `MINERU_MAX_PAGES_PER_JOB` and `REFRESH_WORKER_AFTER_PAGES` count the pages of an absolute range, overlaps once. A range with any `rN` part is treated like a whole-document parse: `pages_requested` is `-1`, and the ceiling and the page counter skip it.
+
+### Removed without replacement
+
+- **`lang`.** MinerU 4 dropped per-language OCR models, so there is no language to pass. [Scanned documents in other scripts](#scanned-documents-in-other-scripts) covers what that means in practice.
+- **`formula_enable` and `table_enable`.** MinerU 4 always extracts formulas and tables, with no switch to turn either off.
+
+Following the principle above, the template does not re-create either on top of MinerU.
+
+## Output changes
+
+- **`middle` has a new schema.** It is now MinerU 4's `docvortex.middle` document, schema version `2.0`: `metadata`, `extensions.mineru` (the `tier` and `parse_mode` that ran) and `pages[]`, each with `page_idx` and a tree of `blocks`, with bounding boxes as fractions of the page. It is not MinerU 3's `pdf_info` structure, so code that reads `middle` has to be rewritten.
+- **`content_list` keeps its names.** It is still Content List V1, with the field names 1.x callers read: `type`, `text`, `text_level`, `img_path`, `table_body`, `table_caption`, `table_footnote`, `page_idx`, `bbox` and the rest. Expect `chart` and `index` blocks, and `code` blocks with `sub_type: "algorithm"`; the [block table](/reference/api/#when-transport-inline) lists them all.
+- **`page_idx` is absolute** under a `page_range`, as described in [Page ranges](#page-ranges).
+- **Image files are named after their page and block**, as in `images/page_0_image_2.png`.
+- **New keys.** `content_list_v2` (blocks grouped by page) and `structured_content` (the block tree rendered as Markdown) join the core artifacts, and five renders can be requested through `formats`: `html`, `latex`, `docx`, `epub` and `pdf`. Inline responses still default to the four keys they always carried; archives now carry all six core artifacts, plus any renders listed. See [Filtering with `formats`](/reference/api/#filtering-with-formats).
+- **Gone from archives:** the `{basename}_layout.pdf` that 1.x archives carried. MinerU's raw model output was never shipped, and MinerU 4 no longer exposes it.
+- **`debug`.** `debug.tier`, the tier that ran (`flash` for native documents), replaces `debug.backend`. `debug.input_format` is now the detected file suffix (`pdf`, `png`, `docx`, `csv`, …) instead of 1.x's `pdf`, `image` or `ooxml`, and `debug.model_dir` points under `/opt/mineru/models`. See [Debug observability](/reference/api/#debug-observability).
+- **Progress.** The `parsing` event carries `tier` and `page_range` in place of `start_page` and `end_page`.
+- **Failures.** A job whose VLM engine died returns `refresh_worker: true` alongside the error, so RunPod replaces the worker instead of sending it more jobs that would fail the same way.
+- **`mineru_version`** reports `4.1.x`.
+
+Inputs widened as well: DOC, XLS and PPT, RTF, OpenDocument, EPUB, OFD, HTML and MHTML, CSV/TSV and JPEG 2000 are accepted, and text formats take a `file_name` hint. See [Input formats](/guides/input-formats/) and [Output modes](/guides/output-modes/).
+
+## Endpoint settings
+
+Remove these from the endpoint's environment if they are set. The 1.x deploy form set the first two by default, and a `{"probe": true}` job shows both under `probe.env`.
+
+| Variable | Why it goes |
+|---|---|
+| `MINERU_VL_MODEL_NAME` | The 1.x form set it to `opendatalab/MinerU2.5-Pro-2605-1.2B`. MinerU 4 treats it as a legacy override and refuses every job that sets `server_url` while it is present, with `MINERU_VL_MODEL_NAME conflicts with model.vlm.model; unset the legacy environment variable`. Jobs on the worker's own engine do not read it. |
+| `MINERU_MODEL_SOURCE` | The image runs MinerU with `local`: the weights are baked in and never downloaded. A 1.x value (`huggingface` by default) overrides that. MinerU keeps using the baked weights while they are intact, but if a file goes missing it reaches for the network instead of failing fast. |
+| `MINERU_WARMUP_BACKEND`, `MINERU_WARMUP_LANG` | No longer read. `MINERU_WARMUP_TIER` replaces them. |
+| `MINERU_HYBRID_BATCH_RATIO` | MinerU 4 does not read it. |
+| RunPod Cached Models (`MODEL_NAME`) | Not needed: the weights are baked into the image. |
+
+These are new, or mean something new:
+
+| Variable | Notes |
+|---|---|
+| `MINERU_WARMUP_TIER` | Default `standard`. The tier the boot warmup parses with, so its models are loaded before the first job. `flash` and `basic` never load the VLM, so warming either leaves it to load on the first `standard` or `advanced` job. A 1.x `MINERU_WARMUP_BACKEND=pipeline` becomes `basic`. |
+| `MINERU_VIRTUAL_VRAM_SIZE` | Optional. MinerU sizes itself as if the card had this many GB; see [GPU memory and concurrency](#gpu-memory-and-concurrency). |
+| `MINERU_LLM_AIDED_FEATURES_TITLE_LEVELING`, `MINERU_LLM_AIDED_FEATURES_CROSS_PAGE_TABLE_CELL_MERGE` | Optional, off by default. Ask an OpenAI-compatible LLM to assign heading levels, or to join table cells split across pages, in PDFs. Heading levels need the whole document, so a job whose `page_range` selects part of it skips them. Set each to `true` or `false`, never empty: MinerU parses these strictly, and an empty value fails every job. |
+| `MINERU_LLM_AIDED_BASE_URL`, `MINERU_LLM_AIDED_MODEL`, `MINERU_LLM_AIDED_API_KEY` | Required when either switch is on. Set the base URL explicitly, because MinerU's own default points at DashScope. Heading and table text is sent to that provider. |
+| `MINERU_PROCESSING_WINDOW_SIZE` | Pages analysed per window, now on `basic`, `standard` and `advanced` rather than the pipeline backend only. Default 64. |
+| `MINERU_PDF_RENDER_THREADS` | Default is now 3 (it was 4). |
+
+Everything else keeps its meaning: `MINERU_MAX_CONCURRENCY`, `REFRESH_WORKER_AFTER_JOBS`, `MINERU_VOLUME_ROOTS`, `MINERU_ENFORCE_TARGET_POLICY` with `MINERU_ALLOWED_SERVER_HOSTS`, `MINERU_ALLOW_LOCAL_FETCH`, `MINERU_DISABLE_PROBE`, the `BUCKET_*` variables, `LOG_FORMAT`, `MINERU_SKIP_WARMUP`, `MINERU_PDF_RENDER_TIMEOUT` and the `OTEL_*` variables. `MINERU_MAX_PAGES_PER_JOB` and `REFRESH_WORKER_AFTER_PAGES` count pages as described under [Page ranges](#page-ranges).
+
+### Host CUDA driver
+
+The image is built for CUDA 12.9 and needs hosts whose driver supports CUDA 12.9 or newer. The Hub template already limits workers to CUDA 12.9 and 13.0 hosts. An endpoint created another way, with `deploy.py` or by hand, may allow older drivers; restrict its allowed CUDA versions to 12.9 and newer in the endpoint settings.
+
+Blackwell cards (RTX 5090, RTX PRO 6000, B200) are being verified for 2.x. The default GPU pools stay `ADA_24`, `AMPERE_24` and `AMPERE_48`; see [Choosing a GPU](/guides/choosing-gpu/).
+
+### GPU memory and concurrency
+
+MinerU 4 sizes vLLM differently from MinerU 3. On a card with more than 8 GB, it gives vLLM `max(6 / VRAM in GB, 0.1)` of the memory: about 6 GB on any card up to 60 GB (a quarter of a 24 GB card), where 1.x gave vLLM half the card. With a smaller KV cache, raising `MINERU_MAX_CONCURRENCY` above 1, or moving to a 48 GB card, buys less than it did in 1.x unless you set `MINERU_VIRTUAL_VRAM_SIZE`. MinerU then sizes vLLM as if the card had that many GB, so `12` on a 24 GB card gives vLLM half of it; 6 or less gives it the whole card, which leaves nothing for the small models.
+
+1.x VRAM figures do not carry over, so measure before reusing 1.x concurrency settings. See [Scaling](/guides/scaling/) and [Choosing a GPU](/guides/choosing-gpu/).
+
+{/* MEASURE: peak VRAM and s/page on ADA_24 for standard and advanced with default sizing, with MINERU_VIRTUAL_VRAM_SIZE=12, and at MINERU_MAX_CONCURRENCY=2 */}
+
+## Observability
+
+Dashboards and alerts that group by `backend` need to move to `tier`. With [OpenTelemetry](/guides/observability/) export on, the renames are:
+
+| Signal | 1.x | 2.x |
+|---|---|---|
+| `mineru.jobs.total`, `mineru.job.duration` | `backend`, `input_format` | `tier`, `input_format` |
+| `mineru.pages.total`, `mineru.pages_per_second` | `backend` | `tier` |
+| `mineru.worker.warmup.duration` | `backend`, `status` | `tier`, `status` |
+| `mineru.worker.refresh.total` | `reason`: `jobs_threshold`, `pages_threshold`, `sigterm` | Adds `engine_dead` |
+| Parse span attributes | `mineru.backend`, `mineru.input_format`, `mineru.start_page`, `mineru.end_page` | `mineru.tier`, `mineru.input_format`, `mineru.page_range` |
+| Warmup span attributes | `mineru.backend`, `mineru.lang` | `mineru.tier` |
+
+The `starting job` line in the worker's stdout logs follows the same rename, with or without OpenTelemetry: `tier`, `ocr_mode` and `page_range` replace `backend`, `lang`, `start_page` and `end_page`.
+
+Two value changes are easy to miss. `tier` is the tier that ran, so native documents count under `flash` whatever was requested. And `input_format` now holds the detected suffix (`pdf`, `png`, `docx`, …), so a filter on 1.x's `image` or `ooxml` matches nothing.
+
+## Scanned documents in other scripts
+
+MinerU 4 dropped per-language OCR, and for one 1.x use case that is a real loss. MinerU 3's pipeline backend had separate recognition models for Cyrillic, Arabic, Devanagari, Korean and other scripts, chosen with `lang`. MinerU 4 has a single recognizer covering Chinese, English, Japanese and Latin-script languages; its character set has no Cyrillic, Arabic, Devanagari, Korean, Thai or Greek.
+
+What that means per tier:
+
+- A PDF with a text layer is read from that layer in every tier, whatever its script.
+- `basic` OCRs scanned pages with the single recognizer, and so does `flash`.
+- `standard` and `advanced` take the text of scanned pages from the VLM.
+
+Scanned documents in other scripts therefore belong on `standard` or `advanced`. The VLM's model card is tagged for English and Chinese, so check its output on a sample of your own scans before relying on it. The 1.x route of `pipeline` with `lang: "east_slavic"` (or `cyrillic`, `arabic`, `devanagari`, `korean`) has no 2.x equivalent. Following the principle at the top of this page, the template does not add one; requests for it belong [upstream](https://github.com/opendatalab/MinerU).
+
+{/* MEASURE: text accuracy of standard and advanced on a scanned Cyrillic test set, next to 1.x pipeline with lang east_slavic on the same set */}
+
+## Python clients
+
+### MineruClient
+
+`parse_document` follows the job contract:
+
+| 1.x keyword | 2.x keyword |
+|---|---|
+| `backend="vlm-auto-engine"` | `tier="standard"` |
+| `start_page=0`, `end_page=None` | `page_range=None`, or a string such as `"1-5"` |
+| `lang="en"` | Removed |
+| `formula_enable=True`, `table_enable=True` | Removed |
+| — | `ocr_mode="auto"` |
+| — | `file_name=None` |
+
+```python
+# 1.x
+result = client.parse_document(
+    file_url="https://example.com/report.pdf",
+    backend="pipeline",
+    start_page=0,
+    end_page=4,
+)
+
+# 2.x
+result = client.parse_document(
+    file_url="https://example.com/report.pdf",
+    tier="basic",
+    page_range="1-5",
+)
+```
+
+Calls that relied on the 1.x default (`vlm-auto-engine`) now get `standard`; pass `tier="advanced"` for the closest match. `save_inline` writes every inline key, the new JSON renderings and any requested renders included. Reinstall the package from the repository when you upgrade the endpoint; [Clients](/getting-started/clients/) has the install command.
+
+### MineruApiClient
+
+The MinerU cloud API surface it reproduces is unchanged. What changed is how its parameters reach the worker:
+
+| Cloud API parameter | 1.x | 2.x |
+|---|---|---|
+| `model_version` | `pipeline` → `pipeline`, `vlm` → `vlm-auto-engine`; `MinerU-HTML` rejected | `pipeline` → `basic`, `vlm` → `advanced`, `MinerU-HTML` → `flash` (MinerU 4 parses HTML natively) |
+| `is_ocr` | Accepted, no effect | `true` → `ocr_mode: "ocr"` |
+| `page_ranges` | One contiguous range | Several ranges; the cloud's `2--2` becomes `2-r2` |
+| `extra_formats` (`docx`, `html`, `latex`) | Rejected | Rendered and added to the archive behind `full_zip_url` |
+| `enable_formula`, `enable_table`, `language` | Mapped to the 1.x fields | Accepted, no effect: MinerU 4 has no such switches |
+| `callback` | Rejected | Still rejected |
+
+See [Migrate from the MinerU API](/getting-started/migrate-from-mineru-api/) for the rest of the compatibility client.
+
+## Staying on 1.x
+
+If you are not ready to move, stay on the last 1.x release, 1.13.0, which runs MinerU 3.4:
+
+- **Hub:** keep the endpoint on the 1.13.0 release.
+- **Fork:** keep the branch your endpoint watches on the `v1.13.0` tag. A fork-built endpoint rebuilds on every push to that branch, so syncing it with upstream `main` moves it to 2.x.
+- **Your own image:** build it from the `v1.13.0` tag.
+- **Client:** install `mineru-client` from the `v1.13.0` tag as well, since a 2.x client's payloads fail on a 1.x endpoint.
+
+[Versioning](/reference/versioning/) explains when the major moves and which release notes to read before upgrading.

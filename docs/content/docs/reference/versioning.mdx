@@ -38,8 +38,8 @@ pip install "mineru-client @ git+https://github.com/sergeyshmakov/mineru-runpod"
 
 Nothing you can write there range-pins a version, and no resolver ever reads one.
 A major bump therefore cannot warn you any better than a release note can — while
-spending the major on it would leave the number one behind the MinerU major it
-is reserved for, and further behind after every such change. The release notes are
+spending the major on it would put the number out of step with the MinerU majors
+it is reserved for, and further out after every such change. The release notes are
 the channel that reaches you; the digit is not.
 
 That also means the practical advice is the same either way: **pin a tag** if you
@@ -49,13 +49,36 @@ need stability, and read the notes when you move it.
 
 | | |
 |---|---|
-| **MinerU series** | `3.4.x` |
-| **Pinned as** | `mineru[core,vllm]>=3.4.0,<3.5.0` |
+| **MinerU series** | `4.1.x` |
+| **Pinned as** | `mineru[torch]>=4.1.3,<4.2.0` |
 
 The engine version is stated here, in the README, and in the Hub listing, rather
-than encoded in the template's version number — "v4.0.0" would not tell you which
-MinerU you are getting. The pin is minor-locked, so an engine major cannot arrive
-by accident.
+than encoded in the template's version number — "2.0.0" does not tell you that
+MinerU 4.1 is underneath. The pin is minor-locked, so neither an engine major nor
+a MinerU minor, which has changed the default model before, can arrive by
+accident.
+
+### Template ↔ MinerU
+
+| Template | MinerU | Pinned as |
+|---|---|---|
+| **2.x** | `4.1.x` | `mineru[torch]>=4.1.3,<4.2.0` |
+| **1.8.0 – 1.13.0** | `3.4.x` | `mineru[core,vllm]>=3.4.0,<3.5.0` |
+
+Earlier 1.x releases ran MinerU 2.5 and then earlier 3.x lines; each tag's
+`requirements.txt` records its pin. 1.x began before the policy above was
+written down, which is why it spans more than one MinerU line. 2.0.0 is the
+first major the engine has moved.
+
+### Staying on MinerU 3
+
+1.x and 2.x job payloads are not interchangeable: each endpoint rejects the
+other major's fields. To stay on MinerU 3.4 until your callers are ready, pin
+the `v1.13.0` tag, or the 1.13.0 release on the Hub, and install `mineru-client`
+from the same tag. An endpoint built from a fork rebuilds on every push to the
+branch it watches, so keep that branch on `v1.13.0` rather than syncing it with
+`main`. [Upgrading to 2.x](/getting-started/upgrade-to-2/) covers the move when
+you make it.
 
 ## Reading the notes
 

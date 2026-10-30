@@ -9,12 +9,12 @@ import { modelCardUrl, repositoryUrl, runpodReferralUrl } from "@/lib/site";
 const quickStartCode = `from mineru_client import MineruClient
 
 client = MineruClient(endpoint_id="<your-endpoint-id>")
-result = client.parse_document(file_url="https://example.com/report.pdf", end_page=4)
+result = client.parse_document(file_url="https://example.com/report.pdf", page_range="1-5")
 client.save_tarball(result, "./out/doc")
-# → markdown + content_list + middle.json + images`;
+# → doc.md + content lists + middle.json + structured content + images/`;
 
 const homeDescription =
-	"Deploy MinerU 3.4 on RunPod Serverless in two clicks. The open-source endpoint scales to zero and returns Markdown, structured JSON, and images.";
+	"Deploy MinerU 4.1 on RunPod Serverless in two clicks. The open-source endpoint scales to zero and returns Markdown, structured JSON, and images.";
 
 export const metadata: Metadata = pageMetadata({
 	title: "Deploy MinerU on RunPod Serverless",
@@ -35,12 +35,14 @@ export default async function HomePage() {
 				<div className="grid items-center gap-12 lg:grid-cols-[minmax(0,12fr)_minmax(0,9fr)]">
 					<div>
 						<h1 className="text-balance text-4xl font-semibold tracking-tight sm:text-6xl">
-							Deploy MinerU 2.5 Pro on RunPod in two clicks
+							Deploy MinerU 4.1 on RunPod in two clicks
 						</h1>
 						<p className="mt-6 max-w-2xl text-pretty text-lg leading-8 text-fd-muted-foreground sm:text-xl">
 							Open-source RunPod Serverless template. Your endpoint scales to
-							zero; best-case warm parses measured about $0.0003 per page on a
-							24 GB RTX 4090.
+							zero and bills by the second, so an idle endpoint costs nothing.
+							{/* MEASURE: best-case warm $/page on the 2.x default tier
+							    (standard) on a 24 GB RTX 4090, before a per-page price
+							    returns to this line */}
 						</p>
 						<div className="mt-9 flex flex-wrap gap-3">
 							<a
@@ -112,7 +114,7 @@ export default async function HomePage() {
 							<strong className="text-fd-foreground">your</strong> wallet.
 						</p>
 						<p>
-							Under the hood it is one Docker image wrapping{" "}
+							Under the hood it is one Docker image running the official{" "}
 							<a
 								href="https://github.com/opendatalab/MinerU"
 								rel="noreferrer noopener"
@@ -121,11 +123,16 @@ export default async function HomePage() {
 							>
 								MinerU
 							</a>{" "}
-							3.4.x with the <code>MinerU2.5-Pro-2605-1.2B</code> VLM by
-							default. Send a PDF as a URL, base64 blob, or path on a mounted
-							volume. Get back Markdown, a structured <code>content_list</code>,
-							the raw <code>middle.json</code>, and extracted images. When
-							traffic stops, RunPod tears the worker down in seconds.
+							4.1.x release, with its small models and the{" "}
+							<code>MinerU2.5-Pro-2605-1.2B</code> VLM baked in. Send a PDF,
+							image, Office file, EPUB or HTML page as a URL, base64 blob, or
+							path on a mounted volume, and pick one of MinerU&apos;s four
+							tiers, from <code>flash</code> to <code>advanced</code>, where
+							the VLM reads the layout itself. Get back Markdown, a structured{" "}
+							<code>content_list</code>, MinerU&apos;s <code>middle.json</code>,
+							extracted images, and on request HTML, LaTeX, DOCX, EPUB or PDF
+							renders. When traffic stops, RunPod tears the worker down in
+							seconds.
 						</p>
 					</div>
 				</section>
@@ -136,11 +143,12 @@ export default async function HomePage() {
 					</h2>
 					<Cards className="mt-6">
 						<Card
-							title="MinerU 2.5 Pro output"
+							title="MinerU 4.1 output"
 							description={
 								<>
-									The 1.2B VLM produces Markdown, tables, formulas, reading
-									order, and structured JSON. See the{" "}
+									Four quality tiers, from a fast text-layer pass to the
+									MinerU2.5-Pro 1.2B VLM, produce Markdown, tables, formulas,
+									reading order, and structured JSON. See the{" "}
 									<a
 										href={modelCardUrl}
 										rel="noreferrer noopener"
@@ -157,16 +165,19 @@ export default async function HomePage() {
 							title="Pay per second, not per hour"
 							description={
 								<>
-									Best-case warm parsing measured about $0.0003 per page on a
-									24 GB RTX 4090. Content density and cold starts raise the real
-									cost; see the{" "}
+									RunPod bills a worker by the second and scales it to zero
+									between bursts. The tier, content density and cold starts set
+									the real cost; see{" "}
 									<Link
 										href="/guides/choosing-gpu/"
 										className="underline underline-offset-4"
 									>
-										measured range
+										Choosing a GPU
 									</Link>
 									.
+									{/* MEASURE: warm $/page per tier on a 24 GB RTX 4090 under
+									    2.x; the 1.x figure was measured on MinerU 3.4 and does
+									    not carry over */}
 								</>
 							}
 						/>
@@ -220,12 +231,12 @@ export default async function HomePage() {
 						<Card
 							title="Pick the right GPU"
 							href="/guides/choosing-gpu/"
-							description="When 24 GB is enough, when to jump to 48 GB, and which RunPod pool IDs map to which workload shapes. Includes the official MinerU hardware compatibility table."
+							description="Which RunPod GPU pool fits your tier and workload shape, what MinerU 4 does with the VRAM it is given, and when a bigger card pays off."
 						/>
 						<Card
 							title="When something breaks"
 							href="/guides/troubleshooting/"
-							description="Hub build flakes, Blackwell crashes, Latin-on-Cyrillic, OOM, cold starts. How to read the debug block to diagnose anything else."
+							description="Hub build flakes, CUDA driver mismatches, OOM, cold starts. How to read the debug block to diagnose anything else."
 						/>
 						<Card
 							title="Observe production jobs"

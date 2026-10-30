@@ -16,12 +16,14 @@ from typing import Callable
 from model import Section
 
 
-def attach_pages(blocks: list[dict], start_page: int) -> list[dict]:
-    """Stamp each block with an absolute source page. MinerU `page_idx` is relative to
-    the parsed slice, so add the slice's start page. Returns the same list."""
+def attach_pages(blocks: list[dict], start_page: int = 0) -> list[dict]:
+    """Stamp each block with its absolute source page. MinerU 4 reports `page_idx` as the
+    page's 0-based number in the original document, even when a `page_range` parsed only a
+    slice, so it is used as is; the slice's `start_page` only stands in for a block that
+    has no `page_idx`. Returns the same list."""
     for b in blocks:
         pi = b.get("page_idx")
-        b["_abs_page"] = (start_page + pi) if isinstance(pi, int) else start_page
+        b["_abs_page"] = pi if isinstance(pi, int) else start_page
     return blocks
 
 

@@ -1,14 +1,14 @@
 ---
 title: Output modes
-description: Pick between tarball_b64, inline, and S3 presigned URLs with the transport field, and use formats to filter which artifacts the inline payload carries.
+description: Pick between tarball_b64, inline, and S3 presigned URLs with the transport field, and use formats to choose the inline artifacts or add HTML, LaTeX, DOCX, EPUB and PDF renders.
 ---
 
-The worker uses one transport choice plus an inline-only filter:
+The worker uses one transport choice plus a `formats` list:
 
 - **`transport`** — how the output is shipped (`tarball_b64` / `inline` / `s3`).
-- **`formats`** — for inline transport, which subset of `markdown` / `content_list` / `middle` / `images` rides along in the response.
+- **`formats`** — which artifacts an inline response carries, and which extra renders (HTML, LaTeX, DOCX, EPUB, PDF) any transport adds.
 
-Pick `transport` based on **how big the output is** and **what you want to do with it**. Use `formats` to skip artifacts you don't need.
+Pick `transport` based on **how big the output is** and **what you want to do with it**. Use `formats` to skip artifacts you don't need, or to ask for a render.
 
 ## At a glance
 
@@ -18,9 +18,29 @@ Pick `transport` based on **how big the output is** and **what you want to do wi
 | `"inline"` | entry has text/JSON fields plus base64-encoded images, filterable via `formats` | Same ~20 MB cap | You want structured fields back in a JSON-only caller; small docs |
 | `"s3"` | entry has `tarball_url`: presigned URL to the same `.tar.gz` on an S3-compatible bucket | No gateway-response cap; worker RAM, disk, timeout, and provider limits still apply | Large docs and image-heavy reports; response stays tiny |
 
-All three modes produce the **same** underlying output — Markdown, content list, middle JSON, extracted images. The choice is purely about transport.
+All three modes ship the **same** parse. The archives (`tarball_b64`, `s3`) always carry the six core artifacts below; `inline` carries the subset `formats` names — four of them by default. The choice is about transport, not about what MinerU produces.
 
 Every success response wraps each parsed file in a `results: [...]` entry. For a single-file submission the list has one element; reach into it with `result["results"][0]` (or `MineruClient.first(result)` for the Python client).
+
+## What the worker produces
+
+| `formats` key | File in the archive | Contents |
+|---|---|---|
+| `markdown` | `{basename}.md` | The document as Markdown. Required: a job that cannot produce readable Markdown fails |
+| `content_list` | `{basename}_content_list.json` | MinerU's Content List V1 — a flat list of blocks with the same field names as 1.x (`type`, `text`, `text_level`, `img_path`, `table_body`, `page_idx`, `bbox`, …), plus MinerU 4's `chart` and `index` blocks and `code` blocks with `sub_type: "algorithm"` |
+| `middle` | `{basename}_middle.json` | MinerU 4's full document model (`docvortex.middle`, schema 2.0): `metadata`, `pages[].blocks`, and `extensions.mineru` with the tier and parse mode. **Not** the `pdf_info` shape 1.x returned |
+| `images` | `images/*` | Extracted images. Inline as `{filename: base64}` |
+| `content_list_v2` | `{basename}_content_list_v2.json` | MinerU's Content List V2: the blocks grouped by page |
+| `structured_content` | `{basename}_structured_content.json` | MinerU's Structured Content: the document's block tree, page by page, with each block's content as Markdown |
+| `html` | `{basename}.html` | Render, on request. Self-contained: images are embedded as `data:` URIs |
+| `latex` | `{basename}.tex` | Render, on request. References the files under `images/` |
+| `docx` | `{basename}.docx` | Render, on request. Inline as `{filename: base64}` |
+| `epub` | `{basename}.epub` | Render, on request. Inline as `{filename: base64}` |
+| `pdf` | `{basename}.pdf` | Render, on request. Keeps the source's page layout when the source is a PDF, reflows otherwise. Inline as `{filename: base64}` |
+
+The first four are the inline default, as in 1.x. The archives always carry the first six — the core artifacts — whatever `formats` says, and add each render it lists. Renders are produced only when listed, for every transport; see [Renders](#renders-html-latex-docx-epub-pdf).
+
+Coming from 1.x: `content_list` keeps its field names, but `middle` is a different schema, so code that read its `pdf_info` needs rewriting — see [Upgrading to 2.x](/getting-started/upgrade-to-2/). 1.x archives also carried a `{basename}_layout.pdf`; 2.x archives do not. Field-level reference: [API reference → Success response](/reference/api/#success-response).
 
 ## tarball_b64 (default)
 
@@ -49,7 +69,18 @@ Response (truncated):
 }
 ```
 
-Unpack with `MineruClient.save_tarball(result, "./out")` or any base64 + gzip + tar tooling. **Default** because it round-trips cleanly through any JSON layer and the output dir on disk matches what MinerU produces locally.
+Unpack with `MineruClient.save_tarball(result, "./out")` or any base64 + gzip + tar tooling. **Default** because it round-trips cleanly through any JSON layer and unpacks to a plain directory of files. With the default `basename`, the archive holds:
+
+```text
+doc.md
+doc_content_list.json
+doc_content_list_v2.json
+doc_middle.json
+doc_structured_content.json
+images/
+```
+
+plus `doc.html`, `doc.tex`, `doc.docx`, `doc.epub` or `doc.pdf` for each render listed in `formats`. The `s3` transport uploads the same archive.
 
 Hits the 20 MB gateway cap on documents with hundreds of pages of images or layout-dense PDFs. When that happens, switch to `s3`.
 
@@ -76,8 +107,8 @@ Response (truncated):
       "pages_requested": -1,
       "markdown": "# Heading\n\nBody text...",
       "content_list": [{"type": "text", "page_idx": 0, "text": "..."}],
-      "middle": {"...": "..."},
-      "images": {"img-1.png": "<base64>", "img-2.png": "<base64>"}
+      "middle": {"metadata": {"...": "..."}, "pages": [{"page_idx": 0, "blocks": ["..."]}]},
+      "images": {"page_0_image_0.png": "<base64>", "page_1_image_0.png": "<base64>"}
     }
   ]
 }
@@ -87,7 +118,7 @@ Same 20 MB cap as `tarball_b64`. Worth it when the caller can't trivially untar 
 
 ## Filtering with `formats`
 
-For inline transport, `formats` whitelists which of the four artifacts ride back in the entry. Omitted keys are absent from the response — not present-as-empty. Useful when only the markdown matters and the images would otherwise add megabytes of base64 to the payload.
+For inline transport, `formats` whitelists which artifacts ride back in the entry. Omitted keys are absent from the response — not present-as-empty. Useful when only the markdown matters and the images would otherwise add megabytes of base64 to the payload.
 
 **Just the markdown:**
 
@@ -101,7 +132,7 @@ For inline transport, `formats` whitelists which of the four artifacts ride back
 }
 ```
 
-Response entry contains only `markdown` (plus the usual `basename` / `source` / `pages_requested`). `content_list`, `middle`, and `images` are not present.
+Response entry contains only `markdown` (plus the usual `basename` / `source` / `pages_requested`). No other artifact key is present.
 
 **Markdown + content list, skip the images:**
 
@@ -119,9 +150,43 @@ Useful for RAG ingestion where the image blobs aren't needed and removing them s
 
 **Rules**:
 
-- Order doesn't matter. Duplicates collapse silently.
-- Empty list is rejected (`formats: []` → validation error). Omit the field to get all four.
-- `formats` is a **no-op** for `tarball_b64` and `s3` transports. Those always ship the full tarball — filtering the contents of an archive would just confuse callers who later download it and find a missing file. If you want a partial set with those transports, extract the tarball and ignore the files you don't need.
+- Valid keys are the eleven in [What the worker produces](#what-the-worker-produces). Order doesn't matter. Duplicates collapse silently.
+- Empty list is rejected (`formats: []` → validation error). Omit the field to get the default four: `markdown`, `content_list`, `middle`, `images`.
+- For `tarball_b64` and `s3`, `formats` can only **add**: those transports always ship the six core artifacts — filtering the contents of an archive would just confuse callers who later download it and find a missing file — plus any render you list. If you want a partial set with those transports, extract the archive and ignore the files you don't need.
+
+## Renders: HTML, LaTeX, DOCX, EPUB, PDF
+
+MinerU 4 can render the parsed document to five more targets. List them in `formats` to get them; they are produced only on request, for every transport.
+
+```json
+{
+  "input": {
+    "file_url": "https://example.com/report.pdf",
+    "transport": "inline",
+    "formats": ["markdown", "html", "docx"]
+  }
+}
+```
+
+Response entry (truncated):
+
+```json
+{
+  "basename": "doc",
+  "source": "url:https://example.com/report.pdf",
+  "pages_requested": -1,
+  "markdown": "# Heading\n\nBody text...",
+  "html": "<!DOCTYPE html>...",
+  "docx": {"doc.docx": "<base64>"}
+}
+```
+
+- **`html`** is self-contained: its images are embedded as `data:` URIs, so it needs nothing beside it.
+- **`latex`** references the files under `images/`. Inline, list `images` too, or take an archive.
+- **`docx`, `epub` and `pdf`** are binary, so inline they arrive the way `images` does: a `{filename: base64}` map, here with one entry.
+- **`pdf`** keeps the source's page layout when the source is a PDF, and reflows the content otherwise.
+- **Renders count toward the ~20 MB inline cap**, and toward the archive's size. HTML embeds its images as base64, so a picture-heavy document makes a large HTML file — and carries those images twice when `images` ships too. For those, prefer `s3`.
+- **A render that fails fails the job**, as it does in MinerU's own API, rather than returning without what you asked for.
 
 ## s3 (presigned URL)
 

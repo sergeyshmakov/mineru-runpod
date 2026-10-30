@@ -21,7 +21,7 @@ you create an endpoint by hand and type an image name instead, the pull
 fails with an access error; see
 [troubleshooting](/guides/troubleshooting/#you-dont-have-access-to-download-the-artifacts).
 
-This is the recommended path if your goal is parsing PDFs, not customising the worker.
+This is the recommended path if your goal is parsing documents, not customising the worker.
 
 ## Option B — Fork and auto-build (for customization)
 
@@ -61,16 +61,58 @@ This skips RunPod's auto-build entirely. Use it when you need custom base images
 
 | Setting | Value | Why |
 |---|---|---|
-| `gpu_ids` | `ADA_24` | 24 GB Ada / RTX 4090. Fits the [`MinerU2.5-Pro-2605-1.2B` VLM](https://huggingface.co/opendatalab/MinerU2.5-Pro-2605-1.2B) comfortably with KV cache; faster per page than the cheaper A5000 (`AMPERE_24`). |
+| `gpu_ids` | `ADA_24` | 24 GB Ada / RTX 4090, the default since 1.x, where it measured cheaper per page than the A5000 (`AMPERE_24`). MinerU 4 sizes vLLM to about 6 GB of the card for the [`MinerU2.5-Pro-2605-1.2B` VLM](https://huggingface.co/opendatalab/MinerU2.5-Pro-2605-1.2B). |
 | `idle_timeout` | `10 s` | Scale workers to zero after 10 s of inactivity |
 | `workers_min` | `0` | Pay only when processing |
 | `workers_max` | `3` | [Concurrency](/guides/concurrency/) cap (parallel workers); bump for production |
-| `execution_timeout` | `900 s` | Per-job cap; covers a several-hundred-page parse. `deploy.py` applies it for you with a `PATCH` to the REST API, because the SDK's `create_endpoint` still has no parameter for it. If that call fails the summary line reads `execution timeout: NOT SET (…)` and names the reason — set it in the console when you see that, since the endpoint is otherwise on RunPod's own default rather than this one. |
+| `execution_timeout` | `900 s` | Per-job cap; size it to your longest document. `deploy.py` applies it for you with a `PATCH` to the REST API, because the SDK's `create_endpoint` still has no parameter for it. If that call fails the summary line reads `execution timeout: NOT SET (…)` and names the reason — set it in the console when you see that, since the endpoint is otherwise on RunPod's own default rather than this one. |
 | `flashboot` | `true` | RunPod's fast cold-start tech |
+
+{/* MEASURE: s/page and peak VRAM for the standard tier on ADA_24 and AMPERE_24 under 2.x, to re-check the per-page comparison and to say how many pages a 900 s job covers */}
 
 Override any of these via flags to `deploy.py` (e.g. `--gpu-ids AMPERE_24 --workers-max 5`).
 
 See [Choosing a GPU](/guides/choosing-gpu/) for when to deviate from the default 24 GB pool.
+
+## Host and image
+
+The image is built on vLLM's CUDA 12.9 build, so a worker host needs a CUDA
+12.9 or newer driver. The Hub listing limits the endpoint to CUDA 12.9 and 13.0
+hosts for you. `deploy.py` sets no such filter: on an endpoint you create with
+it or by hand, set the allowed CUDA versions to 12.9 and 13.0 in the endpoint
+settings, or a worker can land on an older host and fail to start.
+
+The GPU pools are the same as in 1.x: `ADA_24` (the default), `AMPERE_24` and
+`AMPERE_48`. Blackwell cards (RTX 5090, RTX PRO 6000, B200) are being verified
+for 2.x; until then the Hub listing does not offer them.
+
+The model weights are baked into the image, under MinerU's own model root: the
+VLM (2.3 GB) and MinerU 4's small-model bundle (0.9 GB), about 3.2 GB where 1.x
+carried about 17.5 GB. Nothing is downloaded at runtime, so no network volume or
+RunPod Cached Models entry is needed. The 50 GB default container disk holds the
+image plus the working room a parse needs; check it with `df -h` on a real
+worker before parsing books that produce multi-GB archives.
+
+{/* MEASURE: pulled image size and free container disk on a running 2.x worker */}
+
+## Environment variables
+
+Every setting on the Hub form is optional, and an endpoint runs with all of them
+at their defaults. Three are new in 2.x and worth a look before the first
+deploy:
+
+| Variable | Default | What it does |
+|---|---|---|
+| `MINERU_WARMUP_TIER` | `standard` | The tier the boot warmup parses with, so its models are loaded before the first job. Set it to the tier most callers use; `flash` and `basic` never load the VLM. |
+| `MINERU_VIRTUAL_VRAM_SIZE` | detected VRAM | The VRAM, in GB, MinerU sizes itself for. MinerU 4 gives vLLM about 6 GB of any card; a smaller value gives it a bigger share (12 on a 24 GB card gives it half), and 6 or less gives it the whole card. See [Scaling and tuning](/guides/scaling/). |
+| `MINERU_LLM_AIDED_*` | off | MinerU's optional LLM-aided heading levels and cross-page table merge, for PDFs. Either switch needs `MINERU_LLM_AIDED_BASE_URL`, `MINERU_LLM_AIDED_MODEL` and `MINERU_LLM_AIDED_API_KEY`, and sends heading or table text to that API. Leave a switch at `false` rather than empty: MinerU rejects an empty value, and every job fails. |
+
+Upgrading an endpoint created from a 1.x release? Delete `MINERU_VL_MODEL_NAME`
+from its environment: MinerU 4 rejects it alongside a per-job `server_url`.
+`MINERU_MODEL_SOURCE` (the image sets its own), `MINERU_WARMUP_BACKEND` and
+`MINERU_WARMUP_LANG` (replaced by `MINERU_WARMUP_TIER`) are leftovers to delete
+too, along with any RunPod Cached Models entry.
+[Upgrading to 2.x](/getting-started/upgrade-to-2/) lists every change.
 
 ## What to do after deploy
 

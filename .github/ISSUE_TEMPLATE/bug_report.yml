@@ -44,7 +44,7 @@ body:
     id: mineru-version
     attributes:
       label: MinerU version (from handler response)
-      placeholder: "3.2.x"
+      placeholder: "4.1.x"
 
   - type: input
     id: gpu

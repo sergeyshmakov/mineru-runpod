@@ -47,7 +47,7 @@ Inside a uv-managed project, use `uv add` instead — same git reference, but it
 from mineru_client import MineruClient
 
 client = MineruClient(endpoint_id="<your-endpoint-id>")
-result = client.parse_document(file_url="https://example.com/report.pdf", end_page=4)
+result = client.parse_document(file_url="https://example.com/report.pdf", page_range="1-5")
 entry = MineruClient.first(result)            # single-file results list
 client.save_tarball(result, "./out/doc")      # save_* helpers accept the full result
 ```
@@ -55,6 +55,24 @@ client.save_tarball(result, "./out/doc")      # save_* helpers accept the full r
 That's it. The wrapper builds the JSON payload, calls `/runsync` via the RunPod SDK, raises `MineruClientError` on failure, and extracts the tarball into a local directory.
 
 The response wraps each parsed file in a `results: [...]` list — for a single-file submission you get a one-element list. Use `MineruClient.first(result)` to grab that entry without indexing.
+
+### `parse_document` parameters
+
+Pass exactly one source — `file_url`, `file_b64` or `volume_path` — plus any of these keyword arguments. All but `timeout` map one-to-one onto a field of the [job input](/reference/api/#job-input), under MinerU's own name where MinerU has one.
+
+| Parameter | Default | What it sets |
+|---|---|---|
+| `tier` | `"standard"` | MinerU's quality tier: `flash`, `basic`, `standard` or `advanced`. Only PDFs and images use it; other formats always run `flash`. |
+| `ocr_mode` | `"auto"` | `"auto"` lets MinerU sample the document and choose once for all of it, `"txt"` trusts the text layer, `"ocr"` OCRs every page. |
+| `page_range` | whole document | PDFs only. MinerU's 1-based grammar: `"5"`, `"1-5,8"`, `"r3-r1"` (`r1` is the last page), `"2-r2"`. |
+| `file_name` | none | A name to take the extension from, where content can't settle the format: CSV against TSV, an HTML fragment. Only the extension is used; without it the URL's or volume path's last segment serves. |
+| `server_url` | none | An external OpenAI-compatible VLM server for `standard` or `advanced`, used instead of the worker's own engine. |
+| `transport` | `"tarball_b64"` | `"tarball_b64"`, `"inline"` or `"s3"`. |
+| `formats` | `markdown`, `content_list`, `middle`, `images` | What an inline response carries; add `content_list_v2` or `structured_content`. The renders `html`, `latex`, `docx`, `epub` and `pdf` are produced only when listed, for every transport. A bare string is accepted. |
+| `basename` | `"doc"` | The stem of every output file name. |
+| `timeout` | `900` | Seconds `run_sync` waits for the result. |
+
+`save_inline` writes every key an inline entry carries, renders included, under the worker's own file names. `MineruClient.parse_document_from_file(client, path, **kwargs)` reads a local file and sends it as `file_b64`.
 
 ### What `MineruClient` gives you
 
@@ -69,7 +87,7 @@ The response wraps each parsed file in a `results: [...]` list — for a single-
 - **No retries or backoff.** Cold-start jobs can fail; the wrapper does not retry. Add your own retry logic with `tenacity` or similar if you need it.
 - **No streaming progress.** The handler emits `progress_update` events during a parse; the client ignores them.
 - **No typed response models.** Returns a raw `dict`. If you want a `ParsedDocument` Pydantic model, write your own adapter (see [the adapter example](https://github.com/sergeyshmakov/mineru-runpod/blob/main/examples/parser_adapter_example.py)).
-- **Not every raw field is wrapped.** Use the direct SDK or HTTP contract for fields such as hybrid `effort` or `archive_format`.
+- **Not every raw field is wrapped.** Use the direct SDK or HTTP contract for `archive_format` (a `.zip` instead of `.tar.gz`) or a `probe` job.
 
 This is a deliberate scope choice. The wrapper is a starter, not a production framework.
 
@@ -88,8 +106,7 @@ runpod.api_key = os.environ["RUNPOD_API_KEY"]
 endpoint = runpod.Endpoint("<endpoint-id>")
 result = endpoint.run_sync({
     "file_url": "https://example.com/report.pdf",
-    "start_page": 0,
-    "end_page": 99,
+    "page_range": "1-100",
     "transport": "tarball_b64",
 })
 # run_sync returns the handler output directly
@@ -156,7 +173,7 @@ Either path returns the same handler response. Job-scoped metadata sits at the t
 {
   "ok": true,
   "elapsed_seconds": 18.4,
-  "mineru_version": "3.4.x",
+  "mineru_version": "4.1.x",
   "results": [
     {
       "basename": "doc",
@@ -165,9 +182,11 @@ Either path returns the same handler response. Job-scoped metadata sits at the t
       "tarball_b64": "..."
     }
   ],
-  "debug": {"...": "..."}
+  "debug": {"tier": "standard", "input_format": "pdf", "...": "..."}
 }
 ```
+
+`debug.tier` is the tier that actually ran: always `flash` for a format MinerU parses natively, whatever the job asked for.
 
 Or with `transport: "inline"`:
 
@@ -175,7 +194,7 @@ Or with `transport: "inline"`:
 {
   "ok": true,
   "elapsed_seconds": 18.4,
-  "mineru_version": "3.4.x",
+  "mineru_version": "4.1.x",
   "results": [
     {
       "basename": "doc",
@@ -184,13 +203,13 @@ Or with `transport: "inline"`:
       "markdown": "# Heading\n\nBody text...",
       "content_list": [{"type": "text", "page_idx": 0, "text": "..."}],
       "middle": {"...": "..."},
-      "images": {"img-1.png": "<base64>"}
+      "images": {"page_0_image_1.png": "<base64>"}
     }
   ],
   "debug": {"...": "..."}
 }
 ```
 
-Add `formats: ["markdown"]` to the input if you only want the markdown back — the other three keys are then absent from the entry. See [Output modes](/guides/output-modes/) for the full transport × formats matrix.
+Add `formats: ["markdown"]` to the input if you only want the markdown back — the other three keys are then absent from the entry. List a render to get it too: `formats: ["markdown", "html"]` adds MinerU's self-contained HTML as an `html` string, and `docx`, `epub` and `pdf` arrive as `{filename: base64}` maps. See [Output modes](/guides/output-modes/) for the full transport × formats matrix.
 
 Failure responses set `ok: false`, include a top-level `error` key, and have NO `results` field; RunPod marks the job FAILED in the dashboard. See [API reference](/reference/api/) for the full schema.

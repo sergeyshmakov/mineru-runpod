@@ -70,7 +70,8 @@ COPY requirements.txt /worker/requirements.txt
 RUN uv pip install --system --break-system-packages --no-cache -r requirements.txt
 
 # Bake the models the standard and advanced tiers load (basic needs only the
-# first; flash needs none). Runs AFTER the install so `mineru-kit` exists, and
+# first; flash needs neither for text layers and native formats, and only the
+# small models for scans). Runs AFTER the install so `mineru-kit` exists, and
 # BEFORE the handler COPY so iterating on handler code doesn't bust this layer.
 #
 # `models download` writes MinerU's completion markers, which is what makes the

@@ -1,22 +1,22 @@
 ---
 title: Troubleshooting
-description: Diagnose mineru-runpod build, GPU, OOM, timeout, input-format, and cold-start failures from the response debug block and worker logs.
+description: Diagnose mineru-runpod build, GPU, OOM, timeout, input-format, configuration and cold-start failures from the response debug block and worker logs.
 ---
 
 When something doesn't work, start with the top-level `error`, then inspect the
-`debug` block. Successful parse responses include the requested backend and
-detected input format. Failure responses still include GPU details, a
-best-effort cached model path, and completed phase timings, but fields that were
-not reached before the error can be absent.
+`debug` block. Successful parse responses include the tier that ran and the
+detected input format. Failure responses still include GPU details, the VLM
+model directory when it is complete, and completed phase timings, but fields
+that were not reached before the error can be absent.
 
 ## How to read the `debug` block
 
 ```json
 {
   "debug": {
-    "backend": "vlm-auto-engine",
+    "tier": "standard",
     "input_format": "pdf",
-    "model_dir": "/root/.cache/huggingface/hub/models--opendatalab--MinerU2.5-Pro-2605-1.2B/snapshots/<hash>",
+    "model_dir": "/opt/mineru/models/MinerU2.5-Pro-2605-1.2B",
     "gpu": {
       "available": true,
       "name": "NVIDIA RTX 4090",
@@ -36,15 +36,33 @@ What to look at:
 
 | Field | What's wrong if it's surprising |
 |---|---|
-| `backend` | Present after a successful parse. This is the string passed to MinerU. If you set `pipeline` but see `vlm-auto-engine`, your caller isn't sending what you think it is. |
-| `input_format` | Present after a successful parse and auto-detected from bytes. The worker does not return `unknown`: it fails with `input bytes do not match any supported format`. If a PDF URL triggers that error, it likely returned HTML instead of the file; see [the matching troubleshooting section](#worker-returns-valueerror-input-bytes-do-not-match-any-supported-format). |
-| `model_dir` | Best-effort path to a cached MinerU VLM snapshot. It confirms that a matching cache directory exists, but does not prove which model the selected backend loaded. Pipeline models are baked separately. |
-| `gpu.compute_capability` | 8.6 = Ampere (3090, A5000, A6000), 8.9 = Ada (4090, RTX 6000 Ada), 9.0 = Hopper (H100), 12.0 = **Blackwell — VLM will crash** |
+| `tier` | Present after a successful parse: the tier that **ran**. Native documents (DOCX, XLSX, HTML, EPUB, …) always report `flash`, whatever the job asked for. If you sent `advanced` for a PDF and see `standard`, your caller isn't sending what you think it is. |
+| `input_format` | Present after a successful parse: the format MinerU detected, as an extension (`pdf`, `png`, `docx`, `csv`, …). The worker never returns `unknown`: it fails with `input bytes do not match any format MinerU parses` — see [the matching section](#worker-returns-valueerror-input-bytes-do-not-match-any-format-mineru-parses). If you sent a PDF link and see `html`, the URL served a web page instead of the file — see [A PDF link parsed as `html`](#a-pdf-link-parsed-as-html). |
+| `model_dir` | MinerU's VLM directory under `/opt/mineru/models` when every file of it is in place, `null` otherwise. It confirms the weights are there, not that this job used them — `flash` and `basic` never load the VLM. For the small models as well, send a [`probe: true`](#checking-the-models-with-probe-true) job. |
+| `gpu.compute_capability` | 8.6 = Ampere (3090, A5000, A6000), 8.9 = Ada (4090, RTX 6000 Ada), 9.0 = Hopper (H100), 12.0 = Blackwell (RTX 5090, RTX PRO 6000) — **being re-verified on 2.x**, see [Blackwell GPUs](#blackwell-gpus-cc120) |
 | `phase_ms.fetch_input` | If hundreds of seconds on a `file_url` job, the source URL is slow / failing |
-| `phase_ms.mineru_parse` | Per-page guidance for warm workers, **highly GPU- and content-dependent**: MinerU upstream cites **~0.5 s/page (2.12 fps) on an A100** for the VLM backend; we measured a range of **~1 s/page on uniform multi-page reports up to ~10 s/page on dense financial forms** on an A5000 24 GB (≈3.5 s/page is a reasonable single-number estimate) under the default `gpu_memory_utilization=0.5`. Pipeline backend is ~3–5 s/page across GPUs (CPU-bound for layout, GPU-bound only for OCR). **First call on a fresh worker is much higher** (model load + vLLM warmup adds ~90–130 s for the VLM backend). If a warm-worker call is 5× the expected per-page number for your GPU and content type, you're memory-bound and vLLM is swapping |
+| `phase_ms.mineru_parse` | MinerU's parse plus writing the artifacts, including any renders listed in `formats`. Highly tier-, GPU- and content-dependent; per-page figures for the 2.x tiers are still being measured. A worker whose boot warmup didn't run, or warmed a different tier, also pays for loading the models on its first job of that tier. If a warm worker is several times slower than usual on comparable documents, check VRAM and concurrency — you may be memory-bound |
+
+{/* MEASURE: warm per-page mineru_parse time per tier (flash, basic, standard, advanced) on ADA_24 and AMPERE_24, uniform reports vs dense forms; first-job model-load cost per tier when the warmup ran a different tier. */}
 
 The worker also emits structured log lines visible in RunPod's worker
 log viewer — see [reading worker logs](#reading-worker-logs) below.
+
+### Checking the models with `probe: true`
+
+Send `{"input": {"probe": true}}` and the worker skips parsing and returns its filesystem layout and diagnostic environment instead (unless the endpoint sets `MINERU_DISABLE_PROBE`). `probe.mineru_models` is MinerU's own readiness check for the two model sets the VLM tiers load:
+
+```json
+"mineru_models": {
+  "base_dir": "/opt/mineru/models",
+  "small_models": {"repo": "MinerU-4_models_torch", "ready": true, "root": "/opt/mineru/models/MinerU-4_models_torch", "missing": []},
+  "vlm": {"repo": "MinerU2.5-Pro-2605-1.2B", "ready": true, "root": "/opt/mineru/models/MinerU2.5-Pro-2605-1.2B", "missing": []}
+}
+```
+
+`ready: false`, with paths listed in `missing`, means the image was built without them: rebuild it, because the worker never downloads models at runtime. The probe's `models_found` and `resolution_attempts` look in the Hugging Face cache, which MinerU 4 doesn't use — empty values there are expected.
+
+`probe.env` echoes `MINERU_HOME`, `MINERU_MODEL_SOURCE`, `MINERU_MODEL_SMALL_BACKEND`, `MINERU_MODEL_VLM_ENGINE` and `MINERU_VL_MODEL_NAME`. On the published image the first four read `/opt/mineru`, `local`, `torch` and `vllm`, and the last is empty. Anything else is an endpoint override, usually left over from 1.x — see [`MINERU_VL_MODEL_NAME` conflicts](#mineru_vl_model_name-conflicts-with-modelvlmmodel).
 
 ## Hub build fails on the validator test pod
 
@@ -58,7 +76,7 @@ Pod could not be created: This machine does not have the resources to deploy you
 
 **Cause**: RunPod can't allocate the `gpuTypeId` declared in `.runpod/tests.json` during the build window. The Docker image is fine — RunPod just couldn't find a free host of that type.
 
-**Fix**: switch `gpuTypeId` to a higher-availability pool. The template currently uses `"NVIDIA GeForce RTX 4090"` because it has the best pool availability across RunPod's regions; `"NVIDIA RTX A5000"` works too but tends to be scarcer. Re-trigger the build after editing.
+**Fix**: switch `gpuTypeId` to a higher-availability GPU type and re-trigger the build. The template currently uses `"NVIDIA RTX A5000"`; availability shifts between types over time, so when this happens, move to one that has capacity.
 
 ### `nvidia-container-cli: requirement error: unsatisfied condition: cuda>=12.9`
 
@@ -68,13 +86,13 @@ nvidia-container-cli: requirement error: unsatisfied condition: cuda>=12.9,
 please update your driver to a newer version, or use an earlier cuda container
 ```
 
-**Cause**: the container's CUDA floor (12.9, inherited from `vllm/vllm-openai:v0.11.2`) is higher than the CUDA version the host driver exposes. RunPod scheduled the test pod on a host that satisfied `allowedCudaVersions` *on paper* but doesn't actually meet the container's prestart-hook requirement.
+**Cause**: the container's CUDA floor (12.9, inherited from the `vllm/vllm-openai:v0.21.0-cu129` base image) is higher than the CUDA version the host driver exposes. RunPod scheduled the test pod on a host that satisfied `allowedCudaVersions` *on paper* but doesn't actually meet the container's prestart-hook requirement.
 
 The trap: `allowedCudaVersions` tells RunPod "the worker accepts these driver CUDA versions." If older versions are listed there, RunPod is free to schedule on older-driver hosts, and the container's own requirement labels then reject the host at prestart. Result: intermittent failures (depends which host got picked).
 
-**Fix**: keep `allowedCudaVersions` in both `.runpod/tests.json` and `.runpod/hub.json` aligned with the actual minimum the container needs. For the current vLLM v0.11.x base, that's `["13.0", "12.9"]`. Don't pad the list with older versions just because they look harmless — every entry that the container can't actually run on is a future flake.
+**Fix**: keep `allowedCudaVersions` in both `.runpod/tests.json` and `.runpod/hub.json` aligned with the actual minimum the container needs. For the current base — vLLM 0.21.0 in its CUDA 12.9 build — that's `["13.0", "12.9"]`. Don't pad the list with older versions just because they look harmless — every entry that the container can't actually run on is a future flake.
 
-If you bump vLLM, re-check the CUDA floor from upstream's release notes (vLLM v0.11.0 was the bump to CUDA 13).
+If you bump vLLM, re-check the CUDA floor: the base image tag names its CUDA build (`-cu129` here), and a build for a newer CUDA raises the floor with it.
 
 ### Build timeout (30 minutes)
 
@@ -82,13 +100,14 @@ If you bump vLLM, re-check the CUDA floor from upstream's release notes (vLLM v0
 Build exceeded maximum time limit of 1800 seconds (30.0 minutes). Build terminated.
 ```
 
-**Cause**: RunPod's build pipeline has a hard 30-minute ceiling. The image bakes ~17.5 GB of model weights (MinerU2.5-Pro at 2.3 GB, plus all of PDF-Extract-Kit-1.0 at 15.1 GB — `snapshot_download` pulls the whole repo, with no `allow_patterns`) and installs vLLM + Torch on top; on a slow build-region day, those steps alone can blow past the cap.
+**Cause**: RunPod's build pipeline has a hard 30-minute ceiling. The image installs vLLM + Torch and bakes ~3.2 GB of model weights — the MinerU2.5-Pro VLM at 2.3 GB and MinerU 4's small-model bundle at 0.89 GB. That is far less than 1.x's ~17.5 GB, which included all 15.1 GB of PDF-Extract-Kit-1.0, but on a slow build-region day the install and download steps can still run long.
 
-**Fix**: the `Dockerfile` already uses `hf-xet` with `HF_XET_HIGH_PERFORMANCE=1` for fast model bakes, and the two model downloads are split into separate RUN layers so a partial cache survives retries. If you still time out:
+**Fix**: the `Dockerfile` already uses `hf-xet` with `HF_XET_HIGH_PERFORMANCE=1` for fast model bakes, in one `mineru-kit models download` step that `mineru-kit models verify` checks. If you still time out:
 
 - Re-trigger the build (often a transient HF-egress slowdown)
-- Pin a smaller VLM model via `MINERU_VL_MODEL_NAME` for http-client backends — doesn't help here since the bake is unconditional
-- As a last resort, drop one of the baked models and rely on RunPod's per-endpoint model cache (one model only — see the [model caching docs](https://docs.runpod.io/serverless/endpoints/manage-endpoints))
+- Check the build log for which step ran long — the dependency install or the model download — before changing anything
+
+{/* MEASURE: typical Hub build time for the 2.x image, split into dependency install and model download. */}
 
 ### Escape hatch: skip the validator entirely
 
@@ -113,14 +132,18 @@ instead, or via **The Hub → Serverless repos**, and let RunPod run the build.
 It takes ~5–10 minutes and the log is visible in the dashboard. See
 [Deploy](/getting-started/deploy/) for all three paths.
 
+{/* MEASURE: confirm the ~5–10 minute Hub build time on the 2.x image (measured on 1.x). */}
+
 You never build this image locally, so your workstation's architecture
 doesn't matter — the build runs on RunPod's x86 builders. If you do want to
 own the image, Option C on the Deploy page covers building and pushing to
 your own registry, which needs an x86 build host.
 
-## VLM backend crashes on Blackwell GPUs (cc=12.0)
+## Blackwell GPUs (cc=12.0)
 
-**Symptom**: worker logs show successful model load followed by:
+**Status**: being re-verified on 2.x. The 1.x VLM crashed on Blackwell cards. MinerU 4's vLLM range lifts the blocker behind that crash, but a smoke test on Blackwell pools is still pending, so the default `gpuIds` (`ADA_24,AMPERE_24,AMPERE_48`) stay pre-Blackwell.
+
+**What 1.x did**: worker logs showed a successful model load followed by:
 
 ```
 compute_capability: 12.0 >= 8.0
@@ -129,40 +152,34 @@ INFO Model loading took 2.16 GiB and 0.36 seconds
 CUDA error (...flash-attention/hopper/flash_fwd_launch_template.h:188): invalid argument
 ```
 
-`debug.gpu.compute_capability` in the response is `12.0` (e.g. `NVIDIA RTX PRO 6000 Blackwell Server Edition MIG 1g.24gb`).
+with `debug.gpu.compute_capability` at `12.0` (e.g. `NVIDIA RTX PRO 6000 Blackwell Server Edition MIG 1g.24gb`). The 1.x image ran vLLM 0.11.2, whose attention kernels covered Ampere (8.x), Ada (8.9) and Hopper (9.0) with no Blackwell (SM120) path; on Blackwell they fell through to the Hopper kernel and crashed during VLM model init.
 
-**Cause**: xformers / flash-attention in vllm 0.11.2 (our base image) ships kernels for Ampere (8.x), Ada (8.9), and Hopper (9.0) — no Blackwell-SM120 code path. On Blackwell, xformers misroutes to the Hopper kernel and crashes during VLM model init.
-
-**Why the published image still fails**: the Dockerfile currently selects vLLM
-0.11.2. MinerU 3.4 allows newer vLLM releases, so the old `<0.12` dependency
-ceiling is no longer the blocker. Changing the base image still requires a
-coordinated compatibility test across MinerU, CUDA, vLLM, xformers, the baked
-models, and RunPod's GPU pools; that upgrade has not been validated here yet.
-
-**Fix**: keep the default `gpuIds: "ADA_24,AMPERE_24,AMPERE_48"` — all unambiguously pre-Blackwell. If you've manually opted into `ADA_48_PRO`, that pool can mix in Blackwell SKUs since RunPod groups them under the same pool name — remove it from your endpoint's GPU pool list. For workloads that need a 48 GB Ada-or-newer card, the `pipeline` backend doesn't use xformers/flash-attn and is unaffected, so it runs on Blackwell fine; only the VLM/hybrid backends crash. See [Choosing a GPU](/guides/choosing-gpu/#a-note-on-ada_48_pro-and-blackwell) for the GPU-pool background.
+**What changed**: 2.x runs vLLM 0.21 — inside MinerU 4.1's accepted range (`>=0.19.1,<0.31.0`), and built for Blackwell upstream. If you test a Blackwell pool before the template confirms it, do it on a separate endpoint. The VLM loads during the default boot warmup (`[mineru-warmup] done in Ns`, or `failed after …` with the error), or on the first `standard` or `advanced` job if the warmup ran another tier — the point where 1.x crashed. `flash` and `basic` never load the VLM. If you've opted into `ADA_48_PRO` on a production endpoint, remember RunPod can schedule a Blackwell SKU there — see [Choosing a GPU](/guides/choosing-gpu/#a-note-on-ada_48_pro-and-blackwell) for the pool background.
 
 ## "Pod scaled to zero" but the next job has a noticeable cold start
 
 **Symptom**: spiky workload. First job after a quiet period takes a long time; subsequent jobs in the same window are fast.
 
-**Cause**: RunPod tears down the worker after `idle_timeout` seconds of inactivity. The next request spins a fresh worker — the cost is unpacking the image, loading the model into VRAM, and (for the VLM backend) JIT-compiling vLLM kernels.
+**Cause**: RunPod tears down the worker after `idle_timeout` seconds of inactivity. The next request spins a fresh worker — the cost is unpacking the image, loading the models into VRAM, and (for the VLM tiers) starting vLLM and compiling its kernels.
 
-**Expected magnitudes** (measured on RTX A5000):
+**Expected magnitudes**, measured on 1.x (MinerU 3.4) on an RTX A5000; the 2.x figures are pending:
 
 | Scenario | First-job latency |
 |---|---|
 | Warm worker, VLM, on A100 (per MinerU upstream) | ~0.5 s/page (2.12 fps) |
 | Warm worker, VLM, on A5000 24 GB (our measurement) | ~1 s/page (uniform reports) – ~10 s/page (dense forms) |
-| Warm worker, pipeline (any GPU ≥ 4 GB) | ~3–5 s/page |
+| Warm worker, 1.x `pipeline` backend (any GPU ≥ 4 GB) | ~3–5 s/page |
 | **FlashBoot happy path — host reuse, snapshot restored** | **~7–8 s wall-clock** — model + engine restored from snapshot |
 | **FlashBoot cold path — new host, image cached** | **~110 s** — fresh boot, warmup runs (1× per host) |
 | Cold worker, no warmup (`MINERU_SKIP_WARMUP=1`) | ~110–130 s **per request** after every scale-from-zero (no per-host amortization) |
-| Cold worker, pipeline backend, no warmup | ~10–15 s per request (lighter; no vLLM warmup) |
+| Cold worker, 1.x `pipeline` backend, no warmup | ~10–15 s per request (lighter; no vLLM warmup) |
 | Brand-new worker host (no image cached) | +3–5 min for the initial image pull, on top of whichever path above applies |
+
+{/* MEASURE: the same table on 2.x — warm per-page time per tier, FlashBoot restore, fresh boot with the standard warmup, first request with MINERU_SKIP_WARMUP=1, and a boot that warms flash or basic only. */}
 
 ### Per-phase cold-start breakdown (VLM, A5000 24 GB)
 
-If you're tracking *why* a cold start takes ~110 s, here's the live measurement we captured against the deployed template. Times are wall-clock between consecutive log entries from RunPod's worker log viewer, totals approximate ±2 s:
+If you're tracking *why* a cold start takes ~110 s, here's the live measurement we captured against the deployed 1.x template (MinerU 3.4). MinerU 4 logs its startup differently, so the MinerU lines below won't match a 2.x worker, and a 2.x breakdown is pending. Times are wall-clock between consecutive log entries from RunPod's worker log viewer, totals approximate ±2 s:
 
 | Phase | Time | Source log line |
 |---|---|---|
@@ -180,28 +197,33 @@ If you're tracking *why* a cold start takes ~110 s, here's the live measurement 
 | **End-to-end cold start (queue → response)** | **~108 s** | `Jobs in queue: 1` → response |
 | **Subsequent warm-worker parse, same page count** | **~6 s** | mineru_parse phase_ms |
 
-Headline observations from this run:
+{/* MEASURE: 2.x per-phase cold-start breakdown on ADA_24 / AMPERE_24 — model load, torch.compile, vLLM's reported KV cache size, CUDA graph capture, first parse. */}
+
+Headline observations from this 1.x run:
 
 - vLLM engine init dominates (`34 s` of the `100 s` MinerU wrapper time). Of that, `torch.compile` is `25 s` — the single biggest cost.
-- Model weight load is only `21 s` despite being 2.16 GiB. The image bakes the model into `/root/.cache/huggingface/`, so this is a local FS read, not a network download.
-- `Available KV cache memory: 8.17 GiB` on a 24 GB A5000. That's vLLM's KV budget after model + activations + reserve. Constraining factor for `MINERU_MAX_CONCURRENCY` if you try to raise it above `1`.
-- `Maximum concurrency for 8,192 tokens per request: 87.13x` — vLLM's in-engine batch ceiling on this hardware. Different from our per-worker concurrency knob; this is sequences per single vLLM forward pass.
+- Model weight load is only `21 s` despite being 2.16 GiB. The 1.x image baked the model into `/root/.cache/huggingface/` (2.x bakes it under `/opt/mineru/models`), so this is a local FS read, not a network download.
+- `Available KV cache memory: 8.17 GiB` on a 24 GB A5000. That's vLLM's KV budget after model + activations + reserve under 1.x's 0.5 share, and the constraining factor for `MINERU_MAX_CONCURRENCY` above `1`. MinerU 4 gives vLLM ≈6 GB in total, so this figure is smaller on 2.x — see [Choosing a GPU](/guides/choosing-gpu/#how-much-vram-mineru-actually-uses).
+- `Maximum concurrency for 8,192 tokens per request: 87.13x` — vLLM's in-engine batch ceiling on this hardware under 1.x's share. Different from our per-worker concurrency knob; this is sequences per single vLLM forward pass.
 
 **Fix**: not a bug, but levers if it's a problem:
 
 - Bump `idle_timeout` (template default is 10 s) — workers stay warm longer, you pay for that time
 - Set `workers_min=1` — at least one worker is always warm, you pay 24/7 for it
 - Enable RunPod's **FlashBoot** explicitly in the endpoint config (it's on by default for templates from the Hub)
-- **Eager warmup is now active by default.** The worker runs one throwaway parse against the baked test fixture during boot, before `runpod.serverless.start()` claims the event loop. This loads the MinerU model into VRAM and JIT-compiles vLLM kernels, so the first real request lands on a warm engine. Look for `[mineru-warmup] starting (backend=... lang=... fixture=/worker/test-fixture.pdf)` then `[mineru-warmup] done in Ns` in the worker logs. To disable (e.g., for debugging cold-start ordering), set `MINERU_SKIP_WARMUP=1` on the endpoint.
+- **Eager warmup is active by default.** During boot, before it takes jobs, the worker parses page 1 of the baked test fixture once and throws the result away. At the default tier, `standard`, that loads the small models and the VLM and compiles vLLM's kernels, so the first real request lands on a warm engine. Look for `[mineru-warmup] starting (tier=standard fixture=/worker/test-fixture.pdf)` then `[mineru-warmup] done in Ns` in the worker logs. To disable (e.g., for debugging cold-start ordering), set `MINERU_SKIP_WARMUP=1` on the endpoint.
 
   Tune via env vars on the endpoint:
-  - `MINERU_WARMUP_BACKEND` (default `vlm-auto-engine`) — which backend to warm. **Must match the backend most callers will use**; warming `vlm-auto-engine` but serving `pipeline` requests means the first pipeline call still pays cold-start.
-  - `MINERU_WARMUP_LANG` (default `en`) — only meaningful for the pipeline backend; VLM ignores it.
-  - `MINERU_SKIP_WARMUP=1` — bypass entirely (worker falls back to lazy load on first request, ~100s tax).
+  - `MINERU_WARMUP_TIER` (default `standard`) — which tier to warm. **Match the tier most callers use**: `flash` and `basic` never load the VLM, so warming either leaves it to load on the first `standard` or `advanced` request. 1.x's `MINERU_WARMUP_BACKEND` and `MINERU_WARMUP_LANG` are ignored on 2.x; delete them.
+  - `MINERU_SKIP_WARMUP=1` — bypass entirely (the worker falls back to lazy load on the first request, which cost ~100 s on 1.x).
 
-  **Observed snapshot-restore latency for the first request: ~7–8 s wall-clock on A5000** (measured 2026-05-26). The logs and persistent vLLM PID indicate that FlashBoot restored a warm process and its GPU state. See [the four-request evidence](#flashboot-behavior-observed-in-four-requests) below.
+  **Observed snapshot-restore latency for the first request on 1.x: ~7–8 s wall-clock on A5000** (measured 2026-05-26). The logs and persistent vLLM PID indicate that FlashBoot restored a warm process and its GPU state. See [the four-request evidence](#flashboot-behavior-observed-in-four-requests) below.
 
 ### FlashBoot behavior observed in four requests
+
+These observations come from 1.x (MinerU 3.4). FlashBoot is a platform mechanism, so the per-host model below should carry over to 2.x, but the 2.x timings haven't been measured yet.
+
+{/* MEASURE: repeat the four-request FlashBoot test on 2.x (same host restore vs new host) and record wall-clock per request. */}
 
 In a four-request test on 2026-05-26, FlashBoot behaved like a process snapshot scoped by host and image SHA. RunPod does not publicly document those internals, so this is an inference from timings, missing boot logs, persistent process identity, and host changes.
 
@@ -246,18 +268,31 @@ The observed restore retained the Python process, MinerU engine handle, vLLM chi
 
 **Symptom**: handler errors with `CUDA out of memory` mid-parse. `debug.gpu.total_memory_gb` shows your card has fewer GB than the workload needs.
 
-**Cause**: vLLM allocates KV cache up front based on `gpu_memory_utilization`
-(default 0.5). Concurrent jobs and unusually complex pages can exhaust the
-remaining VRAM. A longer document does not steadily increase VRAM when pages
-are processed sequentially.
+**Cause**: MinerU 4 gives vLLM about 6 GB of the card when the engine starts
+(`gpu_memory_utilization = 6 / VRAM`), and its small models and PyTorch's
+caches use part of the rest. Concurrent jobs, a large
+`MINERU_PROCESSING_WINDOW_SIZE`, or a low `MINERU_VIRTUAL_VRAM_SIZE` — which
+hands vLLM a bigger share — can exhaust what's left. A longer document is
+processed window by window, so length alone should not steadily increase VRAM.
 
 **Fix**:
-- **Bump to a 48 GB pool** for the affected workload (`AMPERE_48`)
-- **Switch to the pipeline backend** which doesn't use vLLM and is documented at 4 GB minimum VRAM (per MinerU's hardware compatibility table), regardless of doc length
 - **Reduce `MINERU_MAX_CONCURRENCY`** so fewer jobs share one worker
-- **Batch very long documents** for shorter retries, bounded job time, and smaller outputs; batching is not a VLM memory fix
+- **Lower `MINERU_PROCESSING_WINDOW_SIZE`** (e.g. `32`) so fewer pages are rendered and analysed at once
+- **Revisit `MINERU_VIRTUAL_VRAM_SIZE`** if you set it: the lower the value, the more of the card vLLM takes and the less is left for everything else
+- **Bump to a 48 GB pool** for the affected workload (`AMPERE_48`)
+- **Batch very long documents** with `page_range` for shorter retries, bounded job time, and smaller outputs; batching is not a VLM memory fix
 
-See [Choosing a GPU](/guides/choosing-gpu/) for the VRAM math.
+An endpoint that serves only `flash` or `basic` doesn't need vLLM's share at all: set `MINERU_WARMUP_TIER` to that tier so boot doesn't load it.
+
+See [Choosing a GPU](/guides/choosing-gpu/#how-much-vram-mineru-actually-uses) for the VRAM math.
+
+## A job fails with `EngineDeadError`
+
+**Symptom**: a job fails with `EngineDeadError: …`, its failure response carries `refresh_worker: true`, and the worker logs `vlm engine is dead; signaling worker recycle`.
+
+**Cause**: the vLLM engine behind `standard` and `advanced` died mid-run — typically a CUDA error or running out of GPU memory. MinerU keeps one engine per worker process and holds on to a dead one, so every later `standard` or `advanced` job on that worker would fail the same way. The worker therefore asks RunPod to replace it, and RunPod recycles it after this response.
+
+**Fix**: retry the job; it lands on a fresh worker. RunPod does not retry a failed job by itself. If it recurs, treat it as [CUDA out of memory](#cuda-out-of-memory) and check concurrency and `MINERU_VIRTUAL_VRAM_SIZE`. With [OpenTelemetry](/guides/observability/) configured, `mineru.worker.refresh.total` with `reason="engine_dead"` counts these recycles.
 
 ## `the job reported COMPLETED but carried no output`
 
@@ -270,9 +305,9 @@ See [Choosing a GPU](/guides/choosing-gpu/) for the VRAM math.
 
 **Cause**: RunPod's `/runsync` gateway caps the **response** payload at ~20 MB. The worker built a valid result; when it tried to POST it back via `/job-done`, the gateway returned HTTP 400 and discarded it. The SDK then sees no output and hands the client `None`, which it reports as the message above rather than as a Python type name.
 
-Triggers (measured on a real 82-page PDF):
+Triggers (measured on 1.x with a real 82-page PDF):
 
-- `transport: "inline"` — markdown + content_list + middle.json + base64 images add up fast; ~80 pages with embedded images was enough to exceed the cap. If you only need the markdown, narrow with `formats: ["markdown"]` first.
+- `transport: "inline"` — markdown + content_list + middle.json + base64 images add up fast, and any renders you list add more; ~80 pages with embedded images was enough to exceed the cap. If you only need the markdown, narrow with `formats: ["markdown"]` first.
 - `transport: "tarball_b64"` — gzip compresses the JSON, but the images inside the tarball are already raster bytes, so it often doesn't fit either. Confirmed same failure on the same doc.
 
 **Fix**: use `transport: "s3"` for large outputs. The worker uploads the .tar.gz to an S3-compatible bucket and returns only a small presigned URL (~1 h TTL) — no gateway cap in the path.
@@ -298,21 +333,34 @@ Configure the bucket via these env vars on the **endpoint** (not the template):
 
 The Python client handles the rest via `client.save_s3_tarball(result, dest_dir)` — it follows `result["results"][0]["tarball_url"]`, downloads the .tar.gz, and extracts. From curl, the entry inside `results[]` includes `tarball_url`, `tarball_url_expires_in`, and `bucket_key`; download within the TTL.
 
-If you can't wire S3, the fallback is **page chunking**: split with `start_page` / `end_page` into segments small enough that each tarball fits under the cap, then concatenate the `.md` files client-side. Slower (two cold starts if workers go cold between calls) but no infra changes.
+If you can't wire S3, the fallback is **page chunking**: split with `page_range` (`"1-40"`, `"41-80"`, …) into segments small enough that each tarball fits under the cap, then concatenate the `.md` files client-side. Slower (two cold starts if workers go cold between calls) but no infra changes.
 
-## Worker returns `ValueError: input bytes do not match any supported format`
+## Worker returns `ValueError: input bytes do not match any format MinerU parses`
 
-**Symptom**: the response has `ok: false` and the above error message.
+**Symptom**: the response has `ok: false` and this error:
 
-**Cause**: the worker's `_detect_format` checked the first ~16 bytes against known magic numbers (`%PDF`, `\x89PNG`, `PK\x03\x04` for OOXML, etc.) and didn't match anything.
+```
+ValueError: input bytes do not match any format MinerU parses (PDF, an image, Office/OpenDocument, RTF, EPUB, OFD, HTML, CSV/TSV). Text formats need a name to go by: set file_name (e.g. 'table.csv'). Otherwise check that file_b64 was base64-encoded correctly and that file_url returned the file body (not an error page).
+```
+
+**Cause**: MinerU's own detector — file signatures first, then a content-type model — didn't recognise the bytes as any format it parses.
 
 Most common reasons:
 
-- **`file_url` returned an HTML error page** instead of the file. The URL is wrong, expired, or behind auth. The response body starts with `<!DOCT` or `<html`.
+- **A CSV, TSV or HTML fragment arrived without a name.** These carry no signature, so MinerU reads them as plain text, which it doesn't parse. Set `file_name` (e.g. `"table.csv"`), or make sure the `file_url` path or `volume_path` ends in the right extension; `file_b64` has no name of its own.
 - **`file_b64` was double-encoded or not base64**. The decoded bytes are random.
-- **`volume_path` points at a file that exists but isn't a supported format** (e.g. a `.csv` or `.txt`). MinerU doesn't accept plain text — convert to PDF first.
+- **The input is a format MinerU doesn't parse** — plain text, Markdown, JSON, XML, a ZIP archive. MinerU reads plain text rather than parsing it.
+- **`file_url` answered `200` with something other than the file**, such as an XML error document. Error statuses (403, 404, …) fail earlier, at the download.
 
-**Fix**: verify the bytes. Download from your `file_url` directly with `curl`, run `file` on the result, or check that `base64 -d < input.b64 | xxd | head` shows the right magic bytes.
+**Fix**: verify the bytes. Download from your `file_url` directly with `curl`, run `file` on the result, or check that `base64 -d < input.b64 | xxd | head` shows the right magic bytes. [Input formats](/guides/input-formats/#how-the-format-is-detected) explains how detection works.
+
+## A PDF link parsed as `html`
+
+**Symptom**: the job succeeds, but the Markdown is a sign-in page or a download prompt; `debug.input_format` is `html` and `debug.tier` is `flash`.
+
+**Cause**: the `file_url` answered `200` with a web page instead of the file — a sharing service's preview or "download anyway" page, or a sign-in screen. HTML is a format MinerU 4 parses, so 2.x parses that page, where 1.x refused it as an unknown format.
+
+**Fix**: use a direct download link, such as a presigned object URL. In a pipeline, check `debug.input_format` against what you sent.
 
 ## Worker rejects an input source it used to accept
 
@@ -320,19 +368,47 @@ Most common reasons:
 
 | Message | Cause | Fix |
 |---|---|---|
-| `the job reported COMPLETED but carried no output` | RunPod's gateway dropped the response for exceeding its size cap (20 MB on `/runsync`, 10 MB on `/run`) and still reported success — nothing in the reply names size. Most likely on the default `transport="tarball_b64"` with a long or scanned document, where `middle.json` carries per-character boxes | Any of: `transport="inline"` with `formats=["markdown", "content_list"]`; `transport="s3"` (needs the `BUCKET_*` vars — see [Output modes](/guides/output-modes/)); or a bounded `start_page` / `end_page` range, which is the only one that keeps every format |
+| `the job reported COMPLETED but carried no output` | RunPod's gateway dropped the response for exceeding its size cap (20 MB on `/runsync`, 10 MB on `/run`) and still reported success — nothing in the reply names size. Most likely on the default `transport="tarball_b64"` with a long or scanned document, where `middle.json` is the bulk of the output | Any of: `transport="inline"` with `formats=["markdown", "content_list"]`; `transport="s3"` (needs the `BUCKET_*` vars — see [Output modes](/guides/output-modes/)); or a bounded `page_range`, which is the only one that keeps every format |
+| `Unexpected input. backend is not a valid input option.` | A field 1.x accepted and 2.x removed: `backend`, `effort`, `lang`, `formula_enable`, `table_enable`, `start_page` or `end_page` | Rewrite the payload: `tier` replaces `backend` and `effort`, `page_range` replaces `start_page`/`end_page`, and the rest have no 2.x equivalent — MinerU 4 has no language or formula/table switches. See [Upgrading to 2.x](/getting-started/upgrade-to-2/) |
+| `tier must be one of ['flash', 'basic', 'standard', 'advanced']` | A tier MinerU doesn't have — often a 1.x backend name | Pick one of the four; see [Picking a tier](/guides/choosing-gpu/#picking-a-tier) |
+| `ocr_mode must be one of ['auto', 'txt', 'ocr']` | An `ocr_mode` MinerU doesn't have | Use `auto` (the default), `txt` or `ocr` |
+| `page_range must be 1-based pages or ranges separated by commas, with rN counting from the end` | A range MinerU's grammar doesn't allow — a page `0`, an open end like `"5-"`, or anything but digits, `r`, `-` and `,` | Write it MinerU's way: `"5"`, `"1-5,8"`, `"r3-r1"` — see [Page selection](/guides/input-formats/#page-selection-pdf-only) |
+| `page_range part '5-3' ends before it starts` | A reversed absolute range | Swap the ends |
+| `page_range applies to PDFs only; the input is <format>` | A `page_range` on any other input, images included | Drop `page_range`; other formats are parsed whole |
+| `requested page range is N pages; this endpoint allows at most M` | The endpoint sets [`MINERU_MAX_PAGES_PER_JOB`](/guides/scaling/#bounding-the-work-per-job) and an absolute `page_range` names more pages | Split the document into slices of at most M pages |
+| `file_name must be a file name (not a path) of at most 255 characters` | A path, an empty string, a control character, or more than 255 characters | Send the name alone, e.g. `prices.csv` |
+| `file_name must end in an extension MinerU parses` | An extension outside [MinerU's format list](/guides/input-formats/#supported-formats) | Use the extension of the format the bytes really are |
 | `volume_path must be an absolute path` | A relative path was sent | Send the full path, e.g. `/runpod-volume/inputs/doc.pdf` |
 | `volume_path is outside the configured input roots` | The resolved path isn't under a directory the endpoint serves documents from. Also fires when `..` segments or a symlink lead out of one | Check for a typo; otherwise add the directory to `MINERU_VOLUME_ROOTS` (see [Network volumes](/guides/network-volumes/#what-volume_path-accepts)) |
 | `file_url must be an http(s) URL` | A scheme the worker doesn't fetch, or a bare hostname with no scheme | Use `http://` or `https://` |
 | `file_url must point at a publicly routable host` | The URL resolves to a loopback, link-local or private address | Host the document somewhere the worker can reach; or set `MINERU_ALLOW_LOCAL_FETCH=1` if it really is inside your own network, or if you're running the handler locally |
 | `refusing to fetch <url>: it connects to <address>, which is not a routable public address` | Raised **by the client, on your machine** — not by the worker. A presigned `tarball_url` pointed at a private or loopback address, which the client refuses by default because the URL arrives in a response it did not author | If your object store really is on a private network (a self-hosted MinIO beside the endpoint, or a local dev stack), set `MINERU_CLIENT_ALLOW_PRIVATE_FETCH=1` where your client runs. This is a *client* variable and has nothing to do with `MINERU_ALLOW_LOCAL_FETCH`, which governs the worker fetching `file_url` in a different process |
-| `server_url must be an http(s) URL` | Same shape check on the `*-http-client` backend field — often a `host:port` with no scheme | Write it out: `https://vllm.example.com/v1` |
+| `server_url must be an http(s) URL` | Same shape check on `server_url` — often a `host:port` with no scheme | Write it out: `https://vllm.example.com/v1` |
+| `server_url must not carry credentials`, `server_url must not carry a query or fragment` | MinerU's own rule for a VLM server address | Send the bare server address |
+| `server_url only applies to the standard and advanced tiers, which use a VLM` | A `server_url` on `flash` or `basic`, which have no VLM to replace | Drop `server_url`, or use `standard` or `advanced` |
 | `server_url must name a host listed in MINERU_ALLOWED_SERVER_HOSTS` | You set `MINERU_ENFORCE_TARGET_POLICY=1`, which requires every per-job `server_url` host to be named in advance — including public ones | Add the host to `MINERU_ALLOWED_SERVER_HOSTS` (comma-separated, exact host match). If the message says the list is empty, enforcement is on with nothing listed, which accepts no per-job `server_url` at all. Not `MINERU_ALLOW_LOCAL_FETCH` — that is for `file_url`, and it no longer reaches this field |
-| `lang must be a short script/language code` | A phrase or path where a code belongs | Use one of the codes in [Input formats](/guides/input-formats/#the-lang-parameter-pipeline-backend-only) |
-| `basename is too long for the filenames it produces` | The stem is within 128 characters but the generated filename exceeds 255 bytes. Filesystems count bytes, so a non-ASCII stem hits this well before 128 characters — a CJK stem is limited to 78 | Shorten `basename`; the message reports the byte count it produced |
-| `end_page must be >= start_page when set` | An inverted range | Swap them, or drop `end_page` for a full-document parse |
-| `requested page range is N pages; this endpoint allows at most M` | The endpoint sets [`MINERU_MAX_PAGES_PER_JOB`](/guides/scaling/#bounding-the-work-per-job) | Split the document into slices of at most M pages |
+| `basename is too long for the filenames it produces` | The stem is within 128 characters but the generated filename exceeds 255 bytes. Filesystems count bytes, so a non-ASCII stem hits this well before 128 characters — a CJK stem is limited to 77 | Shorten `basename`; the message reports the byte count it produced |
 | `probe is disabled on this endpoint` | The endpoint sets `MINERU_DISABLE_PROBE` to anything other than `0`/`false`/`no`/`off` | Read the layout from a worker log line, or unset the variable on an endpoint you own |
+
+## `MINERU_VL_MODEL_NAME conflicts with model.vlm.model`
+
+**Symptom**: jobs that set `server_url` fail with an error ending in `MINERU_VL_MODEL_NAME conflicts with model.vlm.model; unset the legacy environment variable`. Jobs without `server_url` are unaffected.
+
+**Cause**: the endpoint still carries `MINERU_VL_MODEL_NAME`, a 1.x variable — the 1.x Hub form set it to `opendatalab/MinerU2.5-Pro-2605-1.2B` by default, and moving an endpoint to the 2.x template doesn't remove its environment variables. MinerU 4 refuses the legacy variable whenever a job names a remote VLM server, rather than let it silently override its own model setting.
+
+**Fix**: delete `MINERU_VL_MODEL_NAME` from the endpoint's environment variables. While you're there, delete the other 1.x leftovers 2.x doesn't need — `MINERU_MODEL_SOURCE` (the image sets `local` itself), `MINERU_WARMUP_BACKEND` and `MINERU_WARMUP_LANG`; see [Upgrading to 2.x](/getting-started/upgrade-to-2/). A [`probe: true`](#checking-the-models-with-probe-true) job shows the variable's value under `probe.env`.
+
+## Every job fails while MinerU loads its configuration
+
+**Symptom**: every job fails after the download with a validation error that names a MinerU setting — `llm_aided.features.title_leveling`, `llm_aided.features.cross_page_table_cell_merge`, or `llm_aided.api_key must be a non-empty string when an LLM feature is enabled` (or `base_url`, `model`). The boot warmup fails the same way: `[mineru-warmup] failed after …` in the worker logs.
+
+**Cause**: MinerU reads its own settings from `MINERU_*` environment variables and validates them strictly before its first parse; a value it can't accept fails every job on the worker. The usual culprits are the LLM-aided features:
+
+- `MINERU_LLM_AIDED_FEATURES_TITLE_LEVELING` or `MINERU_LLM_AIDED_FEATURES_CROSS_PAGE_TABLE_CELL_MERGE` with an empty value. MinerU parses these as booleans, and an empty string isn't one. The Hub form defaults both to `false`; an endpoint edited by hand can end up with the key and no value.
+- A feature switched to `true` without all three of `MINERU_LLM_AIDED_BASE_URL`, `MINERU_LLM_AIDED_MODEL` and `MINERU_LLM_AIDED_API_KEY`.
+- Any other malformed MinerU setting — `MINERU_LOG_LEVEL=verbose`, for instance.
+
+**Fix**: set each switch to `true` or `false`, or delete it. When either is `true`, fill in the base URL, model and key, and set the base URL explicitly even if your provider is MinerU's default: MinerU's built-in value points at Alibaba Cloud's DashScope. See [Scaling and tuning → LLM-aided features](/guides/scaling/#llm-aided-features).
 
 ## Job times out before the parse finishes
 
@@ -343,7 +419,9 @@ Most common reasons:
 **Fix**:
 - **Client-side**: pass a larger `timeout` to `parse_document(timeout=3600, ...)`
 - **Endpoint-side**: raise the endpoint's execution timeout — 3600 s for full books. `deploy.py --execution-timeout 3600` applies it: the SDK's `create_endpoint` takes no such parameter, so the script sets it afterwards through the REST API's `executionTimeoutMs` field. If that call fails the summary says `NOT SET` with the reason, and only then do you need the console. For an endpoint that already exists, change it there or with a `PATCH /v1/endpoints/{id}`.
-- **Per-page math (warm worker, GPU- and content-dependent)**: MinerU upstream cites ~0.5 s/page for the VLM backend on an A100. We measured **~1–10 s/page on an A5000 24 GB depending on content density** (uniform multi-page reports run fast; dense financial forms run slow). Pipeline ≈ 3–5 s/page across GPUs. A 1000-page book on pipeline = ~3000–5000 s; on VLM-on-A5000 ≈ ~1000–10000 s depending on content; on VLM-on-A100 ≈ ~500 s. **Add 90–130 s for the first call on a cold worker if VLM** (model load + vLLM warmup) — the cold-start tax is paid once per worker, not per page.
+- **Per-page math (warm worker, tier-, GPU- and content-dependent)**: the 2.x figures per tier are still being measured, so plan from your own `phase_ms.mineru_parse` divided by the pages parsed. For scale, 1.x measured **~1–10 s/page on an A5000 24 GB** for its VLM backend depending on content density (uniform multi-page reports run fast; dense financial forms run slow), and MinerU upstream cites ~0.5 s/page on an A100 — so a 1,000-page book took ~1,000–10,000 s on the A5000. **Add the warmup for the first call on a cold worker without a snapshot** (~110 s on 1.x) — it's paid once per worker, not per page.
+
+{/* MEASURE: warm s/page per tier on ADA_24 and AMPERE_24 for the timeout math above. */}
 
 ## Reading worker logs
 
@@ -355,14 +433,14 @@ log sink, key off the `level`, `message`, and any of the structured fields.
 Typical lines on a successful job:
 
 ```json
-{"ts":"2026-05-25T18:30:42.103Z","level":"info","logger":"mineru-worker","message":"starting job","job_id":"queued-uuid-abc","backend":"vlm-auto-engine","lang":"en","start_page":0,"end_page":4,"gpu_name":"NVIDIA RTX 4090","compute_capability":"8.9"}
-{"ts":"2026-05-25T18:30:48.612Z","level":"info","logger":"mineru-worker","message":"done","job_id":"queued-uuid-abc","elapsed_seconds":6.51,"phase_ms":{"fetch_input":12,"mineru_parse":6420,"package":79},"model_dir":"/root/.cache/huggingface/hub/.../snapshots/<hash>","refresh_worker":false}
+{"ts":"2026-05-25T18:30:42.103Z","level":"info","logger":"mineru-worker","message":"starting job","job_id":"queued-uuid-abc","tier":"standard","ocr_mode":"auto","page_range":"1-5","gpu_name":"NVIDIA RTX 4090","compute_capability":"8.9"}
+{"ts":"2026-05-25T18:30:48.612Z","level":"info","logger":"mineru-worker","message":"done","job_id":"queued-uuid-abc","elapsed_seconds":6.51,"phase_ms":{"fetch_input":12,"mineru_parse":6420,"package":79},"model_dir":"/opt/mineru/models/MinerU2.5-Pro-2605-1.2B","refresh_worker":false}
 ```
 
 On failure:
 
 ```json
-{"ts":"2026-05-25T18:30:42.789Z","level":"error","logger":"mineru-worker","message":"job failed","job_id":"queued-uuid-abc","error_type":"ValueError","error_message":"input bytes do not match any supported format","phase_ms":{"fetch_input":8}}
+{"ts":"2026-05-25T18:30:42.789Z","level":"error","logger":"mineru-worker","message":"job failed","job_id":"queued-uuid-abc","error_type":"ValueError","error_message":"page_range applies to PDFs only; the input is docx","phase_ms":{"fetch_input":8}}
 ```
 
 On a job that succeeded but lost part of its output — a file MinerU wrote and
@@ -388,8 +466,12 @@ Key fields:
 | `message` | Stable identifier for the event — safe to alert on |
 | `job_id` | RunPod's job UUID. Use this to correlate all lines from one request, especially when a worker handles multiple jobs in sequence. `<unknown>` when a sync caller submitted without a queued ID |
 | `phase_ms` | Per-phase timings (`fetch_input`, `mineru_parse`, `package`) |
-| `backend`, `lang`, `start_page`, `end_page` | Echoed from the job input — handy for correlating with the request |
+| `tier`, `ocr_mode`, `page_range` | Echoed from the job input — handy for correlating with the request. `tier` here is the one requested; `debug.tier` in the response is the one that ran |
 | `refresh_worker` | `true` if the worker is recycling after this job ([scaling guide](/guides/scaling/#worker-recycling)) |
+
+MinerU's own log lines, plain text from its own logger, appear between these.
+`MINERU_LOG_LEVEL` sets their level — see
+[Scaling and tuning](/guides/scaling/#mineru-performance-knobs).
 
 <Callout type="warn" title="Log throttling">
 RunPod's logging system throttles workers that produce too much output
@@ -410,7 +492,8 @@ worker logs mid-parse with no `done` line.
 **Cause**: RunPod sent SIGTERM to the worker — either because the
 endpoint scaled down due to idle timeout, you triggered a recycle from
 the dashboard, or the worker requested a refresh via the `refresh_worker`
-response flag.
+response flag (a `REFRESH_WORKER_AFTER_*` threshold, or a
+[dead VLM engine](#a-job-fails-with-enginedeaderror)).
 
 When SIGTERM arrives, the worker logs:
 
@@ -432,10 +515,9 @@ retried), so routine scale-ins surfaced as permanent job failures to
 clients. If you see that error, upgrade the worker image.
 
 **What SIGTERM cannot do**:
-- Cancellation **mid-`aio_do_parse`**. The vLLM forward pass is a
-  blocking GPU call from asyncio's point of view; interrupting it would
-  corrupt the engine state. The worker finishes the current document
-  even after SIGTERM, then exits cleanly.
+- Cancellation **mid-parse**. Nothing in the worker interrupts MinerU once
+  a parse has started; the worker finishes the current document even after
+  SIGTERM, then exits cleanly.
 
 If you need hard cancellation guarantees mid-parse, that's an upstream
 MinerU feature request, not a template-level fix.
@@ -447,4 +529,4 @@ If your symptom isn't here:
 1. Pull the worker logs from RunPod's dashboard — look for `[mineru-worker]` lines and any tracebacks
 2. Check the `debug` block in the response
 3. Open a bug report — the [issue template](https://github.com/sergeyshmakov/mineru-runpod/issues/new?template=bug_report.yml) asks for the response and the GPU pool, both of which let you diagnose 90% of issues at a glance
-4. **Parsing accuracy issues** (output is structurally fine but wrong content) belong upstream at [opendatalab/MinerU](https://github.com/opendatalab/MinerU/issues) — they're MinerU's responsibility, not this template's
+4. **Parsing accuracy issues** (output is structurally fine but wrong content) belong upstream at [opendatalab/MinerU](https://github.com/opendatalab/MinerU/issues) — this template runs MinerU as upstream ships it, so they're MinerU's to fix, not this template's

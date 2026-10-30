@@ -11,7 +11,7 @@ description: Understand workers_max, MINERU_MAX_CONCURRENCY, and vLLM batching, 
 |---|---|---|---|
 | **Across workers** (horizontal) | `workers_max` — how many separate worker containers run at once, each on its own GPU | `3` | Endpoint setting — RunPod dashboard or `deploy.py --workers-max` |
 | **Within a worker** (vertical) | `MINERU_MAX_CONCURRENCY` — how many jobs one worker pulls off the queue and runs at once through its shared model | `1` | Worker env var (exposed on the Hub deploy form) |
-| **Within the engine** (automatic) | vLLM's continuous batching of page-images in one parse; the pipeline `window_size` | — | Not a request knob — MinerU / vLLM manage it |
+| **Within the engine** (automatic) | vLLM's continuous batching of the requests in flight; MinerU's processing window (`MINERU_PROCESSING_WINDOW_SIZE`, 64 pages) | — | Not a request knob — MinerU / vLLM manage it |
 
 **Effective parallelism = `workers_max` × `MINERU_MAX_CONCURRENCY`.** With the defaults (3 × 1) the endpoint runs up to three jobs at once, one per worker.
 
@@ -33,26 +33,30 @@ Client-side concurrency only helps up to `workers_max × MINERU_MAX_CONCURRENCY`
 
 ### Default: scale out with `workers_max`
 
-For almost every workload, **horizontal scaling is the right dial.** Each worker is an isolated container with its own 24 GB GPU and its own model copy, peaking ~13 GiB on a single parse (see [Choosing a GPU](/guides/choosing-gpu/)). Raising `workers_max` adds full-speed parallel parses with no shared-memory risk. Cost scales linearly with worker-seconds; the only downside is more cold starts, mitigated by [FlashBoot](/guides/scaling/#flashboot).
+For almost every workload, **horizontal scaling is the right dial.** Each worker is an isolated container with its own 24 GB GPU — MinerU gives vLLM about 6 GB of it — and its own model copy (see [Choosing a GPU](/guides/choosing-gpu/)). Raising `workers_max` adds full-speed parallel parses with no shared-memory risk. Cost scales linearly with worker-seconds; the only downside is more cold starts, mitigated by [FlashBoot](/guides/scaling/#flashboot).
 
-This is how the [5,039-page batching run](/blog/2026-06-03-clause-aligned-batching-large-pdf-mineru/) hit 3× throughput: `workers_max=3`, `MINERU_MAX_CONCURRENCY=1`, 36 page-range jobs fanned across three 24 GB workers.
+This is how the [5,039-page batching run](/blog/2026-06-03-clause-aligned-batching-large-pdf-mineru/) hit 3× throughput on 1.x: `workers_max=3`, `MINERU_MAX_CONCURRENCY=1`, 36 page-range jobs fanned across three 24 GB workers.
 
 ### Niche: in-worker concurrency
 
-Raising `MINERU_MAX_CONCURRENCY` to `2-3` makes one worker run several jobs through the **same** vLLM engine. Because they share one KV cache, peak VRAM grows roughly linearly with concurrency — which is the one reason to move to a [48 GB pool](/guides/choosing-gpu/) (`AMPERE_48`).
+Raising `MINERU_MAX_CONCURRENCY` to `2-3` makes one worker run several jobs through the **same** MinerU process: one vLLM engine and its KV cache, shared by all of them, and MinerU's small-model stages (layout, OCR, formulas, tables), which take turns on the GPU.
+
+On 1.x that shared KV cache was large — 9.5 GiB on a 24 GB card — and a [48 GB pool](/guides/choosing-gpu/) (`AMPERE_48`) was the way to give concurrency more of it. MinerU 4 sizes vLLM to about 6 GB on any card, so the cache is smaller, and a 48 GB card changes nothing by itself. [`MINERU_VIRTUAL_VRAM_SIZE`](/guides/choosing-gpu/#mineru_virtual_vram_size) raises vLLM's share: `12` on a 24 GB card gives it half, about what 1.x used. How far in-worker concurrency pays on 2.x hasn't been measured yet.
+
+{/* MEASURE: jobs/hour at MINERU_MAX_CONCURRENCY 1 vs 2-3 on ADA_24, with MINERU_VIRTUAL_VRAM_SIZE unset vs 12, on small documents. */}
 
 It only pays off when a **single request doesn't saturate the GPU** — a stream of small documents, or jobs with heavy non-GPU phases (download, PDF rasterization, S3 upload) that leave the GPU idle. Overlapping job A's I/O with job B's GPU time fills those gaps and packs more parses into one GPU-second. For large or dense documents that already keep the GPU busy, in-worker concurrency just adds memory pressure for little gain — add a worker instead.
 
-Only raise it on **≥24 GB GPUs** (`vlm-auto-engine`) or any GPU (`pipeline`), and watch VRAM via `nvidia-smi` or the `gpu.memory` log fields. See [Scaling and tuning → Concurrency](/guides/scaling/#concurrency) for the knob itself.
+Raise it only after measuring, and watch VRAM via `nvidia-smi` or, with [OpenTelemetry](/guides/observability/) on, the `mineru.gpu.memory_used_bytes` gauge. See [Scaling and tuning → Concurrency](/guides/scaling/#concurrency) for the knob itself.
 
 ### Not a lever: the engine window
 
-You may see `Maximum concurrency for 8,192 tokens per request: 87.13x` in the logs, or the pipeline `window_size=64`. These are **internal** — how many sequences or page-images flow through the model in one pass — and MinerU / vLLM manage them automatically. They bound a single parse's throughput and VRAM; they do **not** serve more requests in parallel. Don't reach for `MINERU_PROCESSING_WINDOW_SIZE` to add request concurrency.
+You may see vLLM's `Maximum concurrency for N tokens per request` line in the logs (87× on 1.x's share of a 24 GB card; lower on 2.x's ≈6 GB), or MinerU's processing-window plan (64 pages by default). These are **internal** — how many sequences or pages flow through the models at once — and MinerU / vLLM manage them automatically. They bound a single parse's throughput and VRAM; they do **not** serve more requests in parallel. Don't reach for `MINERU_PROCESSING_WINDOW_SIZE` to add request concurrency.
 
 ## Summary
 
 | Goal | Reach for | GPU |
 |---|---|---|
 | More documents in parallel | `workers_max` (horizontal) | 24 GB per worker |
-| Better GPU use on small / I/O-heavy jobs | `MINERU_MAX_CONCURRENCY` `2-3` (in-worker) | 48 GB for headroom |
+| Better GPU use on small / I/O-heavy jobs | `MINERU_MAX_CONCURRENCY` `2-3` (in-worker), after measuring | 24 GB with `MINERU_VIRTUAL_VRAM_SIZE` raised; 48 GB once that runs out |
 | Faster on one large document | Neither — [batch it by page range](/guides/choosing-gpu/#large-documents-batch-dont-size-up) | 24 GB |

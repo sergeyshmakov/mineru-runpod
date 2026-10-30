@@ -10,6 +10,8 @@ tags:
   - Observability
 ---
 
+> **Written for template 1.x (MinerU 3.4).** The `mineru.backend` span attribute queried below is `mineru.tier` in 2.x; see [Upgrading to 2.x](/getting-started/upgrade-to-2/).
+
 If you're running a serverless worker on [RunPod](https://runpod.io?ref=31jdfpnq), you can't ssh in to read logs and you can't run a sidecar agent — the worker scales to zero between jobs. You need to ship logs and metrics off the box during the request lifetime, on the worker's own time. The mineru-runpod template includes an OpenTelemetry exporter for exactly this, and [Axiom](https://axiom.co/) is the sink I picked for my own deployment.
 
 This post is the exact env-var layout. If you use a different OTLP backend (Honeycomb, Grafana, Datadog, Jaeger, your own [OpenTelemetry Collector](https://opentelemetry.io/docs/collector/)), the [observability guide](/guides/observability/) covers the vendor-neutral setup; come back here only for the Axiom-specific values.

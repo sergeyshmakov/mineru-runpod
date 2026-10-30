@@ -164,10 +164,10 @@ def _build_parser() -> argparse.ArgumentParser:
         default=DEFAULTS["execution_timeout"],
         help=(
             f"per-job hard timeout in seconds (default: {DEFAULTS['execution_timeout']}). "
-            f"RunPod terminates the worker if a single job exceeds this; "
-            f"~1-3 s/page warm on ADA_24 → 900 s covers ~300-900 pages "
-            f"comfortably. Applied after creation via the REST API, since the "
-            f"SDK's create_endpoint has no parameter for it."
+            f"RunPod terminates the worker if a single job exceeds this; size "
+            f"it to your largest page_range at the tier you use (the scaling "
+            f"guide has per-tier speeds). Applied after creation via the REST "
+            f"API, since the SDK's create_endpoint has no parameter for it."
         ),
     )
 

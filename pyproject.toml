@@ -25,7 +25,7 @@ deploy = [
 test = [
     # CI runs these without a GPU. Worker-side deps that the handler imports
     # at module load (httpx, runpod) are needed; mineru itself is NOT — its
-    # import is wrapped in try/except inside handler.py.
+    # import is wrapped in try/except inside worker/parse.py.
     "pytest>=7",
     "httpx>=0.27",
     "runpod>=1.7",

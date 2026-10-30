@@ -1,66 +1,85 @@
 ---
 title: Input formats
-description: PDF, image, DOCX, PPTX, XLSX — what the worker accepts, how format detection works, and per-format quirks.
+description: PDF, images, Office, OpenDocument, EPUB, OFD, HTML and CSV — what the worker accepts, how MinerU detects the format, and which tiers apply to it.
 ---
 
-The worker accepts five input formats through the same three sources (`file_url`, `file_b64`, `volume_path`). Format is **auto-detected from the input bytes** — there's no `format` field to set, and the field name `file_*` is intentionally format-agnostic. Send whichever source you have; the worker detects the format.
+The worker accepts every format MinerU 4.1 parses, through the same three sources (`file_url`, `file_b64`, `volume_path`). There's no `format` field to set: MinerU's own detector decides from the bytes, and an optional `file_name` settles the few cases content can't. The list is upstream's — mineru-runpod accepts what MinerU parses, no more and no less.
 
 ## Supported formats
 
-| Format | Magic bytes | Path through MinerU |
-|---|---|---|
-| **PDF** | `%PDF` | Passes straight to `aio_do_parse` |
-| **Image** (PNG / JPEG / GIF / BMP / TIFF / WebP) | `\x89PNG`, `\xff\xd8\xff`, `GIF8`, `BM`, `II*\x00`, `MM\x00*`, `RIFF` | Converted to single-page PDF via `images_bytes_to_pdf_bytes`, then parsed |
-| **DOCX** (Word) | `PK\x03\x04` (ZIP/OOXML) | Parsed via MinerU's `office_docx_analyze` (python-docx) |
-| **PPTX** (PowerPoint) | `PK\x03\x04` | Parsed via `office_pptx_analyze` (python-pptx) |
-| **XLSX** (Excel) | `PK\x03\x04` | Parsed via `office_xlsx_analyze` (openpyxl) |
+PDFs and images go through MinerU's four quality tiers (`flash`, `basic`, `standard`, `advanced`):
 
-DOCX / PPTX / XLSX share the same ZIP magic — MinerU's `guess_suffix_by_bytes` inspects the archive's `[Content_Types].xml` to discriminate them downstream.
+| Format | Extensions | Notes |
+|---|---|---|
+| **PDF** | `pdf` | Text-layer and scanned PDFs. [`page_range`](#page-selection-pdf-only) selects pages |
+| **Image** | `png`, `jpg`, `jpeg`, `webp`, `gif`, `bmp`, `tiff`, `jp2` | Parsed directly as a one-page document. JPEG 2000 (`jp2`) is new in 2.x |
+
+Every other format is parsed natively, from the file's own structure, and always runs at `flash` whatever tier the job asks for:
+
+| Family | Extensions | New in 2.x |
+|---|---|---|
+| Word processing | `docx`, `doc`, `rtf`, `odt` | `doc`, `rtf`, `odt` |
+| Spreadsheets | `xlsx`, `xls`, `ods`, `csv`, `tsv` | `xls`, `ods`, `csv`, `tsv` |
+| Presentations | `pptx`, `ppt`, `odp` | `ppt`, `odp` |
+| E-books | `epub` | all |
+| Fixed-layout documents | `ofd` (China's national fixed-layout document standard) | all |
+| Web pages | `html`, `htm`, `shtml`, `mhtml`, `mht` | all |
+
+1.x accepted PDF, PNG/JPEG/GIF/BMP/TIFF/WebP images, DOCX, PPTX and XLSX. The legacy binary Office formats (DOC, XLS, PPT), RTF, OpenDocument, EPUB, OFD, HTML/MHTML web pages and CSV/TSV are new in 2.x.
+
+Plain text and Markdown (`.txt`, `.md`, …) are not accepted: MinerU reads them as they are rather than parsing them, so there is nothing for the worker to do.
+
+## How the format is detected
+
+The worker asks MinerU's own detector — the one MinerU's CLI and API use — so the answer is the one the parse acts on. It checks file signatures first (PDF, RTF, MHTML, OFD, EPUB, the OOXML and OpenDocument containers, legacy Office), then falls back to a content-type model for everything else.
+
+- **Content wins for binary formats.** A PDF named `report.docx` is parsed as a PDF.
+- **Text formats need a name.** CSV and TSV carry no signature, so content alone never settles them: MinerU parses a CSV or TSV only when a name says which it is. A short HTML fragment, with no document around it, can read as plain text the same way. Without a name, both fail with the [unknown-format error](#format-detection-edge-cases).
+- **The name comes from `file_name`, or else from the source.** Set `file_name` (e.g. `"table.csv"`) and its extension is the hint. Without it, the worker uses the last segment of the `file_url` path (the query string is ignored) or of `volume_path`. `file_b64` has no name of its own, so send `file_name` with it for CSV, TSV and HTML fragments.
+
+`file_name` must be a file name rather than a path (no `/`, `\` or control characters), at most 255 characters, ending in one of the extensions above. Only its extension is used — it never names a file on disk; the output stem is `basename`.
+
+The detected format comes back as `debug.input_format` (`pdf`, `png`, `docx`, `csv`, …) — see [Troubleshooting](/guides/troubleshooting/#how-to-read-the-debug-block).
 
 ## What gets returned
 
-The output shape is the same regardless of input format: Markdown + `content_list` + `middle.json` + extracted images. The exact contents differ, but the schema doesn't. A DOCX with a chart and a PDF with the same chart produce comparably structured output.
+Every format produces the same artifacts — Markdown, the content lists, `middle`, structured content and extracted images (see [Output modes](/guides/output-modes/#what-the-worker-produces)). The contents differ by input; the shape doesn't.
 
-## When format matters for the backend choice
+- **PDFs and images**: MinerU analyses each page — layout, text, tables, formulas — at the tier you chose. Figures and other image regions are cropped into `images/`.
+- **Native documents**: headings, paragraphs, lists and tables come from the file's own structure rather than from layout detection. Embedded pictures (DOCX images, `data:` URIs in HTML) come back in `images/`; images an HTML page references by remote URL are not downloaded.
+- **Spreadsheets and CSV/TSV** come back as tables.
 
-The five MinerU backends (see [Picking a backend](/guides/choosing-gpu/#picking-a-backend)) share the same input contract:
+## Tiers and formats
 
-| Workload | Start with | Language behavior |
-|---|---|---|
-| Digital PDF with complex layout | `vlm-auto-engine` (default) | `lang` is ignored. The model card lists English and Chinese; test other scripts on your own corpus. |
-| Scan or image that needs explicit OCR control | `pipeline` | Set one of the supported script-family `lang` values below. |
-| Mixed native-text and scanned pages | `hybrid-auto-engine` | MinerU combines native extraction, VLM, and pipeline OCR. |
-| External OpenAI-compatible inference server | `vlm-http-client` or `hybrid-http-client` | Requires `server_url`; language behavior follows the corresponding VLM or hybrid path. |
+The tier decides how much model work MinerU spends on a PDF or an image. Native documents have none to spend it on, so they always run at `flash`. Asking for `standard` on a DOCX is not an error: the job runs at `flash`, and the response reports the tier that actually ran in `debug.tier` (the `parsing` progress event carries it too).
 
-Office formats (DOCX/PPTX/XLSX) are parsed by MinerU's dedicated analysers regardless of which `backend` you set — the choice only affects which engine handles the *embedded* graphics / equations / scanned regions inside the document.
-
-## The `lang` parameter (pipeline backend only)
-
-For explicit OCR language selection, set `backend: "pipeline"` and use one
-of MinerU 3.4's model-family codes, not an ISO language code:
-
-| Script family | Use for |
+| Tier | What it does on a PDF or image |
 |---|---|
-| `ch` | Chinese, English, Japanese, Traditional Chinese, and Latin-script content |
-| `ch_server` | Server variant of the Chinese-family OCR model |
-| `arabic` | Arabic-script content |
-| `cyrillic` | Bulgarian, Macedonian, Mongolian, Serbian (non-Slavic Cyrillic) |
-| `devanagari` | Hindi, Marathi, Nepali |
-| `east_slavic` | Belarusian, Russian, Ukrainian |
-| `el` | Greek |
-| `ka`, `ta`, `te` | Kannada, Tamil, Telugu |
-| `korean` | Korean (hangul) |
-| `th` | Thai |
+| `flash` | No VLM. Reads a PDF's text layer directly, and gives scans and images a fast OCR pass. MinerU's preview and indexing tier |
+| `basic` | MinerU's small models — layout, OCR, formulas, tables — and no VLM |
+| `standard` *(default)* | The small models plus the VLM, with the local layout driving the VLM. MinerU's default |
+| `advanced` | The VLM does its own layout and content, with image analysis on. Slowest |
 
-MinerU 3.4 removed `en`, `japan`, `chinese_cht`, and `latin` as distinct
-model choices and routes those compatibility aliases through `ch`. The worker
-still defaults to `en`, which MinerU normalizes to `ch`. VLM backends ignore
-`lang`; test multilingual VLM output against your own documents and switch to
-`pipeline` when you need explicit OCR model selection.
+`ocr_mode` sets where a PDF's text comes from: `auto` (the default) lets MinerU classify the document, `txt` trusts the text layer, and `ocr` reads every page as an image — useful when a PDF's text layer is broken or garbled. These are MinerU's own names.
+
+Coming from 1.x, MinerU's own caveat applies: don't infer the new quality defaults from the old backend names. What each tier costs on a GPU is covered in [Choosing a GPU → Picking a tier](/guides/choosing-gpu/#picking-a-tier).
+
+## OCR languages
+
+MinerU 4 has no OCR language setting, so 2.x has no `lang` field — a job that sends one fails validation. Where a page's text comes from depends on the page and the tier:
+
+| Page | `flash`, `basic` | `standard`, `advanced` |
+|---|---|---|
+| PDF page with a text layer | The PDF's own text | The PDF's own text |
+| Scanned page or image | MinerU's OCR recognizer | The VLM |
+
+MinerU 4 ships one OCR recognizer. It covers Chinese, English, Japanese and Latin-script languages; there is no recognizer for Cyrillic, Arabic, Devanagari, Korean, Thai or Greek script. So **for scanned documents in those scripts, use `standard` or `advanced`**, which read the page with the VLM. The VLM's model card is tagged for English and Chinese, so check other scripts against your own documents.
+
+This is a step back from 1.x for one workflow: `backend: "pipeline"` with a script-family `lang` (`east_slavic`, `cyrillic`, `arabic`, `devanagari`, `korean`, …) gave explicit per-script OCR, and it has no 2.x equivalent. mineru-runpod is a port of official MinerU — it exposes what upstream exposes, under upstream's names, and adds no models or language packs of its own — so when MinerU dropped per-language OCR, the template dropped it too. Questions about recognition quality belong [upstream](https://github.com/opendatalab/MinerU/issues).
 
 ## Examples
 
-### PDF (English)
+### PDF
 
 ```json
 {
@@ -70,60 +89,58 @@ still defaults to `en`, which MinerU normalizes to `ch`. VLM backends ignore
 }
 ```
 
-The default `vlm-auto-engine` handles the PDF. Its `lang` value is ignored.
+Runs at `standard`, MinerU's default tier.
 
-### Cyrillic scan (Russian)
+### Scan in a non-Latin script
 
 ```json
 {
   "input": {
     "file_url": "https://example.com/russian-scan.pdf",
-    "backend": "pipeline",
-    "lang": "east_slavic"
+    "tier": "advanced"
   }
 }
 ```
 
-Both backends produced usable Russian output in our test: the Pro VLM handled Cyrillic, while pipeline used its explicit script-family OCR model. Treat that as a limited test, not a general script-coverage claim. For scans without an embedded text layer or when you need explicit OCR selection, start with `pipeline`.
+`standard` (the default) and `advanced` take a scanned page's text from the VLM. `basic` would OCR it with a recognizer that has no Cyrillic.
 
-### Scanned image (PNG)
+### Scanned image
 
 ```json
 {
   "input": {
     "file_url": "https://example.com/page-scan.png",
-    "backend": "pipeline",
-    "lang": "ch"
+    "tier": "basic"
   }
 }
 ```
 
-Image is converted to a single-page PDF internally, then routed through pipeline OCR.
+The image is parsed directly as one page. `basic` OCRs it with MinerU's small models and never loads the VLM — a fit for Latin and CJK text.
 
-### DOCX with native text + embedded equations
+### DOCX
 
 ```json
 {
   "input": {
-    "file_url": "https://example.com/spec.docx",
-    "formula_enable": true
+    "file_url": "https://example.com/spec.docx"
   }
 }
 ```
 
-Office parser extracts native text and structure; embedded equation/image regions are sent to the chosen `backend` for parsing.
+Runs at `flash` whatever `tier` says, and `debug.tier` reports `flash`. Text, headings, tables and embedded pictures come straight from the file.
 
-### XLSX (spreadsheet)
+### CSV sent as base64
 
 ```json
 {
   "input": {
-    "file_url": "https://example.com/data.xlsx"
+    "file_b64": "<base64-encoded CSV>",
+    "file_name": "prices.csv"
   }
 }
 ```
 
-Returns Markdown tables (one per sheet) in `content_list`.
+Base64 carries no name, so `file_name` is what makes this a CSV. A `file_url` whose path ends in `.csv` needs no `file_name`.
 
 ## Size limits
 
@@ -141,14 +158,35 @@ pre-stage on a network volume and use `volume_path` — see
 
 ## Page selection (PDF only)
 
-The `start_page` / `end_page` fields apply to PDFs (including images converted to single-page PDFs). For DOCX/PPTX/XLSX, page-range semantics are interpreted by MinerU's Office parsers — they generally process the whole document and `start_page` / `end_page` are best-effort.
+`page_range` selects pages with MinerU's own grammar: 1-based and inclusive, parts separated by commas, `rN` counting from the end (`r1` is the last page). Whitespace is ignored.
+
+| `page_range` | Pages |
+|---|---|
+| `"5"` | Page 5 |
+| `"1-5,8"` | Pages 1 to 5, and page 8 |
+| `"r3-r1"` | The last three pages |
+| `"2-r2"` | Page 2 to the second-to-last page |
+| `"all"`, `""` or omitted | The whole document |
+
+- **PDFs only.** Any other input, images included, fails with `page_range applies to PDFs only; the input is <format>`. That check needs the detected format, so it runs after the download.
+- **Shape-checked up front.** A malformed range, or an absolute one that ends before it starts (`"5-3"`), fails validation before anything is downloaded. Only MinerU, once it has the document, can resolve the rest: it drops pages past the end rather than rejecting them, but fails a range left with no pages at all, or one counted from the end that runs backwards (`"r1-r3"`).
+- **Absolute page numbers in the output.** `page_idx` is the page's 0-based position in the whole document, not within the range: `"11-20"` gives `page_idx` 10 to 19. 1.x counted from `start_page` instead.
+- **Counting.** `pages_requested` in the response is the number of pages an absolute range names (overlaps count once), or `-1` for the whole document and for any range counted from the end. [`MINERU_MAX_PAGES_PER_JOB`](/guides/scaling/#bounding-the-work-per-job) counts the same way.
+
+Coming from 1.x's 0-based `start_page`/`end_page`: `start_page: 0, end_page: 4` is `"1-5"`, and an open-ended `start_page: 10` is `"11-r1"`. See [Upgrading to 2.x](/getting-started/upgrade-to-2/).
 
 ## Format detection edge cases
 
-If `_detect_format` returns `"unknown"` (the bytes don't match any known magic), the worker raises:
+When MinerU's detector doesn't recognise the bytes as anything it parses, the job fails before the parse:
 
 ```
-ValueError: input bytes do not match any supported format (PDF, PNG/JPEG/GIF/BMP/TIFF/WebP image, or DOCX/PPTX/XLSX). Check that file_b64 was base64-encoded correctly and that file_url returned the file body (not an error page).
+ValueError: input bytes do not match any format MinerU parses (PDF, an image, Office/OpenDocument, RTF, EPUB, OFD, HTML, CSV/TSV). Text formats need a name to go by: set file_name (e.g. 'table.csv'). Otherwise check that file_b64 was base64-encoded correctly and that file_url returned the file body (not an error page).
 ```
 
-Most common cause is `file_url` returning an HTML error page (e.g. a 403 from an S3 bucket with expired credentials). The first 16 bytes of the response will start with `<!DOCT` or `<html` — neither of which is in our magic table.
+The usual causes:
+
+- **CSV, TSV or an HTML fragment with no name to go by** — set `file_name`, or use a `file_url` path or `volume_path` that ends in the right extension.
+- **A format MinerU doesn't parse** — plain text, Markdown, JSON, XML, a ZIP archive.
+- **Bad base64** — double-encoded, or not base64 at all.
+
+One case changed meaning in 2.x. A `file_url` that answers with an error status (403, 404, …) still fails at the download. But a link that answers `200` with a **web page** — a sign-in screen, a file-sharing service's "download anyway" page — is now a format MinerU parses: the job succeeds at `flash`, with that page's text as its Markdown, where 1.x refused it. If you expected a PDF and `debug.input_format` says `html`, the URL served a page rather than the file; use a direct download link such as a presigned object URL.

@@ -1,9 +1,11 @@
 """Minimal example: parse a local document by sending it inline as base64.
 
-Accepts any format the worker supports: PDF, image (PNG/JPEG/GIF/BMP/TIFF/WebP),
-DOCX, PPTX, XLSX. Only practical for files ≤ ~10 MB on /run and ~20 MB on
-/runsync — RunPod's gateway rejects bigger payloads. For larger files, use
-a URL or a mounted volume_path.
+Accepts any format the worker supports: PDF, images (PNG/JPEG/WebP/GIF/BMP/TIFF/
+JPEG 2000), Office (DOC/DOCX, PPT/PPTX, XLS/XLSX), OpenDocument, RTF, EPUB, OFD,
+HTML and CSV/TSV. The file's own name goes along as `file_name`, the extension
+hint CSV, TSV and HTML fragments need. Only practical for files ≤ ~10 MB on /run
+and ~20 MB on /runsync — RunPod's gateway rejects bigger payloads. For larger
+files, use a URL or a mounted volume_path.
 
 Usage:
     set RUNPOD_API_KEY=...
@@ -36,6 +38,8 @@ def main() -> int:
     result = MineruClient.parse_document_from_file(
         client,
         file_path,
+        # Extension hint; content still decides binary formats.
+        file_name=file_path.name if file_path.suffix else None,
         transport="inline",   # small enough to keep everything in-memory
         basename=file_path.stem,
     )

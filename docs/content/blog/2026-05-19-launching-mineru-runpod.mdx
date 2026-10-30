@@ -11,6 +11,8 @@ tags:
   - Document parsing
 ---
 
+> **Written for template 1.x (MinerU 3.4).** Fields used here (`end_page`, `backend`, `lang`) changed in 2.x; see [Upgrading to 2.x](/getting-started/upgrade-to-2/).
+
 If you're building a RAG pipeline, a document indexer, or any product that ingests PDFs at scale, you've probably hit the same wall I did. Hosted OCR APIs charge pennies per page that compound into thousands per million. CPU parsers are too slow for production volume. A permanent GPU pod is wasteful when traffic comes in bursts.
 
 [MinerU 2.5](https://github.com/opendatalab/MinerU) produces Markdown and structured JSON from complex PDFs, with published results in the [`MinerU2.5-Pro-2605-1.2B` model card](https://huggingface.co/opendatalab/MinerU2.5-Pro-2605-1.2B). Its open-source license is based on Apache 2.0 with additional terms. The 1.2B model fits on a 24 GB GPU, and RunPod Serverless scales to zero when nothing is calling.

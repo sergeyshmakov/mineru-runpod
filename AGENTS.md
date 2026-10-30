@@ -19,7 +19,7 @@ version number would carry elsewhere.
 **Major** is reserved for an upstream engine major: a new major of `MinerU` or of
 its models. It is the one fact a template user acts on, because it is when output
 and behaviour actually move. The engine is minor-locked in `requirements.txt`
-(`mineru[core,vllm]>=3.4.0,<3.5.0`), so this cannot happen by accident.
+(`mineru[torch]>=4.1.3,<4.2.0`), so this cannot happen by accident.
 
 **A breaking change to the template's own contract ships on a minor.** A renamed
 job field, a default that flips, a value that used to be accepted and now is not.
@@ -101,6 +101,28 @@ git diff <old-head> <new-head>                        # must be empty
 unchanged; it says nothing about where the commits now sit. Making a PR's commits
 reachable from `main` is a merge whatever it is called — and here a merge is a
 release.
+
+## Mirror upstream MinerU
+
+This template is a port of official MinerU to RunPod Serverless, not a variant
+of it. It exposes what upstream exposes and does not decide how MinerU should be
+used. Three rules follow, and they hold for every change:
+
+- **Upstream's surface, under upstream's names.** A field, value or output that
+  MinerU has goes into the job contract as MinerU spells it (`tier`, `ocr_mode`,
+  `page_range`, `file_name`), not under a name this repo invents.
+- **When upstream removes a capability, remove it here.** No shim, no alias, no
+  old job field that is accepted and quietly ignored: the field is rejected, and
+  the release notes say what replaced it, if anything did. MinerU 4 dropping
+  per-language OCR is why `lang` is gone rather than tolerated.
+- **Add no engine behaviour.** No parsing modes, models or language packs of
+  this repo's own, no edits to the content MinerU returns, and no reaching into
+  MinerU's internals to bring back a feature upstream dropped.
+
+What this repo adds is what RunPod needs around MinerU: the job envelope, input
+fetching, output transport, scaling and telemetry. A parsing-quality problem
+belongs upstream, at github.com/opendatalab/MinerU. If a change seems to need an
+exception to these rules, stop and ask the owner.
 
 ## Commit format
 

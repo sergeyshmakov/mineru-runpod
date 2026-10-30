@@ -3,11 +3,13 @@ title: Overview
 description: Architecture, what's in the repo, supported workloads, and how it compares to Marker, GROBID, and Nougat.
 ---
 
-`mineru-runpod` runs [MinerU](https://github.com/opendatalab/MinerU) 3.4.x on [RunPod Serverless](https://runpod.io?ref=31jdfpnq), using the [`MinerU2.5-Pro-2605-1.2B`](https://huggingface.co/opendatalab/MinerU2.5-Pro-2605-1.2B) VLM by default. It is a generic parsing endpoint rather than a hosted application: the repo contains the worker image, two Python client surfaces, and endpoint lifecycle scripts. A RAG pipeline, document indexer, or Office archive can call the same `document → Markdown + structured JSON` contract.
+`mineru-runpod` runs [MinerU](https://github.com/opendatalab/MinerU) 4.1.x on [RunPod Serverless](https://runpod.io?ref=31jdfpnq), with MinerU's small models and the [`MinerU2.5-Pro-2605-1.2B`](https://huggingface.co/opendatalab/MinerU2.5-Pro-2605-1.2B) VLM baked into the image. It is a generic parsing endpoint rather than a hosted application: the repo contains the worker image, two Python client surfaces, and endpoint lifecycle scripts. A RAG pipeline, document indexer, or Office archive can call the same `document → Markdown + structured JSON` contract.
+
+It is a port of official MinerU, not a variant of it. The worker exposes what upstream MinerU exposes, under upstream's names (the quality tiers, `ocr_mode`, `page_range`, `file_name`, MinerU's output files and renders), and does not decide how MinerU should be used: it adds no parsing modes, models or language packs of its own, and when upstream drops a capability, the template drops it too. Questions about parsing quality belong [upstream](https://github.com/opendatalab/MinerU/issues).
 
 ## What's in the repo
 
-- **`handler.py`** — the serverless worker. Accepts a PDF via URL, base64, or mounted-volume path; calls MinerU's async parse; returns Markdown + `content_list` + `middle.json` + images. The MinerU-specific parts live in `worker/`; input transport, response packaging, logging and diagnostics come from the harness below.
+- **`handler.py`** — the serverless worker. Accepts a document via URL, base64, or mounted-volume path; calls MinerU's async parser; returns Markdown, the content lists, `middle.json`, structured JSON and images, plus any renders the job asks for. The MinerU-specific parts live in `worker/`; input transport, response packaging, logging and diagnostics come from the harness below.
 - **[`runpod-doc-worker`](https://github.com/sergeyshmakov/runpod-doc-worker)** — a dependency, not a directory: the engine-agnostic half of this worker, extracted so the repo can be the engine and the entry point. It fetches the input from a URL, a base64 blob or a volume path, checks outbound targets, packs the result as a tarball, inline fields or an S3 object, emits one JSON log line per record, and answers a `probe: true` job. What this worker declares to it — env prefix, input roots, output manifest — is one file, `worker/harness.py`. See the [harness docs](https://rdw.shmakov.tools).
 - **`mineru_client/`** — the dependency-light Python package. `MineruClient` exposes the native worker contract; `MineruApiClient` provides a temporary compatibility facade for evaluating a move from the MinerU cloud API.
 - **`deploy.py` / `destroy.py`** — create and remove endpoints with CLI flags for identity, scaling, GPU, disk, and timeout settings. Configure environment variables, secrets, storage, and regions in RunPod.
@@ -18,16 +20,16 @@ description: Architecture, what's in the repo, supported workloads, and how it c
 
 | If you're building... | What you get |
 |---|---|
-| **Office document indexing** (Word / PowerPoint / Excel exported to PDF) | Spiky ingest, pay only during bursts; preserves tables + figures |
+| **Office document indexing** (Word / PowerPoint / Excel files, or exports to PDF) | Spiky ingest, pay only during bursts; Office files parse natively, without models; preserves tables + figures |
 | **Document RAG pipelines** | Section-aware chunks with page provenance out of the box |
 | **Contract / spec / standards parsing** | Handles long attribute tables and cross-page constructs |
 | **Invoice / receipt extraction** | Table fidelity + image extraction in one pass |
-| **Multilingual documents** | MinerU 3.4's pipeline backend provides script-family OCR models for Cyrillic, Arabic, Devanagari, Korean, and other supported scripts |
+| **Multilingual documents** | Text-layer PDFs and native files in any script. Scans: `flash` and `basic` read them with MinerU 4's OCR model, which covers Chinese, Japanese and Latin scripts; scans in other scripts (Cyrillic, Arabic, Devanagari, Korean, …) need `standard` or `advanced`, where the VLM reads the page — test on your own documents |
 
 ## Why MinerU + serverless
 
 - **Published evaluation.** The `MinerU2.5-Pro-2605-1.2B` model card reports OmniDocBench results for text, formulas, tables, and reading order. Review the [model card](https://huggingface.co/opendatalab/MinerU2.5-Pro-2605-1.2B), [benchmark](https://github.com/opendatalab/OmniDocBench), and [technical report](https://arxiv.org/abs/2604.04771) for scope and limitations.
-- **Economics.** Per-second billing on RunPod with FlashBoot means an idle worker costs nothing. ~$0.0003 per page on a 24 GB RTX 4090 (default) at current rates (see [RunPod pricing](https://www.runpod.io/pricing); rates change).
+- **Economics.** Per-second billing on RunPod with FlashBoot means an idle worker costs nothing; a busy one costs its GPU's per-second rate (see [RunPod pricing](https://www.runpod.io/pricing); rates change). {/* MEASURE: warm $/page on the 2.x default tier (standard) on a 24 GB RTX 4090; the 1.x figure was measured on MinerU 3.4 */}
 - **Licensing.** MinerU uses an [open-source license](https://github.com/opendatalab/MinerU/blob/master/LICENSE.md) based on Apache 2.0 with additional terms, attribution requirements, and stated commercial thresholds. Review the upstream terms for your use case.
 
 [![MinerU2.5-Pro-2605 vs other PDF parsers — OmniDocBench leaderboard](https://hotelll.github.io/MinerU2.5-Pro/leaderboard.png)](https://huggingface.co/opendatalab/MinerU2.5-Pro-2605-1.2B)
@@ -41,23 +43,23 @@ description: Architecture, what's in the repo, supported workloads, and how it c
 | Scale-to-zero | ✅ ready to use | ⚠️ possible, needs extra setup | ❌ always-on | ❌ |
 | GPU | required | CPU or GPU | CPU | required |
 | Equations | ✅ LaTeX | ✅ LaTeX | ❌ | ✅ LaTeX |
-| Multi-lang | ✅ script-family OCR models (pipeline backend) | per upstream README | EN only | per upstream README |
+| Multi-lang | ⚠️ OCR model reads Chinese, Japanese and Latin scripts; scans in other scripts need the VLM tiers | per upstream README | EN only | per upstream README |
 | License | MinerU Open Source License | **GPL-3.0 code + modified RAIL-M weights** | Apache 2.0 | MIT code, **CC-BY-NC 4.0 weights** |
 | Commercial SaaS | ✅ | ⚠️ depends on RAIL-M competitor clause | ✅ | ⚠️ subject to CC-BY-NC non-commercial clause |
 
 Marker uses Surya as its in-process OCR/layout engine; Surya's weights ship under a modified RAIL-M license. The license's §2(c) competitor clause does not include the $2M revenue carveout that §2(a) and §2(b) carry, while Marker's own README markets the model weights as free for "startups under $2M funding/revenue." The two read differently — get counsel before depending on Marker for a service that could be characterized as competitive. Datalab's [Chandra](https://github.com/datalab-to/chandra) model (what their hosted API runs) carries the same modified RAIL-M license.
 
-See the [project README](https://github.com/sergeyshmakov/mineru-runpod#how-does-it-compare) for the fully source-cited version of this comparison.
+See the [project README](https://github.com/sergeyshmakov/mineru-runpod#compared-with-other-parsers) for the fully source-cited version of this comparison.
 
 ## What it accepts and what comes back
 
-- **Inputs**: PDF, image (PNG/JPEG/GIF/BMP/TIFF/WebP), DOCX, PPTX, XLSX — auto-detected from bytes. Three sources: URL, base64, or a path on a mounted volume. See [Input formats](/guides/input-formats/).
-- **Outputs**: Markdown + `content_list` + `middle.json` + extracted images. Three transport modes: base64 tarball, inline fields, or presigned URL to an S3-compatible bucket. See [Output modes](/guides/output-modes/).
-- **Backends**: five MinerU backends — the VLM (model card tagged English + Chinese; empirically handles Cyrillic on the tested Pro model), the pipeline OCR with script-family language models, the hybrid auto-router, and two backends for an external VLM server. See [Picking a backend](/guides/choosing-gpu/#picking-a-backend).
+- **Inputs**: PDFs and images (PNG, JPEG, WebP, GIF, BMP, TIFF, JPEG 2000) run at the tier you pick. Office files (DOC, DOCX, PPT, PPTX, XLS, XLSX), OpenDocument, RTF, EPUB, OFD, HTML/MHTML and CSV/TSV are parsed natively at `flash`. MinerU's own detector reads the format from the bytes; CSV, TSV and HTML fragments also need a `file_name` to take the extension from. Three sources: URL, base64, or a path on a mounted volume. See [Input formats](/guides/input-formats/).
+- **Outputs**: Markdown, `content_list` (and the page-grouped `content_list_v2`), `middle.json`, structured JSON and extracted images, plus MinerU's HTML, LaTeX, DOCX, EPUB and PDF renders when a job lists them. Three transport modes: base64 tarball, inline fields, or presigned URL to an S3-compatible bucket. See [Output modes](/guides/output-modes/).
+- **Tiers**: MinerU's four quality tiers. `flash` is the fastest: the PDF's own text layer, or MinerU's Flash OCR for scans. `basic` runs the small models for layout, OCR, formulas and tables. `standard`, the default, adds the VLM to them. `advanced` lets the VLM read layout and content itself; it is the slowest. `standard` and `advanced` can also call an external OpenAI-compatible VLM server per job (`server_url`). See the [job input reference](/reference/api/#job-input).
 
 ## Versions and compatibility
 
-This template tracks MinerU `3.4.x`, pinned as `mineru[core,vllm]>=3.4.0,<3.5.0`.
+This template tracks MinerU `4.1.x`, pinned as `mineru[torch]>=4.1.3,<4.2.0`. Template 1.x ran MinerU 3.4.x; to stay on it, pin the `v1.13.0` release. [Upgrading to 2.x](/getting-started/upgrade-to-2/) maps every 1.x job field and environment variable onto 2.x.
 
 The major version moves only when MinerU has a major release. Breaking changes to the job contract or to installability ship on a minor and lead the release notes — see [Versioning](/reference/versioning/) for what to read before upgrading.
 

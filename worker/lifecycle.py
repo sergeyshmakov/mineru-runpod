@@ -233,10 +233,10 @@ def _record_degradation(lost: _degraded.Report) -> None:
 # Concurrency
 # -----------------------------------------------------------------------------
 #
-# vLLM pre-allocates a large KV cache and isn't safe to drive from concurrent
-# aio_do_parse calls on smaller GPUs. Default 1 is safe on every supported
-# GPU type. Operators with ≥24 GB GPUs may raise via MINERU_MAX_CONCURRENCY.
-# See guides/scaling.mdx for the VRAM math.
+# Every job in a worker shares MinerU's one vLLM engine and its KV cache, which
+# MinerU 4 sizes at about 6 GB on any card, and the local-model stages take
+# turns on the GPU. Default 1 is safe on every supported GPU type; operators
+# may raise it via MINERU_MAX_CONCURRENCY. See guides/scaling.mdx for the math.
 
 def _concurrency_modifier(current_concurrency: int) -> int:  # noqa: ARG001
     try:

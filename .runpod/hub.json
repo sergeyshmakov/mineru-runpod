@@ -118,7 +118,7 @@
         "input": {
           "name": "Require an allow-list for server_url",
           "type": "string",
-          "description": "Set to 1 if untrusted callers submit jobs. Every server_url host, public included, must then be listed in MINERU_ALLOWED_SERVER_HOSTS -- fill that in too or http-client jobs are refused.",
+          "description": "Set to 1 if untrusted callers submit jobs. Every server_url host, public included, must then be listed in MINERU_ALLOWED_SERVER_HOSTS -- fill that in too, or server_url jobs are refused.",
           "default": "",
           "advanced": true
         }
@@ -188,7 +188,7 @@
         "input": {
           "name": "VRAM MinerU sizes itself for (GB)",
           "type": "string",
-          "description": "MinerU gives vLLM 6 GB / this value of the card (min 0.1). Set 12 on a 24 GB card to give vLLM half. Empty = detected VRAM. See the scaling guide.",
+          "description": "vLLM gets 6 GB / this value of the card (min 0.1): 12 on a 24 GB card gives it half. 6 or less gives it the whole card. Empty = detected VRAM. See the scaling guide.",
           "default": "",
           "advanced": true
         }
@@ -198,7 +198,7 @@
         "input": {
           "name": "MinerU page window (pages)",
           "type": "string",
-          "description": "Pages MinerU renders and analyses per window on the basic, standard and advanced tiers. Lower uses less memory. Empty = MinerU default 64.",
+          "description": "Pages MinerU renders and analyses per window when it runs models (scans included). Lower uses less memory. Empty = MinerU default 64.",
           "default": "",
           "advanced": true
         }
@@ -242,7 +242,7 @@
           "default": "standard",
           "options": [
             {
-              "label": "flash (no models)",
+              "label": "flash (no VLM)",
               "value": "flash"
             },
             {

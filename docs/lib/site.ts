@@ -1,6 +1,6 @@
 export const siteName = "mineru-runpod";
 export const siteDescription =
-	"Deploy MinerU 3.4 on RunPod Serverless. The open-source endpoint scales to zero and returns Markdown, structured JSON, and extracted images.";
+	"Deploy MinerU 4.1 on RunPod Serverless. The open-source endpoint scales to zero and turns PDFs, images, Office files and HTML into Markdown and structured JSON.";
 export const siteUrl = "https://mineru.shmakov.tools";
 export const repositoryUrl = "https://github.com/sergeyshmakov/mineru-runpod";
 

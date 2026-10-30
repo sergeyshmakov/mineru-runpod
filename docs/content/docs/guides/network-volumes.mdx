@@ -11,7 +11,8 @@ For mineru-runpod, a volume has two practical uses:
 2. **Share intermediate or final files** between RunPod jobs in a multi-step pipeline
 
 Do not attach a volume only for MinerU's model weights. The published image
-already contains both model repositories and runs with Hugging Face offline.
+already contains them, under MinerU's own model directory, and never
+downloads at runtime.
 
 ## Problem 1: pre-staging large input corpora
 
@@ -25,14 +26,15 @@ Mount a network volume once, upload the corpus to `/runpod-volume/inputs/`, and 
 ```json
 {
   "input": {
-    "volume_path": "/runpod-volume/inputs/2024-q3-report.pdf",
-    "backend": "vlm-auto-engine"
+    "volume_path": "/runpod-volume/inputs/2024-q3-report.pdf"
   }
 }
 ```
 
 No repeated download and no application-level input cap. Workers in the
 volume's region see the same files.
+
+The file's extension doubles as the format hint MinerU needs for CSV, TSV and HTML fragments, so stage those under their real names (`prices.csv`, not `prices`) — see [Input formats](/guides/input-formats/#how-the-format-is-detected).
 
 ### How to upload to the volume
 
@@ -49,9 +51,9 @@ Compare the [current storage price](https://www.runpod.io/pricing) with the tran
 
 ## Model weights are already baked in
 
-**You don't need to do anything here** — both model dependencies (`opendatalab/MinerU2.5-Pro-2605-1.2B` for the VLM backend and `opendatalab/PDF-Extract-Kit-1.0` for the pipeline backend) are **baked into the worker image at build time**, at `/root/.cache/huggingface/`. No Cached Models setup, no Network Volume, no runtime download.
+**You don't need to do anything here** — both model sets MinerU 4.1 loads (`opendatalab/MinerU2.5-Pro-2605-1.2B`, the VLM behind the `standard` and `advanced` tiers, and `opendatalab/MinerU-4_models_torch`, the small models for layout, OCR, formulas and tables) are **baked into the worker image at build time**, about 3.2 GB together. They live under MinerU's own model directory, `/opt/mineru/models` (`MINERU_HOME=/opt/mineru`), not in the Hugging Face cache, and MinerU runs with `MINERU_MODEL_SOURCE=local`, so it never reaches for a download. No Cached Models setup, no Network Volume, no runtime download.
 
-If you'd rather slim the image and rely on RunPod's Cached Models feature for the VLM only (which has a single-model dashboard limit), fork the Dockerfile to skip the `RUN snapshot_download` step. The pipeline backend would then need either a Network Volume or `HF_HUB_OFFLINE=0` for runtime downloads.
+RunPod's Cached Models feature doesn't apply to 2.x: it fills the Hugging Face cache, which MinerU 4 doesn't read, so the endpoint needs no `MODEL_NAME` for it. To check what a worker sees, send a `probe: true` job and read `probe.mineru_models` — see [Troubleshooting](/guides/troubleshooting/#checking-the-models-with-probe-true).
 
 ## Problem 2: sharing outputs between jobs
 
@@ -106,4 +108,4 @@ If your endpoint has multiple regions enabled and you're running on a network vo
 
 - **You parse each document once and discard.** Just use `file_url` — no point paying storage rent.
 - **Your input set is small and changes constantly.** Inline base64 (`file_b64`) is fine below the gateway thresholds; use `file_url` for larger one-off inputs.
-- **You only care about cold-start latency.** Both MinerU models are baked into the image; a volume for model weights duplicates that work.
+- **You only care about cold-start latency.** MinerU's models are baked into the image; a volume for model weights duplicates that work.

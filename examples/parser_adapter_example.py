@@ -19,7 +19,8 @@ What it demonstrates
 2. An abstract `ParserAdapter` interface that different backends can implement
    (MinerU today, another parser tomorrow).
 3. A concrete `MineruParserAdapter` that calls `MineruClient.parse_document()` and
-   converts MinerU's `content_list_v2.json` entries into the domain model.
+   converts MinerU's `content_list` (Content List V1) entries into the domain
+   model.
 4. Title-vs-paragraph classification, section nesting, and section-aware
    chunking.
 
@@ -57,7 +58,7 @@ class Chunk:
     chunk_type: ChunkType
     text: str                   # plain text (or markdown for tables/equations)
     page_idx: int | None        # 0-based PDF page
-    html: str | None = None     # original HTML for tables / inline math
+    html: str | None = None     # original HTML for tables
     image_name: str | None = None  # filename within the parsed bundle
 
 
@@ -76,7 +77,7 @@ class ParsedDocument:
     chunks: tuple[Chunk, ...]
     sections: tuple[Section, ...]
     page_count: int
-    parser: str                 # e.g. "mineru@2.5.0"
+    parser: str                 # e.g. "mineru@4.1.3"
     parser_elapsed_seconds: float
 
     @property
@@ -92,13 +93,12 @@ class ParsedDocument:
 @dataclasses.dataclass(frozen=True)
 class Artifact:
     """Whatever the calling system tracks per document: the actual bytes to parse,
-    plus identity / language hints. The adapter doesn't need to know how the
-    artifact was obtained or where it's stored."""
+    plus an identity. The adapter doesn't need to know how the artifact was
+    obtained or where it's stored."""
     artifact_id: str            # opaque to the adapter; used to namespace chunk ids
     presigned_url: str | None = None
     inline_bytes_b64: str | None = None
     volume_path: str | None = None
-    lang: str = "en"
 
 
 class ParserAdapter(ABC):
@@ -114,7 +114,7 @@ class ParserAdapter(ABC):
 
 class MineruParserAdapter(ParserAdapter):
     """Wraps the mineru-runpod service. Constructs ParsedDocument from MinerU's
-    `content_list_v2.json` entries plus its inline images."""
+    `content_list` entries."""
 
     def __init__(self, *, endpoint_id: str, api_key: str | None = None) -> None:
         self._client = MineruClient(endpoint_id=endpoint_id, api_key=api_key)
@@ -124,7 +124,6 @@ class MineruParserAdapter(ParserAdapter):
             file_url=artifact.presigned_url,
             file_b64=artifact.inline_bytes_b64,
             volume_path=artifact.volume_path,
-            lang=artifact.lang,
             transport="inline",
             # Filter the response down to just content_list — this adapter
             # builds chunks from those entries and ignores markdown / middle /
@@ -159,9 +158,12 @@ def _to_parsed_document(result: dict[str, Any], artifact: Artifact) -> ParsedDoc
 
         chunk_id = f"{artifact.artifact_id}-{ordinal:05d}"
 
-        if et == "text" and str(entry.get("level", "")).lower() == "title":
+        # MinerU marks a heading with `text_level` (1 = top level); body text
+        # carries none.
+        text_level = entry.get("text_level")
+        if et == "text" and isinstance(text_level, int) and text_level > 0:
             title = _strip_html(entry.get("text") or "")
-            level = _heading_level(title)
+            level = _heading_level(title, text_level)
             section = Section(
                 title=title,
                 level=level,
@@ -218,22 +220,30 @@ def _to_parsed_document(result: dict[str, Any], artifact: Artifact) -> ParsedDoc
 
 
 def _classify_entry(entry: dict) -> tuple[ChunkType, str, str | None, str | None]:
+    """Map one Content List V1 block. Each type keeps its content in its own
+    field: `text` for text and equations, `table_body` (HTML) for tables,
+    `img_path` and `image_caption` for images, `code_body` for code and
+    `list_items` for lists."""
     et = entry.get("type")
     text = _strip_html(entry.get("text") or "")
     if et == "text":
         return "text", text, None, None
     if et == "equation":
         # MinerU emits LaTeX in `text` (often wrapped in $...$).
-        return "equation", text or _strip_html(entry.get("html") or ""), entry.get("html"), None
+        return "equation", text, None, None
     if et == "table":
-        html = entry.get("html") or ""
+        html = entry.get("table_body") or ""
         return "table", _strip_html(html), html, None
     if et == "image":
-        return "image", entry.get("caption") or "", None, entry.get("img_path") or None
+        caption = " ".join(entry.get("image_caption") or [])
+        return "image", caption, None, entry.get("img_path") or None
     if et == "code":
-        return "code", text, None, None
+        # Already fenced Markdown, e.g. "```python\n...\n```".
+        return "code", entry.get("code_body") or "", None, None
+    if et == "list":
+        return "text", "\n".join(entry.get("list_items") or []), None, None
     # Unknown type — keep as text so nothing is silently dropped.
-    return "text", text, entry.get("html"), None
+    return "text", text, None, None
 
 
 def _strip_html(s: str) -> str:
@@ -241,11 +251,12 @@ def _strip_html(s: str) -> str:
     return re.sub(r"\s+", " ", s).strip()
 
 
-def _heading_level(title: str) -> int:
-    """Guess a heading level from a numeric prefix (1.2.3 → 3, "Abstract" → 1)."""
+def _heading_level(title: str, text_level: int) -> int:
+    """A numbered title nests by its number (1.2.3 → 3); any other title keeps
+    the level MinerU gave it (`text_level`, 1 = top level)."""
     m = re.match(r"^\s*(\d+(?:\.\d+)*)\s+", title)
     if not m:
-        return 1
+        return text_level
     return m.group(1).count(".") + 1
 
 
@@ -265,7 +276,6 @@ def _main() -> int:
     parsed = adapter.parse(Artifact(
         artifact_id="example-doc",
         presigned_url=sys.argv[1],
-        lang="en",
     ))
     print(f"parser:    {parsed.parser}")
     print(f"elapsed:   {parsed.parser_elapsed_seconds}s")

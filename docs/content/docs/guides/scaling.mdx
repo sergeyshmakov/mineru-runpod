@@ -4,8 +4,8 @@ description: Worker-level knobs for concurrency, memory hygiene, and MinerU's ow
 ---
 
 This page collects the worker-level tuning knobs — the things you set
-once on the endpoint, not per request. For per-request options (backend
-selection, page range, output format), see [API reference](/reference/api/).
+once on the endpoint, not per request. For per-request options (tier,
+page range, output format), see [API reference](/reference/api/).
 
 All values listed here are set as **environment variables on the
 RunPod endpoint**, not in the job payload. You'll find them under the
@@ -24,19 +24,27 @@ jobs a single worker handles in parallel. Default `1`.
 | Value | When to use |
 |---|---|
 | `1` *(default)* | Safe on every supported GPU type. Each worker handles one job at a time; concurrency comes from running more workers. |
-| `2-3` | Only on **≥24 GB GPUs** with the `vlm-auto-engine` backend, or on **any GPU** with the `pipeline` backend. Watch VRAM via `nvidia-smi` or the `gpu.memory` fields in worker logs before raising. |
+| `2-3` | Only after measuring on your own documents. MinerU 4 gives vLLM about 6 GB on any card, so concurrent jobs share a smaller KV cache than on 1.x; pair it with [`MINERU_VIRTUAL_VRAM_SIZE`](#mineru-performance-knobs) on cards with headroom, and watch VRAM via `nvidia-smi` or the `mineru.gpu.memory_used_bytes` gauge. |
 
-MinerU's own `mineru-api` server defaults this to `3`, but that's a
-guidance value tuned for their full-fat hosted setup — for a generic
-serverless template across all of RunPod's GPU pool, `1` is the safe
-baseline.
+For a generic serverless template across all of RunPod's GPU pools, `1`
+is the safe baseline.
 
-**Why not just always run higher concurrency?** MinerU's VLM backend
-wraps vLLM, which pre-allocates a large KV cache at engine init. Two
-concurrent jobs share that cache; on a 16 GB GPU you OOM around 2
-concurrent VLM parses. The pipeline backend is more frugal but still
-bound by per-page VRAM. See [Choosing a GPU](/guides/choosing-gpu/)
-for the memory math.
+**Why not just always run higher concurrency?** A worker runs one
+MinerU process: one vLLM engine, shared by every job in flight, and
+MinerU's small models, whose stages take turns on the GPU. MinerU 4
+sizes that engine to about 6 GB on any card
+(`gpu_memory_utilization = 6 / VRAM`), so concurrent `standard` and
+`advanced` jobs share whatever KV cache is left after the weights —
+much less than the 9.5 GiB 1.x had on a 24 GB card. What a second or
+third job can still gain is overlap with the non-GPU phases (download,
+rasterization, upload). To give concurrency real room, raise vLLM's
+share with `MINERU_VIRTUAL_VRAM_SIZE`; a 48 GB pool on its own changes
+nothing, because MinerU still hands vLLM about 6 GB of it. How much
+in-worker concurrency pays on 2.x hasn't been measured yet. See
+[Choosing a GPU](/guides/choosing-gpu/#mineru_virtual_vram_size) for the
+memory math.
+
+{/* MEASURE: jobs/hour and peak VRAM at MINERU_MAX_CONCURRENCY 1, 2 and 3 on ADA_24 and AMPERE_48, with MINERU_VIRTUAL_VRAM_SIZE unset and raised. */}
 
 ## Worker recycling
 
@@ -59,11 +67,18 @@ request lands on a fresh worker (with a cold-start cost; pair with
 ### Counter rules
 
 - **Both thresholds active**: whichever trips first wins.
-- **Unbounded parses** (`end_page=-1`, the default): contribute 1 to
-  the jobs counter and **0 to the pages counter**. Use the jobs
-  threshold if you mostly do full-document parses.
+- **Whole-document parses** (no `page_range`, the default) and ranges
+  counted from the end (`"r10-r1"`): contribute 1 to the jobs counter
+  and **0 to the pages counter**, because their page count is unknown
+  until MinerU opens the document. Use the jobs threshold if you mostly
+  do full-document parses.
 - **Errors and probes**: don't increment either counter. Recycling is
   for memory hygiene, not error recovery.
+- **A dead VLM engine** is the exception: a job that fails with
+  `EngineDeadError` returns `refresh_worker: true` whatever the
+  thresholds say. MinerU keeps one engine per worker process and holds
+  on to a dead one, so a fresh worker is the only way back — see
+  [Troubleshooting](/guides/troubleshooting/#a-job-fails-with-enginedeaderror).
 
 ## Bounding the work per job
 
@@ -79,25 +94,30 @@ MINERU_MAX_PAGES_PER_JOB=200
 A job asking for a larger range is rejected with the requested size and the
 ceiling in the message, so the caller can re-slice. Default `0` — no ceiling.
 
-This applies to **explicit ranges only**. An open-ended request
-(`end_page=-1`, the default) has no page count until MinerU opens the
-document, so set this only where callers send ranges — batching a large PDF
-into slices is the pattern it fits, and the shape
-[`MineruClient`](/getting-started/clients/) callers already use for long
-documents.
+It counts the pages an absolute `page_range` names — `"1-200"` is 200
+pages, and overlapping parts count once. A whole-document request, or a
+range counted from the end (`"r50-r1"`), has no page count until MinerU
+opens the document, so the ceiling cannot apply to it. Set this only where
+callers send absolute ranges — batching a large PDF into slices is the
+pattern it fits, and the shape [`MineruClient`](/getting-started/clients/)
+callers already use for long documents.
 
 ## FlashBoot
 
-Our measurements indicate that FlashBoot restores process state, including
-the warm vLLM child process and GPU allocations, after scale-to-zero. RunPod
-does not document the exact snapshot implementation or scoping, so treat the
-host-and-image model below as an evidence-based operating model rather than a
-public platform guarantee. Enable FlashBoot in the endpoint configuration; it
-is on by default for Hub-deployed templates.
+Our 1.x measurements indicate that FlashBoot restores process state,
+including the warm vLLM child process and GPU allocations, after
+scale-to-zero. RunPod does not document the exact snapshot implementation or
+scoping, so treat the host-and-image model below as an evidence-based
+operating model rather than a public platform guarantee. Enable FlashBoot in
+the endpoint configuration; it is on by default for Hub-deployed templates.
 
-The boot-time warmup loads the MinerU model into VRAM before
-`serverless.start()` runs. In our test, the fast FlashBoot path restored that
-warm state: ~7-8 s wall-clock instead of ~110 s for a fresh boot.
+The boot-time warmup loads the models of `MINERU_WARMUP_TIER` (default
+`standard`: the small models and the VLM) before the worker takes jobs. In
+our 1.x test, the fast FlashBoot path restored that warm state: ~7-8 s
+wall-clock instead of ~110 s for a fresh boot. The 2.x timings haven't been
+measured yet.
+
+{/* MEASURE: 2.x FlashBoot restore vs fresh boot (standard warmup) wall-clock, to replace the 1.x ~7-8 s / ~110 s figures in this section. */}
 
 **The observed scope was worker host plus image SHA, not endpoint.** In the
 four-request test, the first run on a host paid the full ~110 s warmup and a
@@ -106,36 +126,68 @@ repeated the warmup once. See
 [Troubleshooting → observed FlashBoot behavior](/guides/troubleshooting/#flashboot-behavior-observed-in-four-requests)
 for the four-request investigation that pinned down this behavior.
 
-Practical operator math: on endpoints with high enough traffic that
-the same hosts keep getting re-selected, you'll see almost all
+Practical operator math, in 1.x's numbers: on endpoints with high enough
+traffic that the same hosts keep getting re-selected, you'll see almost all
 ~7-8 s cold starts. On quiet endpoints with long idle gaps, expect
 a mix — RunPod's scheduler may bounce between hosts and you'll see
 some ~110 s starts before each host warms up.
 
-If FlashBoot is off, every cold start runs the ~110 s warmup, with
-no per-host amortization at all. Keep it on unless you have a
+If FlashBoot is off, every cold start runs the full warmup (~110 s on
+1.x), with no per-host amortization at all. Keep it on unless you have a
 specific reason to disable it.
+
+Set `MINERU_WARMUP_TIER` to the tier most callers use. `flash` and `basic`
+never load the VLM, so warming either leaves it to load on the first
+`standard` or `advanced` job; warming `standard` on an endpoint that only
+serves `basic` loads a VLM nobody uses.
 
 To bypass the warmup entirely (e.g., for debugging cold-start
 ordering), set `MINERU_SKIP_WARMUP=1` on the endpoint. The worker
-will fall back to lazy load, paying ~110-130 s on every cold start
-regardless of host history.
+will fall back to lazy load, paying the model load (~110-130 s on 1.x) on
+every cold start regardless of host history.
 
 ## MinerU performance knobs
 
-These pass straight through to MinerU's own configuration. Leave
-empty to use MinerU's defaults.
+MinerU reads these itself. Leave them unset to use MinerU's defaults;
+the empty values the Hub form fills in do the same, except where noted.
 
 | Env var | MinerU default | Description |
 |---|---|---|
-| `MINERU_PROCESSING_WINDOW_SIZE` | `64` | Pages per pipeline batch window. Lower (`32`) reduces peak VRAM on long documents; higher (`128`) trades VRAM for throughput. **Only affects the `pipeline` backend.** |
+| `MINERU_PROCESSING_WINDOW_SIZE` | `64` | Pages MinerU renders and analyses per window when it parses a PDF on the `basic`, `standard` and `advanced` tiers (and on `flash`'s OCR pass over scans). Lower (`32`) reduces peak memory on long documents; higher (`128`) trades memory for throughput. 1.x applied it to the `pipeline` backend only. |
 | `MINERU_PDF_RENDER_TIMEOUT` | `300` | Seconds before MinerU kills a hung PDF page render. Raise for very complex PDFs (`600`). |
-| `MINERU_PDF_RENDER_THREADS` | `4` | CPU threads for PDF page rasterization. Scale up on workers with more vCPUs (`8` on 16-vCPU pods) for image-heavy PDFs. |
+| `MINERU_PDF_RENDER_THREADS` | `3` | CPU threads for PDF page rasterization (1.x's default was `4`). Scale up on workers with more vCPUs (`8` on 16-vCPU pods) for image-heavy PDFs. |
+| `MINERU_VIRTUAL_VRAM_SIZE` | detected VRAM | The VRAM, in whole GB, MinerU sizes itself for: vLLM gets `6 / value` of the real card. `12` on a 24 GB card gives vLLM half, about what 1.x used. See [Choosing a GPU](/guides/choosing-gpu/#mineru_virtual_vram_size). |
+| `MINERU_LOG_LEVEL` | `info` | Level of MinerU's own log lines: `trace`, `debug`, `info`, `warning`, `error` or `critical`. Separate from `LOG_FORMAT`, which shapes the worker's own lines. Not on the Hub form; MinerU validates it with the rest of its configuration, so an unknown **or empty** value [fails every job](/guides/troubleshooting/#every-job-fails-while-mineru-loads-its-configuration). |
 
-For the `hybrid-http-client` backend specifically, MinerU exposes one
-more knob: `MINERU_HYBRID_BATCH_RATIO` (defaults to ~4) for VRAM
-reduction. Only relevant if you're pointing the worker at an external
-vLLM server with limited VRAM.
+1.x's `MINERU_HYBRID_BATCH_RATIO` is gone: MinerU 4 has no hybrid
+backend and doesn't read it.
+
+## LLM-aided features
+
+MinerU 4 can ask an OpenAI-compatible LLM to assign heading levels and to
+join table cells split across pages. Both are off by default, apply to PDFs
+only, and are read by MinerU itself from these variables, which the Hub
+deploy form shows:
+
+| Env var | Default | Description |
+|---|---|---|
+| `MINERU_LLM_AIDED_FEATURES_TITLE_LEVELING` | `false` | Assign heading levels. Skipped on jobs that set `page_range` |
+| `MINERU_LLM_AIDED_FEATURES_CROSS_PAGE_TABLE_CELL_MERGE` | `false` | Join table cells split across pages |
+| `MINERU_LLM_AIDED_BASE_URL` | empty | The provider's OpenAI-compatible base URL, e.g. `https://api.openai.com/v1` |
+| `MINERU_LLM_AIDED_MODEL` | empty | The model to request |
+| `MINERU_LLM_AIDED_API_KEY` | empty | The provider's API key; stored on the worker, never exposed to jobs |
+
+- **Data flow.** With either feature on, heading or table text from your
+  documents goes to that provider.
+- **The switches are strict booleans.** Set them to `true` or `false`; an
+  empty value fails every job.
+- **Either switch on needs all three of base URL, model and key.** Set the
+  base URL explicitly: MinerU's own default points at Alibaba Cloud's
+  DashScope.
+
+A mistake in any of these fails every job while MinerU loads its
+configuration — see
+[Troubleshooting](/guides/troubleshooting/#every-job-fails-while-mineru-loads-its-configuration).
 
 ## Worker logs
 
@@ -149,6 +201,9 @@ vLLM server with limited VRAM.
   laptop.
 
 See [Troubleshooting → reading worker logs](/guides/troubleshooting/#reading-worker-logs) for the field reference.
+
+MinerU's own log lines are separate: plain text from MinerU's logger, at
+the level `MINERU_LOG_LEVEL` sets (above).
 
 **Two notes** for production deployments:
 
@@ -164,11 +219,15 @@ See [Troubleshooting → reading worker logs](/guides/troubleshooting/#reading-w
 
 | Knob | Default | Most common use |
 |---|---|---|
-| `MINERU_MAX_CONCURRENCY` | `1` | Bump to `2-3` only on ≥24 GB GPUs |
+| `MINERU_MAX_CONCURRENCY` | `1` | Raise to `2-3` only after measuring |
 | `REFRESH_WORKER_AFTER_JOBS` | `0` (off) | Set to `100`+ if workers slow down over time |
 | `REFRESH_WORKER_AFTER_PAGES` | `0` (off) | Alternative to jobs threshold for mixed workloads |
 | `MINERU_MAX_PAGES_PER_JOB` | `0` (off) | Turn away over-large page ranges before they run |
+| `MINERU_WARMUP_TIER` | `standard` | Match the tier most callers use |
 | `LOG_FORMAT` | `json` | Switch to `text` for local dev |
-| `MINERU_PROCESSING_WINDOW_SIZE` | MinerU default (`64`) | Lower if OOM on long docs (pipeline backend) |
+| `MINERU_PROCESSING_WINDOW_SIZE` | MinerU default (`64`) | Lower if OOM on long PDFs |
 | `MINERU_PDF_RENDER_TIMEOUT` | MinerU default (`300` s) | Raise for very complex PDFs |
-| `MINERU_PDF_RENDER_THREADS` | MinerU default (`4`) | Raise on high-vCPU pods for image-heavy PDFs |
+| `MINERU_PDF_RENDER_THREADS` | MinerU default (`3`) | Raise on high-vCPU pods for image-heavy PDFs |
+| `MINERU_VIRTUAL_VRAM_SIZE` | detected VRAM | Give vLLM more of the card for in-worker concurrency |
+| `MINERU_LOG_LEVEL` | MinerU default (`info`) | `debug` when chasing a MinerU problem |
+| `MINERU_LLM_AIDED_*` | off | LLM-assigned heading levels and cross-page table merges |

@@ -3,7 +3,7 @@ title: API reference
 description: The JSON job-input contract for the mineru-runpod worker, plus the success and failure response shapes.
 ---
 
-This page documents the JSON payload contract the worker accepts. It mirrors the docstring in [`handler.py`](https://github.com/sergeyshmakov/mineru-runpod/blob/main/handler.py), which is the source of truth; this is a friendlier rendering.
+This page documents the JSON payload contract of the 2.x worker, which runs MinerU 4.1. The contract is defined in code (see [Source of truth](#source-of-truth)); this is a friendlier rendering. Moving from 1.x? [Upgrading to 2.x](/getting-started/upgrade-to-2/) maps the old fields onto the new ones.
 
 ## Job input
 
@@ -12,16 +12,13 @@ Send a POST to `/v2/{endpoint_id}/runsync` (or `/run` for async) with an `input`
 ```json
 {
   "input": {
-    "file_url":       "https://example.com/report.pdf",
-    "start_page":     0,
-    "end_page":       99,
-    "lang":           "en",
-    "backend":        "vlm-auto-engine",
-    "formula_enable": true,
-    "table_enable":   true,
-    "transport":      "tarball_b64",
-    "formats":        ["markdown", "content_list", "middle", "images"],
-    "basename":       "my-doc"
+    "file_url":   "https://example.com/report.pdf",
+    "tier":       "standard",
+    "ocr_mode":   "auto",
+    "page_range": "1-100",
+    "transport":  "tarball_b64",
+    "formats":    ["markdown", "content_list", "middle", "images"],
+    "basename":   "my-doc"
   }
 }
 ```
@@ -37,11 +34,11 @@ curl --request POST "https://api.runpod.ai/v2/<endpoint-id>/runsync" \
 
 ### Required (exactly one of)
 
-The worker accepts PDF, image (PNG/JPEG/GIF/BMP/TIFF/WebP), DOCX, PPTX, and XLSX, auto-detected from the bytes. **Provide exactly one input source; providing zero or two raises a validation error.**
+The worker accepts what MinerU 4.1 parses: PDFs; images (PNG, JPEG, WebP, GIF, BMP, TIFF, JPEG 2000); Word, PowerPoint and Excel files, legacy and current (DOC/DOCX, PPT/PPTX, XLS/XLSX); OpenDocument (ODT, ODS, ODP); RTF; EPUB; OFD; HTML pages and MHTML archives; and CSV/TSV. MinerU's own detector decides the format from the bytes, with `file_name` as a hint for text formats; see [Input formats](/guides/input-formats/). **Provide exactly one input source; providing zero or two raises a validation error.**
 
 | Field | Type | Notes |
 |---|---|---|
-| `file_url` | string | HTTP/HTTPS URL the worker can `GET`, resolving to a publicly routable host. Downloaded server-side with a 200 MB cap and a 120 s timeout. See [`MINERU_ALLOW_LOCAL_FETCH`](#url-inputs) for serving documents from inside your own network |
+| `file_url` | string | HTTP/HTTPS URL the worker can `GET`, resolving to a publicly routable host. Downloaded server-side with a 200 MB cap; the download fails after 120 s without data, or 300 s in total. See [`MINERU_ALLOW_LOCAL_FETCH`](#url-inputs) for serving documents from inside your own network |
 | `file_b64` | string | Base64-encoded file bytes. RunPod caps the whole JSON request at 10 MB on `/run` and 20 MB on `/runsync`. Base64 adds about 33%, so keep raw files below roughly 7.5 MB and 15 MB respectively; for larger inputs use `file_url` or `volume_path`. |
 | `volume_path` | string | Absolute path to a file inside the container, under one of the worker's [input roots](/guides/network-volumes/#what-volume_path-accepts). Useful for files mounted via a RunPod network volume or baked into the image |
 
@@ -49,25 +46,68 @@ The worker accepts PDF, image (PNG/JPEG/GIF/BMP/TIFF/WebP), DOCX, PPTX, and XLSX
 
 | Field | Type | Default | Notes |
 |---|---|---|---|
-| `start_page` | int | `0` | 0-based, inclusive |
-| `end_page` | int | `-1` | 0-based, inclusive. Any negative value or omission means "to end of document". When set, must be `>= start_page` |
-| `lang` | string | `"en"` | OCR model hint for the **pipeline backend**; VLM backends ignore it. MinerU 3.4's public choices are `ch`, `ch_server`, `korean`, `ta`, `te`, `ka`, `th`, `el`, `arabic`, `east_slavic`, `cyrillic`, and `devanagari`. The default `en` remains a compatibility alias that normalizes to `ch`. See [Input formats](/guides/input-formats/#the-lang-parameter-pipeline-backend-only). |
-| `backend` | string | `"vlm-auto-engine"` | One of `pipeline` \| `vlm-auto-engine` \| `vlm-http-client` \| `hybrid-auto-engine` \| `hybrid-http-client`. The `pipeline` and `hybrid-*` backends use MinerU's PP-OCRv6 OCR models. See [Choosing a GPU → Picking a backend](/guides/choosing-gpu/#picking-a-backend) |
-| `effort` | string | `null` | **Hybrid backends only** (`hybrid-auto-engine` / `hybrid-http-client`). `"medium"` (MinerU's default when omitted) or `"high"`: `"high"` enables image/chart analysis at a speed cost, `"medium"` skips it for throughput. Rejected on non-hybrid backends. |
-| `server_url` | string | `null` | Required for `*-http-client` backends. URL of an external vLLM OpenAI-compatible server (e.g. `https://your-host/v1`) |
-| `formula_enable` | bool | `true` | Extract LaTeX equations |
-| `table_enable` | bool | `true` | Extract structured HTML tables |
+| `tier` | string | `"standard"` | MinerU 4's quality tier, fastest to slowest: `flash` \| `basic` \| `standard` \| `advanced`. Applies to PDFs and images; every other format is parsed natively at `flash` whatever is asked for, and `debug.tier` reports the tier that ran. See [Tiers](#tiers). |
+| `ocr_mode` | string | `"auto"` | `auto` (MinerU samples the PDF and decides whether to read its text layer or OCR it) \| `txt` (trust the PDF's text layer) \| `ocr` (OCR every page). MinerU's own field and values. |
+| `page_range` | string | `""` (whole document) | PDF pages to parse, in MinerU's 1-based grammar: `"5"`, `"1-5,8"`, or `"r3-r1"` for the last three pages. **PDFs only.** See [Page ranges](#page-ranges). |
+| `file_name` | string | `null` | The input's file name, used only for its extension, as a hint where the content cannot decide: CSV against TSV, or an HTML fragment against plain text. Without it, the last segment of the `file_url` path or of `volume_path` is the hint. Content still decides binary formats, so a PDF named `.docx` is parsed as a PDF. A name, not a path: at most 255 characters, ending in an extension MinerU parses. |
+| `server_url` | string | `null` | URL of an external OpenAI-compatible VLM server (e.g. `https://your-host/v1`), used instead of the worker's own engine. Only with `standard` or `advanced`, the tiers that run a VLM. See [URL inputs](#url-inputs). |
 | `transport` | string | `"tarball_b64"` | How the worker ships output. `"tarball_b64"` (default, base64-encoded .tar.gz inside the entry), `"inline"` (per-format keys inside the entry, filterable via `formats`), or `"s3"` (presigned URL — requires `BUCKET_*` env vars on the endpoint). See [Output modes](/guides/output-modes/). |
-| `formats` | array of string | all four | Subset of `["markdown", "content_list", "middle", "images"]`. Selects which artifacts the inline payload contains. Omit (or pass all four) to get everything. **No-op for `tarball_b64` and `s3`** — those transports always ship a self-contained archive with all four artifacts. Empty list is rejected. |
-| `basename` | string | `"doc"` | Filename stem for output files. Must be alphanumeric with `-` or `_`, at most 128 characters, and short enough that the longest generated filename stays within 255 **bytes** — non-ASCII characters cost more than one byte each, so a CJK stem is limited to 78 characters |
+| `formats` | array of string | the first four | Which artifacts the response carries. The six core artifacts are `markdown`, `content_list`, `middle`, `images`, `content_list_v2` and `structured_content`; `html`, `latex`, `docx`, `epub` and `pdf` are renders, produced only when listed. `inline` returns exactly what is listed; `tarball_b64` and `s3` always ship the six core artifacts and add the renders listed. Empty list is rejected. See [Filtering with `formats`](#filtering-with-formats). |
+| `basename` | string | `"doc"` | Filename stem for output files. Must be alphanumeric with `-` or `_`, at most 128 characters, and short enough that the longest generated filename (`{basename}_structured_content.json`) stays within 255 **bytes**. Non-ASCII characters cost more than one byte each, so a CJK stem is limited to 77 characters |
 | `archive_format` | string | `"tar.gz"` | Archive container for the `tarball_b64` and `s3` transports: `"tar.gz"` (default) or `"zip"`. No-op for `inline`. See [Output modes → archive format](/guides/output-modes/#archive-format-targz-or-zip). |
-| `probe` | bool | `false` | Diagnostic mode. `{"probe": true}` skips parsing and every field above, then returns the worker's filesystem layout plus the running MinerU version instead of a parse result — for checking baked model paths and volume mounts. On by default; set `MINERU_DISABLE_PROBE=1` on the endpoint to turn it off, where callers should not see filesystem paths or model-cache details. Any value other than `0`/`false`/`no`/`off` disables it, so a typo denies rather than exposes. |
+| `probe` | bool | `false` | Diagnostic mode. `{"probe": true}` skips parsing and every field above, then returns the worker's filesystem layout, its MinerU-related environment, the running MinerU version and MinerU's own readiness check of the baked models (`mineru_models`) instead of a parse result. On by default; set `MINERU_DISABLE_PROBE=1` on the endpoint to turn it off, where callers should not see filesystem paths or model details. Any value other than `0`/`false`/`no`/`off` disables it, so a typo denies rather than exposes. |
+
+### Tiers
+
+MinerU 4 replaced MinerU 3's backends with four quality tiers. A tier applies to PDFs and images:
+
+| Tier | What runs | Notes |
+|---|---|---|
+| `flash` | The PDF's own text layer, with no models; for scans and images, MinerU's Flash OCR, which runs the local layout and OCR models | Fastest; MinerU's tier for indexing and previews |
+| `basic` | Small models for layout, OCR, formulas and tables; no VLM | |
+| `standard` | The small models plus the VLM, with the local layout model guiding it | The default here, as in MinerU |
+| `advanced` | The VLM reads layout and content itself, with image analysis on | Slowest |
+
+Every other format (Office, OpenDocument, RTF, EPUB, OFD, HTML, CSV/TSV) is parsed natively at `flash`, whatever `tier` says, and the response reports the tier that ran in `debug.tier`.
+
+MinerU 4 has no OCR language setting. Its one recognizer covers Chinese, English, Japanese and Latin-script languages; its character set has no Cyrillic, Arabic, Devanagari, Korean, Thai or Greek. `basic` OCRs with it, and so does `flash` on scanned pages, while `standard` and `advanced` take the text of scanned pages from the VLM. A PDF with a text layer is read from that layer in every tier. Scanned documents in other scripts therefore need `standard` or `advanced`.
+
+### Page ranges
+
+`page_range` takes MinerU's grammar, the one its CLI, SDK and API share: 1-based, inclusive, comma-separated, with `rN` counting from the end (`r1` is the last page).
+
+| `page_range` | Pages parsed |
+|---|---|
+| `"5"` | Page 5 |
+| `"1-5,8"` | Pages 1 to 5, and page 8 |
+| `"r3-r1"` | The last three pages |
+| `"2-r2"` | Page 2 through the second-to-last page |
+| `"11-r1"` | Page 11 to the end |
+| `""` or `"all"` | The whole document (the default) |
+
+- Whitespace is ignored. MinerU parses overlapping parts once and skips pages past the end of the document; a range with no page inside the document fails the job.
+- A reversed range is an error. `"5-3"` is rejected before the download; a reversed range involving `rN` is rejected by MinerU when the parse starts.
+- **PDFs only.** A job that sets `page_range` on any other input, images included, fails as soon as the input's format is known.
+- Page numbers in the output stay the document's own: `page_idx` counts from zero across the whole document, so `"11-20"` produces `page_idx` 10 to 19.
+- Only a range of absolute pages has a size before MinerU opens the document. `pages_requested` and the `MINERU_MAX_PAGES_PER_JOB` ceiling count those; a range with any `rN` part is not counted, and neither is the whole document (see [Scaling](/guides/scaling/)).
+
+### Removed fields
+
+These 1.x fields no longer exist. Sending one fails validation, for example with `Unexpected input. backend is not a valid input option.`; there is no translation layer.
+
+| Field | In 2.x |
+|---|---|
+| `backend`, `effort` | `tier`. The mapping is approximate; see [Upgrading to 2.x](/getting-started/upgrade-to-2/) |
+| `start_page`, `end_page` | `page_range`, which is 1-based: `start_page: 0` with `end_page: 4` becomes `"1-5"` |
+| `lang` | No replacement. MinerU 4 has no OCR language switch; see [Tiers](#tiers) |
+| `formula_enable`, `table_enable` | No replacement. MinerU 4 always extracts formulas and tables |
 
 ### URL inputs
 
 `file_url` and `server_url` are checked before the worker acts on them:
 
 - Both must be `http://` or `https://` with a host. Anything else is rejected with the field name in the message.
+- `server_url` must also carry no credentials, query or fragment (MinerU's own rule for a VLM endpoint), and is accepted only with `tier` set to `standard` or `advanced`. MinerU drops a trailing `/v1`, so `https://your-host/v1` and `https://your-host` reach the same server.
 - `file_url` must additionally resolve to a publicly routable address — what a document URL handed to a serverless worker normally is. Set `MINERU_ALLOW_LOCAL_FETCH=1` on the endpoint when you serve documents from a host inside your own network, or when running the handler locally against `http://localhost`.
 - `server_url` gets the shape check by default. Setting `MINERU_ENFORCE_TARGET_POLICY=1` additionally requires its host to be named in `MINERU_ALLOWED_SERVER_HOSTS` (comma-separated, exact host match) — **including public hosts**. **Worth understanding, because the default is not the safe one.** `server_url` arrives in the job payload rather than the endpoint environment, so without enforcement any caller of your endpoint can point the worker at a loopback or link-local address — a cloud metadata endpoint included — and have it issue requests there from inside your network. The default is compatibility: a private model server is the ordinary way to run one, and enforcing by default would break every such deployment on a patch upgrade. **If your endpoint is reachable by callers you do not control, set `MINERU_ENFORCE_TARGET_POLICY=1` and list your model server's host.**
 
@@ -95,7 +135,7 @@ Response (truncated):
 {
   "ok": true,
   "elapsed_seconds": 4.2,
-  "mineru_version": "3.4.x",
+  "mineru_version": "4.1.x",
   "results": [
     {
       "basename": "doc",
@@ -118,7 +158,7 @@ For single-file jobs the markdown lives at `result.results[0].markdown`. Higher-
 {
   "ok": true,
   "elapsed_seconds": 18.4,
-  "mineru_version": "3.4.x",
+  "mineru_version": "4.1.x",
   "results": [
     {
       "basename": "doc",
@@ -137,9 +177,9 @@ For single-file jobs the markdown lives at `result.results[0].markdown`. Higher-
 |---|---|---|
 | `ok` | bool | Always `true` on success |
 | `elapsed_seconds` | float | Wall time inside the handler. Does not include cold-start time or transport |
-| `mineru_version` | string | The MinerU version that produced the parse (e.g. `3.4.4`) |
+| `mineru_version` | string | The MinerU version that produced the parse (e.g. `4.1.3`) |
 | `results` | array | One entry per parsed file. Single-file jobs have a one-element list. See below for the entry shape. |
-| `debug` | object | Observability data: `backend`, GPU info, phase timings, and a best-effort cached VLM path. See below. |
+| `debug` | object | Observability data: the tier that ran, the detected input format, GPU info, phase timings, and the VLM model directory. See below. |
 | `refresh_worker` | bool | Present only when a `REFRESH_WORKER_AFTER_*` threshold has tripped. Tells RunPod to recycle the worker after returning. |
 
 ### Per-entry keys (file-scoped, inside `results[]`)
@@ -148,9 +188,9 @@ For single-file jobs the markdown lives at `result.results[0].markdown`. Higher-
 |---|---|---|
 | `basename` | string | Echo of the input `basename`, handy for correlating many concurrent jobs |
 | `source` | string | Echo of the input source: `url:...`, `b64`, or `volume:/path/...` |
-| `pages_requested` | int | The slice the caller asked for. `-1` if `end_page` was open-ended |
+| `pages_requested` | int | How many pages an absolute `page_range` names, overlaps counted once. `-1` for the whole document or any range with an `rN` part. It counts the request, not the result: pages past the end of the document are skipped but still counted |
 | `tarball_b64` | string | Present when `transport: "tarball_b64"`. Base64-encoded archive of the output directory — `.tar.gz` by default, `.zip` when `archive_format: "zip"` |
-| `markdown`, `content_list`, `middle`, `images` | various | Present when `transport: "inline"`. The set of keys reflects the `formats` filter — see below |
+| `markdown`, `content_list`, `middle`, `images`, and the other `formats` keys | various | Present when `transport: "inline"`. The set of keys reflects the `formats` filter — see below |
 | `tarball_url`, `tarball_url_expires_in`, `bucket_key`, `bucket_bytes` | various | Present when `transport: "s3"`. The archive is `.tar.gz` by default, `.zip` when `archive_format: "zip"`. See [Output modes → s3](/guides/output-modes/) |
 | `degraded` | object | **Present only when the response is short of something.** See [Incomplete responses](#incomplete-responses) |
 
@@ -162,33 +202,57 @@ Each entry contains the requested format keys directly. With the default `format
 
 | Field | Type | Notes |
 |---|---|---|
-| `markdown` | string | The full Markdown rendering of the document |
-| `content_list` | array | Flat list of MinerU block objects. Common types include `text`, `equation`, `table`, `image`, `code`, and `list`; backend-specific auxiliary types such as `header` and `page_number` can also appear. Suitable for RAG chunking |
-| `middle` | object | MinerU's intermediate representation with layout, bounding boxes, reading order |
-| `images` | object | `{filename: base64-encoded-bytes}` for each extracted image; the original image filename and format are preserved |
+| `markdown` | string | The full Markdown rendering of the document. Image links point at `images/` files, which the `images` map carries by name |
+| `content_list` | array | Content List V1: a flat list of blocks in reading order, under the same field names as in 1.x. Suitable for RAG chunking |
+| `middle` | object | MinerU 4's intermediate document (`"schema": "docvortex.middle"`, `"schema_version": "2.0"`): `metadata`, `extensions.mineru` with the `tier` and `parse_mode` that ran, and `pages[]`, each with a zero-based `page_idx` and a tree of `blocks`. Bounding boxes are fractions of the page (0 to 1). Not the `pdf_info` shape of MinerU 3 |
+| `images` | object | `{filename: base64-encoded-bytes}` for each extracted image, named after its page and block, e.g. `page_0_image_2.png` |
+
+The other formats, when listed:
+
+| Field | Type | Notes |
+|---|---|---|
+| `content_list_v2` | array | Content List V2: one array of blocks per page, with text as typed spans |
+| `structured_content` | object | The page and block tree of `middle`, with each block rendered as Markdown |
+| `html` | string | Self-contained HTML, with images embedded as data URIs |
+| `latex` | string | LaTeX source. It references `images/` files, so list `images` as well when you need them |
+| `docx`, `epub`, `pdf` | object | `{filename: base64-encoded-bytes}` with one entry, e.g. `{"doc.docx": "<base64>"}`. The PDF keeps the source's page layout where the source has one, as a PDF does, and reflows otherwise |
 
 `content_list` is a convenient integration surface, but it is MinerU output,
-not a schema owned by this wrapper. Fields can vary by backend and MinerU
-version. These are the common 3.4.x fields used by the examples in this repo:
+not a schema owned by this wrapper. Fields can vary by tier and MinerU
+version. These are the common 4.1.x fields, under the Content List V1 names
+that 1.x callers already read:
 
 | Block `type` | Common fields | Notes |
 |---|---|---|
-| `text` | `text`, optional `text_level` | `text_level` can indicate a heading, but still needs document-specific validation. |
-| `list` | `list_items` | Ordered markers may be preserved inside the item strings. |
-| `table` | `table_body`, `table_caption`, `table_footnote` | `table_body` is HTML. Caption and footnote fields are arrays when present. |
-| `code` | `code_body`, `code_caption` | Code may already include a fenced block. |
-| `equation` | `text` | Usually LaTeX, sometimes already wrapped in math delimiters. |
-| `image` | `content`, `image_caption`, sometimes `img_path` | `content` is a generated description; use the `images` map or archive for image bytes. |
-| `header`, `page_number`, and other auxiliary types | backend-specific | Headers, footers, page numbers, margin notes, and footnotes can appear alongside document content. |
+| `text` | `text`, optional `text_level` | `text_level` marks a heading: `1` for the document title, `2` to `6` below it. It still needs document-specific validation. |
+| `list` | `sub_type`, `list_items` | `sub_type` is `text`, or `ref_text` for a list of references. Ordered markers may be preserved inside the item strings. |
+| `index` | `list_items` | A table of contents: one `- ` line per entry, indented by depth. |
+| `table` | `table_body`, `table_caption`, `table_footnote`, `img_path` | `table_body` is HTML. Caption and footnote fields are arrays. |
+| `chart` | `content`, `chart_caption`, `chart_footnote`, `img_path` | `content` carries what MinerU extracted from the chart. |
+| `image` | `img_path`, `image_caption`, `image_footnote`, sometimes `content` | `content` is a generated description, written on `advanced`, the tier that runs image analysis. |
+| `code` | `sub_type`, `code_body`, `code_caption`, `code_footnote` | `sub_type` is `code` or `algorithm`. Code may already include a fenced block. |
+| `equation` | `text`, `text_format`, `img_path` | LaTeX in `text`, with `text_format: "latex"`. |
+| `header`, `footer`, `page_number`, `aside_text`, `page_footnote` | `text` | Page furniture: running headers and footers, page numbers, margin notes, and footnotes. |
 
-Most blocks also include zero-based `page_idx`. Treat unknown block types and
-extra fields as forward-compatible data rather than rejecting the response.
-The [document-tree case study](/blog/2026-06-04-structuring-mineru-output-doc-tree/)
+Every block carries `page_idx`, the page's number in the original document. It
+counts from 0 while `page_range` counts from 1, and it stays absolute when
+`page_range` selects a slice: `"3"` gives `page_idx` 2, and `"2-3"` gives 1
+and 2. (1.x counted it from `start_page`; see
+[Upgrading to 2.x](/getting-started/upgrade-to-2/).) Most blocks also carry a
+`bbox` of `[x0, y0, x1, y1]` scaled from 0 to 1000 across the page. `img_path`
+is a path inside the output, such as `images/page_0_image_2.png`; the inline
+`images` map holds the same file under its name alone. Compared with 1.x,
+expect `chart` and `index` blocks, and `code` blocks with
+`sub_type: "algorithm"`. Treat unknown block types and extra fields as
+forward-compatible data rather than rejecting the response. The
+[document-tree case study](/blog/2026-06-04-structuring-mineru-output-doc-tree/)
 shows the rendering and verification rules used on a 5,039-page parse.
 
 ### Filtering with `formats`
 
-The `formats` field whitelists which artifacts the inline payload contains. Omitted keys are absent from the entry — not present-as-empty. Useful when only the markdown matters and the per-page images would otherwise bloat the response.
+`formats` takes any of eleven keys: the six core artifacts `markdown`, `content_list`, `middle`, `images`, `content_list_v2` and `structured_content`, and the renders `html`, `latex`, `docx`, `epub` and `pdf`. Unknown names and an empty list (`formats: []`) are validation errors; duplicates collapse.
+
+With `transport: "inline"`, `formats` whitelists what the entry contains. Omitted keys are absent from the entry — not present-as-empty. Without `formats` you get `markdown`, `content_list`, `middle` and `images`, as in 1.x; the two newer JSON renderings stay out of the default because they would only bring a large document closer to the response cap. Filtering is useful when only the markdown matters and the per-page images would otherwise bloat the response.
 
 ```json
 {
@@ -200,9 +264,13 @@ The `formats` field whitelists which artifacts the inline payload contains. Omit
 }
 ```
 
-The resulting entry has `markdown` and `content_list` only; `middle` and `images` are not present in the response. Empty list is rejected (`formats: []` is a validation error).
+The resulting entry has `markdown` and `content_list` only; the other keys are not present in the response.
 
-For `transport: "tarball_b64"` and `transport: "s3"`, `formats` is a no-op: the tarball always carries the full set of four artifacts (filtering inside an archive would be confusing for downstream callers).
+For `transport: "tarball_b64"` and `transport: "s3"`, the archive always carries the six core artifacts (`{basename}.md`, `{basename}_content_list.json`, `{basename}_content_list_v2.json`, `{basename}_middle.json`, `{basename}_structured_content.json` and `images/`) whatever `formats` says, because filtering inside an archive would be confusing for downstream callers. On those transports `formats` only matters for renders: each one listed is added to the archive. `"formats": ["html", "docx"]` with the default transport and `basename` ships the six core artifacts plus `doc.html` and `doc.docx`.
+
+Renders are produced only when listed, on every transport. Each is a render pass after the parse, counted in `phase_ms.mineru_parse`. A render that fails fails the job, as in MinerU's own API, rather than returning without what was asked for.
+
+{/* MEASURE: added mineru_parse time per render (html, latex, docx, epub, pdf) on a representative multi-page PDF, standard tier, default GPU */}
 
 ### Incomplete responses
 
@@ -227,14 +295,14 @@ A parse can produce a file that cannot then be read — bytes that are not the U
 | Field | Type | Notes |
 |---|---|---|
 | `count` | int | Everything lost. `items` stops at 50, so `count` above `items.length` means the list is abridged |
-| `items[].artifact` | string \| null | Which response key it cost. `null` for an archive member, which is not one of the four formats |
+| `items[].artifact` | string \| null | Which response key it cost. `null` for an archive member that no `formats` key claims |
 | `items[].file` | string | Filename only — the output directory is a temp path inside the worker |
 | `items[].reason` | string | `unreadable`, `unresolvable`, `outside_output_dir`, or `unsafe_name` |
 | `items[].error_type` | string | Exception class name, when an exception revealed the problem |
 
 **`degraded` is absent on an intact job**, so its presence is the signal. Treat an entry that has it as a document to reprocess: `ok` is `true` and nothing else will flag it, because from the outside an empty `content_list` looks the same as a document that had no tables in it.
 
-`markdown` is the exception. It is the document, so a job that cannot produce readable Markdown fails with `ok: false` rather than returning an empty string — a failed job can be retried, a successful one that quietly returned nothing cannot. The other three artifacts degrade.
+`markdown` is the exception. It is the document, so a job that cannot produce readable Markdown fails with `ok: false` rather than returning an empty string — a failed job can be retried, a successful one that quietly returned nothing cannot. Every other artifact degrades.
 
 Every item is also emitted as a `response degraded` warning on stdout, carrying the same fields plus the `job_id`, and counted as `mineru.degraded.total` when [OpenTelemetry](/guides/observability/) is configured. The field is the per-document signal — the only thing that says *which* document to reprocess. The log line and the counter are the fleet-wide ones, and they are what tells you the rate is non-zero at all.
 
@@ -245,8 +313,9 @@ Every response includes a top-level `debug` block with information that lets you
 ```json
 {
   "debug": {
-    "backend": "vlm-auto-engine",
-    "model_dir": "/root/.cache/huggingface/hub/models--opendatalab--MinerU2.5-Pro-2605-1.2B/snapshots/<hash>",
+    "tier": "standard",
+    "input_format": "pdf",
+    "model_dir": "/opt/mineru/models/MinerU2.5-Pro-2605-1.2B",
     "gpu": {
       "available": true,
       "name": "NVIDIA RTX 4090",
@@ -264,12 +333,13 @@ Every response includes a top-level `debug` block with information that lets you
 
 | Field | Notes |
 |---|---|
-| `backend` | The backend that ran. Echoes the input or the default |
-| `model_dir` | Best-effort path to a cached MinerU VLM snapshot. It confirms a matching cache directory exists, not which model the selected backend loaded. Pipeline weights are baked separately. |
+| `tier` | The tier that ran: the requested one for PDFs and images, `flash` for every other format |
+| `input_format` | The file type MinerU detected, as a file suffix: `pdf`, `png`, `docx`, `epub`, `csv`, and so on |
+| `model_dir` | MinerU's directory for the VLM, under `/opt/mineru/models`, when every file MinerU checks for is in place; `null` otherwise. It confirms the weights are there, not that this job loaded them — `flash` and `basic` never do. |
 | `gpu` | Card name, `compute_capability` (8.6 = Ampere, 8.9 = Ada, 9.0 = Hopper, 12.0 = Blackwell), VRAM. Helps debug "why did my job land on a different card than my pool config?" |
-| `phase_ms` | Per-phase timings: `fetch_input` (download/decode), `mineru_parse` (MinerU's `aio_do_parse`), `package` (tarball or inline assembly) |
+| `phase_ms` | Per-phase timings: `fetch_input` (download/decode), `mineru_parse` (MinerU's `MinerUParser.parse_async`, plus writing the artifacts and any renders), `package` (tarball or inline assembly) |
 
-On failure, `debug` still contains `gpu`, `model_dir`, and whatever `phase_ms` was collected before the error.
+On failure, `debug` still contains `gpu`, `model_dir`, and whatever `phase_ms` was collected before the error. `tier` and `input_format` are reported on success only.
 
 ## Failure response
 
@@ -277,10 +347,10 @@ When the handler raises or returns an error, the response sets `ok: false` and i
 
 ```json
 {
-  "error": "ValueError: must provide exactly one of file_url / file_b64 / volume_path",
+  "error": "ValueError: input validation failed: must provide exactly one of file_url / file_b64 / volume_path (got [])",
   "ok": false,
   "elapsed_seconds": 0.1,
-  "mineru_version": "3.4.x",
+  "mineru_version": "4.1.x",
   "traceback": "Traceback (most recent call last):\n  File ...",
   "debug": {"gpu": {"...": "..."}, "model_dir": "...", "phase_ms": {"...": "..."}}
 }
@@ -294,6 +364,7 @@ When the handler raises or returns an error, the response sets `ok: false` and i
 | `mineru_version` | string | Version that was running |
 | `traceback` | string | Last 5 frames of the Python traceback; useful for debugging |
 | `debug` | object | Same shape as the success response — `gpu`, `model_dir`, and whatever `phase_ms` was collected before the failure |
+| `refresh_worker` | bool | Present (`true`) only when MinerU's VLM engine died during the job. MinerU keeps one engine per worker process and a dead one stays dead, so every later job on that worker would fail the same way; the flag has RunPod replace the worker. The job itself still fails, so resubmit it. |
 
 `error` and `traceback` are normalized before they are returned: URLs inside them keep their scheme, host and path but drop credentials, query and fragment, and very long text is truncated. The same text goes to the worker's logs and, when [OpenTelemetry export](/guides/observability/) is configured, to the collector — so one failure reads the same in all three places.
 
@@ -303,10 +374,12 @@ The handler posts `{"status": "IN_PROGRESS", "output": ...}` events during a par
 
 ```json
 {"phase": "fetching_input"}
-{"phase": "parsing", "input_bytes": 1234567, "input_format": "pdf", "start_page": 0, "end_page": 99}
+{"phase": "parsing", "input_bytes": 1234567, "input_format": "pdf", "tier": "standard", "page_range": "1-100"}
 ```
 
-Each update is **awaited before the parse continues**, rather than posted from a background thread the handler does not wait for. Progress travels to the same job-results endpoint as the final result, so an update still in flight at completion can be applied after the `COMPLETED` status and leave a finished job stuck `IN_PROGRESS`. Waiting for it is what keeps the two in order regardless of how fast the parse is — office inputs (DOCX/PPTX/XLSX) skip model inference and can finish in under 100 ms.
+`input_format` and `tier` describe what will run, so a native document reports `flash` whatever was requested. `page_range` is the range as the worker normalized it: whitespace removed, and `""` for the whole document.
+
+Each update is **awaited before the parse continues**, rather than posted from a background thread the handler does not wait for. Progress travels to the same job-results endpoint as the final result, so an update still in flight at completion can be applied after the `COMPLETED` status and leave a finished job stuck `IN_PROGRESS`. Waiting for it is what keeps the two in order regardless of how fast the parse is — a native document is parsed without any model, so its parse can be very short.
 
 There is deliberately no `packaging` phase event either: it would carry no information a caller can act on, and no update is emitted after the parse.
 
@@ -324,23 +397,26 @@ directly when you need progress.
 
 ## Validation behaviour
 
-The handler validates input before doing any work:
+The handler validates input before doing any work. The checks that need the document itself run as soon as it has been fetched, before MinerU starts:
 
-1. **Field types and bounds** via `runpod.serverless.utils.rp_validator`. Wrong type, missing required field, out-of-range value, or unknown field name raises `ValueError`.
+1. **Field names and types** via `runpod.serverless.utils.rp_validator`. An unknown field fails, and that includes every field 2.x removed: `Unexpected input. backend is not a valid input option.`, with one such sentence for each removed field the payload sends. A wrong type fails too, and `null` counts as one except for fields whose default is `null` (`file_url`, `file_b64`, `volume_path`, `file_name`, `server_url`).
 2. **XOR source rule.** Exactly one of `file_url`, `file_b64`, `volume_path` must be set. Zero or two raises `ValueError`.
-3. **Basename safety.** Every character in `basename` must be alphanumeric, `-`, or `_`, and the whole stem at most 128 characters. Unicode letters and digits are accepted — and because filesystems bound a filename in bytes rather than characters, the stem plus the longest suffix the worker appends (`_content_list_v2.json`) must also stay within 255 bytes. That is 234 characters' worth of headroom for ASCII, but only 78 for three-byte characters such as CJK.
-4. **Inline file size.** The worker rejects decoded `file_b64` data over 20 MB — measured first on the encoded string, then on the decoded bytes. RunPod's whole-request limits are reached earlier because base64 expands the raw file; use the practical thresholds above.
-5. **Format detection.** The first few bytes must match a known signature (PDF / image / OOXML); otherwise `ValueError`.
-6. **`formats` membership.** Each entry must be one of `["markdown", "content_list", "middle", "images"]`; empty list is rejected; duplicates are silently collapsed.
-7. **URL fields.** `file_url` and `server_url` must be `http(s)` with a host. `file_url` must also resolve to a publicly routable address unless `MINERU_ALLOW_LOCAL_FETCH=1`. Under `MINERU_ENFORCE_TARGET_POLICY=1`, `server_url`'s host must appear in `MINERU_ALLOWED_SERVER_HOSTS`; `MINERU_ALLOW_LOCAL_FETCH` does not affect it. See [URL inputs](#url-inputs).
-8. **`volume_path` roots.** The path must be absolute and, once resolved, sit under one of the worker's input roots. See [What `volume_path` accepts](/guides/network-volumes/#what-volume_path-accepts).
-9. **`lang` shape.** A short script/language code: letters, digits, `-` or `_`, up to 32 characters.
-10. **Page range.** `start_page` must be `>= 0`; an `end_page` of `0` or more must be `>= start_page`. If the endpoint sets `MINERU_MAX_PAGES_PER_JOB`, an explicit range larger than that is rejected — see [Scaling](/guides/scaling/).
+3. **Basename safety.** Every character in `basename` must be alphanumeric, `-`, or `_`, and the whole stem at most 128 characters. Unicode letters and digits are accepted — and because filesystems bound a filename in bytes rather than characters, the stem plus the longest suffix the worker appends (`_structured_content.json`, 24 bytes) must also stay within 255 bytes. That leaves 231 bytes: the 128-character limit binds first for ASCII, while a stem of three-byte characters such as CJK stops at 77.
+4. **Enumerations.** `tier` must be `flash`, `basic`, `standard` or `advanced`; `ocr_mode` must be `auto`, `txt` or `ocr`; `transport` must be `tarball_b64`, `inline` or `s3`; `archive_format` must be `tar.gz` or `zip`.
+5. **`formats` membership.** Each entry must be one of the eleven keys under [Filtering with `formats`](#filtering-with-formats); empty list is rejected; duplicates are silently collapsed.
+6. **`page_range` shape.** Pages and ranges separated by commas, 1-based, with `rN` counting from the end; whitespace is ignored and `all` means the whole document. A reversed absolute range such as `"5-3"` is rejected. If the endpoint sets `MINERU_MAX_PAGES_PER_JOB`, an absolute range naming more pages than that is rejected; a range with an `rN` part is not counted. See [Page ranges](#page-ranges) and [Scaling](/guides/scaling/).
+7. **`file_name` shape.** A name, not a path: 1 to 255 characters, no `/` or `\`, nothing non-printable, and ending in an extension MinerU parses: `pdf`, `png`, `jpg`, `jpeg`, `webp`, `gif`, `bmp`, `tiff`, `jp2`, `doc`, `docx`, `ppt`, `pptx`, `xls`, `xlsx`, `rtf`, `odt`, `ods`, `odp`, `html`, `htm`, `shtml`, `mhtml`, `mht`, `csv`, `tsv`, `epub` or `ofd`.
+8. **`server_url`.** Only with `tier` set to `standard` or `advanced`. Must be `http(s)` with a host and no credentials, query or fragment. Under `MINERU_ENFORCE_TARGET_POLICY=1`, its host must appear in `MINERU_ALLOWED_SERVER_HOSTS`; `MINERU_ALLOW_LOCAL_FETCH` does not affect it. See [URL inputs](#url-inputs).
+9. **`file_url`.** Must be `http(s)` with a host, and resolve to a publicly routable address unless `MINERU_ALLOW_LOCAL_FETCH=1`.
+10. **`volume_path` roots.** The path must be absolute and, once resolved, sit under one of the worker's input roots. See [What `volume_path` accepts](/guides/network-volumes/#what-volume_path-accepts).
+11. **Inline file size.** The worker rejects decoded `file_b64` data over 20 MB — measured first on the encoded string, then on the decoded bytes. RunPod's whole-request limits are reached earlier because base64 expands the raw file; use the practical thresholds above.
+12. **Format detection.** MinerU's own detector, which reads file signatures and runs a content-type model, must recognize the bytes as a format MinerU parses. Content decides binary formats whatever the name says; for text formats, `file_name` (or the last segment of the URL path or `volume_path`) breaks the tie. Bytes it cannot place fail with `input bytes do not match any format MinerU parses (...)`, which names the accepted families and suggests setting `file_name`.
+13. **`page_range` is for PDFs.** On any other input, images included, a `page_range` fails with `page_range applies to PDFs only; the input is png` (or whatever was detected).
 
 All validation errors produce a failure response with `error: "ValueError: ..."` and the job is marked FAILED.
 
 ## Source of truth
 
-This page is regenerated by hand when the contract changes. The authoritative source is the docstring at the top of [`handler.py`](https://github.com/sergeyshmakov/mineru-runpod/blob/main/handler.py) plus the `INPUT_SCHEMA` dict and `validate_input` function in [`worker/schema.py`](https://github.com/sergeyshmakov/mineru-runpod/blob/main/worker/schema.py). If you see a discrepancy, the code wins; please open an issue so the docs page can be updated.
+This page is regenerated by hand when the contract changes. The authoritative source is the code: `INPUT_SCHEMA` and `validate_input` in [`worker/schema.py`](https://github.com/sergeyshmakov/mineru-runpod/blob/main/worker/schema.py) define every field, default and rule, and `MANIFEST` in [`worker/harness.py`](https://github.com/sergeyshmakov/mineru-runpod/blob/main/worker/harness.py) defines the `formats` keys and the file each one reads, in declaration order, with `RENDER_FORMATS` and `DEFAULT_FORMATS` beside it. The checks that need the document (format detection, the tier that actually runs, the PDF-only `page_range` rule) live in [`worker/inputs.py`](https://github.com/sergeyshmakov/mineru-runpod/blob/main/worker/inputs.py) and [`handler.py`](https://github.com/sergeyshmakov/mineru-runpod/blob/main/handler.py). If you see a discrepancy, the code wins; please open an issue so the docs page can be updated.
 
-The `formats` values and the `transport` list are not spelled out in the schema: the formats are the keys of the output manifest in [`worker/harness.py`](https://github.com/sergeyshmakov/mineru-runpod/blob/main/worker/harness.py), in declaration order, and the transports are whatever the [`runpod-doc-worker`](https://rdw.shmakov.tools) harness can pack. Response assembly — the `results` entries, the archive, the presigned URL — is that harness's; which files go into it is the manifest's.
+The transport list is not spelled out in this repo either: the transports are whatever the [`runpod-doc-worker`](https://rdw.shmakov.tools) harness can pack. Response assembly — the `results` entries, the archive, the presigned URL — is that harness's; which files go into it is the manifest's.

@@ -51,8 +51,8 @@ VALID_TIERS = ("flash", "basic", "standard", "advanced")
 # can mean anything to. flash and basic never load it.
 VLM_TIERS = ("standard", "advanced")
 
-# MinerU's `ocr_mode`: let it decide per page, trust the PDF's text layer, or
-# OCR everything.
+# MinerU's `ocr_mode`: let it sample the document and choose, trust the PDF's
+# text layer, or OCR everything.
 VALID_OCR_MODES = ("auto", "txt", "ocr")
 
 # MinerU's page-range grammar, as its CLI, SDK and API share it: 1-based and
