@@ -33,11 +33,16 @@ PARSEABLE_SUFFIXES = TIERED_SUFFIXES | NATIVE_SUFFIXES
 _COARSE_SUFFIXES = {"pdf": "pdf", "image": "png", "ooxml": "docx"}
 
 
+# Common spellings MinerU's own list does not carry, mapped onto the one it does.
+_SUFFIX_ALIASES = {"tif": "tiff"}
+
+
 def suffix_of(name: str | None) -> str:
     """The lower-cased extension of a file name, without the dot ("" if none)."""
     if not name or "." not in name:
         return ""
-    return name.rsplit(".", 1)[1].lower()
+    suffix = name.rsplit(".", 1)[1].lower()
+    return _SUFFIX_ALIASES.get(suffix, suffix)
 
 
 def name_hint(job_input: dict[str, Any]) -> str | None:
