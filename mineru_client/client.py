@@ -67,7 +67,8 @@ def _apply_fetch_policy() -> None:
 class MineruClient:
     """Wraps a single deployed mineru-runpod endpoint.
 
-    The handler API is documented in the mineru-runpod repo's handler.py.
+    The job contract is documented in the docs site's API reference
+    (docs/content/docs/reference/api.mdx in the mineru-runpod repo).
     """
 
     def __init__(self, endpoint_id: str, api_key: str | None = None) -> None:
@@ -114,7 +115,8 @@ class MineruClient:
             extension; only the extension is used.
 
         Tiers (MinerU 4.1.x), for PDFs and images:
-            "flash"     The PDF's own text layer; no models.
+            "flash"     Text layer and native formats, no models; Flash
+                        OCR (small models, no VLM) for scans.
             "basic"     Small models for layout, OCR, formulas and tables.
             "standard"  Small models + the VLM (default).
             "advanced"  The VLM leads layout and content; slowest, best on
@@ -124,7 +126,7 @@ class MineruClient:
         languages; scanned pages in other scripts (Cyrillic, Arabic, ...)
         need a VLM tier (standard or advanced).
 
-        ``ocr_mode``: "auto" lets MinerU decide per page, "txt" trusts the text
+        ``ocr_mode``: "auto" lets MinerU sample the document and choose, "txt" trusts the text
         layer, "ocr" OCRs everything. ``page_range`` (PDFs only) is MinerU's
         1-based grammar: "1-5,8", "r3-r1" (r1 is the last page). ``server_url``
         points the VLM tiers at an external OpenAI-compatible VLM server.
@@ -220,10 +222,16 @@ class MineruClient:
     ) -> dict[str, Any]:
         """Convenience: read a small local file and submit as file_b64.
 
-        Any format the worker supports (PDF, image, DOCX, PPTX, XLSX).
+        Any format the worker parses: PDF, images, Office and OpenDocument
+        files, RTF, EPUB, OFD, HTML, CSV/TSV. The file's own name goes along
+        as ``file_name`` (only its extension is used) unless you pass one, so
+        CSV, TSV and HTML need nothing extra.
         """
-        data = Path(file_path).read_bytes()
+        path = Path(file_path)
+        data = path.read_bytes()
         b64 = base64.b64encode(data).decode("ascii")
+        if "." in path.name:
+            kwargs.setdefault("file_name", path.name)
         return client.parse_document(file_b64=b64, **kwargs)
 
     # -- Result handling ----------------------------------------------------

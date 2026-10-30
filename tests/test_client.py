@@ -466,3 +466,21 @@ def test_save_inline_refuses_a_render_name_that_is_a_path(tmp_path):
     with pytest.raises(Exception):
         MineruClient.save_inline(entry, tmp_path / "out")
     assert not (tmp_path / "escape.docx").exists()
+
+
+def test_parse_document_from_file_sends_the_files_name(fake_endpoint, tmp_path):
+    table = tmp_path / "stock.csv"
+    table.write_bytes(b"name,qty\nalpha,1\n")
+    client = MineruClient(endpoint_id="ep-1", api_key="x")
+    MineruClient.parse_document_from_file(client, table)
+    assert client._endpoint.last_payload["file_name"] == "stock.csv"
+
+
+def test_parse_document_from_file_keeps_an_explicit_name(fake_endpoint, tmp_path):
+    blob = tmp_path / "export"
+    blob.write_bytes(b"a\tb\n1\t2\n")
+    client = MineruClient(endpoint_id="ep-1", api_key="x")
+    MineruClient.parse_document_from_file(client, blob)
+    assert "file_name" not in client._endpoint.last_payload
+    MineruClient.parse_document_from_file(client, blob, file_name="export.tsv")
+    assert client._endpoint.last_payload["file_name"] == "export.tsv"
